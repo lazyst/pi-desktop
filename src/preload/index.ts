@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('pi', {
   listSessions: (): Promise<SessionGroup[]> => ipcRenderer.invoke('session:list'),
   openSession: (req: OpenRequest): Promise<SessionInfo> => ipcRenderer.invoke('session:open', req),
   terminate: (key: string): Promise<void> => ipcRenderer.invoke('session:terminate', key),
+  deleteSession: (key: string): Promise<void> => ipcRenderer.invoke('session:delete', key),
   input: (key: string, data: string) => ipcRenderer.send('session:input', { key, data }),
   resize: (key: string, cols: number, rows: number) => ipcRenderer.send('session:resize', { key, cols, rows }),
   debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
