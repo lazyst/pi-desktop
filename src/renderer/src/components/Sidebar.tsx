@@ -1,67 +1,76 @@
 import { useState } from 'react';
 import type { SessionStatus } from '../types';
+import { IconNewSession, IconPin } from './icons';
 
+interface Session { key: string; cwd: string; name: string; time?: string; }
 interface Props {
-  sessions: Array<{ key: string; cwd: string; name: string; time?: string }>;
+  sessions: Session[];
   statusMap: Record<string, SessionStatus>;
   activeKey?: string | null;
+  pinned: string[];
   onOpen: (req: { key?: string; cwd?: string; name?: string }) => void;
   onTerminate: (key: string) => void;
+  onPickDirectory: () => void;
+  onTogglePin: (cwd: string) => void;
 }
 
-interface PromptState {
-  label: string;
-  defaultValue: string;
-  onOk: (value: string) => void;
-}
-
-export function Sidebar({ sessions, statusMap, activeKey, onOpen, onTerminate }: Props) {
-  const [prompt, setPrompt] = useState<PromptState | null>(null);
-  const [inputValue, setInputValue] = useState('');
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const openPrompt = (cfg: PromptState) => {
-    setInputValue(cfg.defaultValue);
-    setPrompt(cfg);
-  };
-
-  const groups: Array<{ cwd: string; items: Props['sessions'] }> = [];
+  // 分组按 cwd；置顶分组排到最前（保持置顶先后顺序），其余维持原序。
+  const pinnedSet = new Set(pinned);
+  const rawGroups: Array<{ cwd: string; items: Session[] }> = [];
   const cwdIndex = new Map<string, number>();
   for (const s of sessions) {
     let i = cwdIndex.get(s.cwd);
-    if (i === undefined) {
-      i = groups.length;
-      cwdIndex.set(s.cwd, i);
-      groups.push({ cwd: s.cwd, items: [] });
-    }
-    groups[i].items.push(s);
+    if (i === undefined) { i = rawGroups.length; cwdIndex.set(s.cwd, i); rawGroups.push({ cwd: s.cwd, items: [] }); }
+    rawGroups[i].items.push(s);
   }
+  const groups = [...rawGroups].sort((a, b) => {
+    const pa = pinnedSet.has(a.cwd) ? pinned.indexOf(a.cwd) : Number.MAX_SAFE_INTEGER;
+    const pb = pinnedSet.has(b.cwd) ? pinned.indexOf(b.cwd) : Number.MAX_SAFE_INTEGER;
+    return pa - pb;
+  });
 
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
         <span className="sidebar-title">会话</span>
         <div className="sidebar-actions">
-          <button className="btn" onClick={() => openPrompt({
-            label: '选择目录（真实文件夹路径）：',
-            defaultValue: 'C:\\Users\\hcz\\project',
-            onOk: (dir) => { if (dir) onOpen({ cwd: dir }); },
-          })}>+ 目录</button>
-          <button className="btn" onClick={() => openPrompt({
-            label: '新会话名称：',
-            defaultValue: 'new-session',
-            onOk: (name) => { if (name) onOpen({ name }); },
-          })}>+ 会话</button>
+          <button className="btn" onClick={onPickDirectory}>+ 目录</button>
         </div>
       </div>
       <div className="session-list">
         {groups.map((g) => {
+          const isPinned = pinnedSet.has(g.cwd);
           const isOpen = !!expanded[g.cwd];
           const visible = isOpen ? g.items : g.items.slice(0, 5);
           const hidden = g.items.length - visible.length;
           return (
-            <div key={g.cwd} className="group">
-              <div className="group-title">📁 {g.cwd}</div>
+            <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}`}>
+              <div className="group-title">
+                <span className="group-name">📁 {g.cwd}</span>
+                <span className="group-actions">
+                  <button
+                    className="icon-btn"
+                    title={`置顶 ${g.cwd}`}
+                    aria-label={`置顶 ${g.cwd}`}
+                    data-action="pin"
+                    onClick={() => onTogglePin(g.cwd)}
+                  >
+                    <IconPin />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    title={`在 ${g.cwd} 新建会话`}
+                    aria-label={`在 ${g.cwd} 新建会话`}
+                    data-action="new-session"
+                    onClick={() => onOpen({ cwd: g.cwd })}
+                  >
+                    <IconNewSession />
+                  </button>
+                </span>
+              </div>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
                 const isActive = s.key === activeKey;
@@ -103,25 +112,6 @@ export function Sidebar({ sessions, statusMap, activeKey, onOpen, onTerminate }:
           );
         })}
       </div>
-
-      {prompt && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <div className="modal-label">{prompt.label}</div>
-            <input
-              className="modal-input"
-              value={inputValue}
-              autoFocus
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { setPrompt(null); prompt.onOk(inputValue); } }}
-            />
-            <div className="modal-actions">
-              <button className="btn modal-cancel" onClick={() => setPrompt(null)}>取消</button>
-              <button className="btn btn-primary modal-ok" onClick={() => { setPrompt(null); prompt.onOk(inputValue); }}>确定</button>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }
