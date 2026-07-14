@@ -46,6 +46,27 @@ describe('SessionPool', () => {
     expect(pool.get(key)).toBeUndefined();
   });
 
+  it('openExisting reuses the running process for the same session file (no duplicate spawn)', () => {
+    const { pool, factory } = makePool();
+    const key = '/tmp/sessions/x/session.jsonl';
+    const first = pool.openExisting(key);
+    const second = pool.openExisting(key);
+    // Same key returned and the pty factory was called only once → no new process.
+    expect(second.key).toBe(first.key);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(pool.debugInfo().count).toBe(1);
+  });
+
+  it('openExisting respawns when the existing process is dead', () => {
+    const { pool, factory } = makePool();
+    const key = '/tmp/sessions/x/session.jsonl';
+    pool.openExisting(key);
+    pool.terminate(key);
+    const again = pool.openExisting(key);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(again.status).toBe('running');
+  });
+
   it('killAll terminates every session', () => {
     const { pool } = makePool();
     pool.openExisting('/a/s.jsonl');

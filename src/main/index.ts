@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -84,6 +84,31 @@ function createWindow() {
     },
   });
   const pool = createPool(win);
+
+  // 弹出系统原生目录选择对话框（需求 1）。用户取消返回 null。
+  ipcMain.handle('session:pickDirectory', async () => {
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择目录',
+      properties: ['openDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+
+  // 会话写盘（用户发首条消息后 pi 写出 .jsonl）即视为"晋升"，推送最新索引给渲染进程。
+  // 300ms debounce 合并突发写入。recursive watch 在 Windows/macOS 原生支持。
+  let indexTimer: ReturnType<typeof setTimeout> | undefined;
+  const pushIndex = () => {
+    if (indexTimer) clearTimeout(indexTimer);
+    indexTimer = setTimeout(() => {
+      if (!win.isDestroyed()) win.webContents.send('session:index', pool.listFiles());
+    }, 300);
+  };
+  try {
+    fs.watch(SESSIONS_DIR, { recursive: true }, pushIndex);
+  } catch (err) {
+    console.error('[session:index] fs.watch failed:', err);
+  }
 
   ipcMain.handle('session:list', () => pool.listFiles());
   ipcMain.handle('session:open', (_e, req: { key?: string; cwd?: string; name?: string }) => {

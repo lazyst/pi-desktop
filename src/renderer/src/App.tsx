@@ -5,8 +5,23 @@ import { pi } from './ipc';
 import type { SessionInfo, SessionStatus } from './types';
 
 interface OpenSession extends SessionInfo { key: string; cwd: string; name: string; status: SessionStatus; }
-
 interface DiskSession { key: string; cwd: string; name: string; time?: string; }
+
+const PIN_KEY = 'pi-desktop:pinned-dirs';
+
+function readPinned(): string[] {
+  try {
+    const raw = localStorage.getItem(PIN_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function toDisk(groups: { cwd: string; sessions: Array<{ key: string; name: string; time: string }> }[]): DiskSession[] {
+  return groups.flatMap((g) => g.sessions.map((s) => ({ key: s.key, cwd: g.cwd, name: s.name, time: s.time })));
+}
 
 export default function App() {
   const [open, setOpen] = useState<OpenSession[]>([]);
@@ -14,6 +29,7 @@ export default function App() {
   const [statusMap, setStatusMap] = useState<Record<string, SessionStatus>>({});
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
+  const [pinned, setPinned] = useState<string[]>(() => readPinned());
 
   useEffect(() => {
     pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
@@ -21,24 +37,13 @@ export default function App() {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
       setOpen((list) => list.filter((s) => s.key !== key));
     });
-    pi.listSessions()
-      .then((groups) =>
-        setDisk(
-          groups.flatMap((g) =>
-            g.sessions.map((s) => ({ key: s.key, cwd: g.cwd, name: s.name, time: s.time })),
-          ),
-        ),
-      )
-      .catch(() => setDisk([]));
+    // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）
+    pi.onIndex((groups) => setDisk(toDisk(groups)));
+    pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
   }, []);
 
-  const sessions: DiskSession[] = (() => {
-    const diskKeys = new Set(disk.map((s) => s.key));
-    const liveOnly = open
-      .filter((s) => !diskKeys.has(s.key))
-      .map<DiskSession>((s) => ({ key: s.key, cwd: s.cwd, name: s.name }));
-    return [...disk, ...liveOnly];
-  })();
+  // 侧边栏只渲染 disk 会话；live 会话只活在终端区，发消息写盘后才出现。
+  const sessions: DiskSession[] = disk;
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
@@ -50,6 +55,26 @@ export default function App() {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
+
+  const handlePickDirectory = async () => {
+    setError(null);
+    try {
+      const dir = await pi.pickDirectory();
+      if (!dir) return;
+      await handleOpen({ cwd: dir });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleTogglePin = (cwd: string) => {
+    setPinned((prev) => {
+      const next = prev.includes(cwd) ? prev.filter((c) => c !== cwd) : [...prev, cwd];
+      try { localStorage.setItem(PIN_KEY, JSON.stringify(next)); } catch { /* ignore quota */ }
+      return next;
+    });
+  };
+
   const handleTerminate = (key: string) => { pi.terminate(key); };
 
   const active = open.find((s) => s.key === activeKey);
@@ -57,7 +82,16 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar sessions={sessions} statusMap={statusMap} activeKey={activeKey} onOpen={handleOpen} onTerminate={handleTerminate} />
+      <Sidebar
+        sessions={sessions}
+        statusMap={statusMap}
+        activeKey={activeKey}
+        pinned={pinned}
+        onOpen={handleOpen}
+        onTerminate={handleTerminate}
+        onPickDirectory={handlePickDirectory}
+        onTogglePin={handleTogglePin}
+      />
       <main className="main">
         <div className="header">
           <span className="header-title">{active ? `${active.name} · ${active.cwd}` : '—'}</span>

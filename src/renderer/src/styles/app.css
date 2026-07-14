@@ -53,12 +53,48 @@
 /* Group */
 .group { margin-bottom: var(--sp-1); }
 .group-title {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
   color: var(--text-faint);
   font-size: var(--fs-xs);
   word-break: break-all;
   letter-spacing: var(--ls-label);
 }
+.group-name { flex: 1; min-width: 0; }
+
+/* 目录 hover 操作（新建会话 / 置顶）：默认淡出，hover/focus 淡入，复用 --transition */
+.group-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+.group:hover .group-actions,
+.group:focus-within .group-actions { opacity: 1; }
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: color var(--transition), background-color var(--transition);
+}
+.icon-btn:hover { color: var(--accent); background: var(--bg-hover); }
+.icon-btn:focus-visible { box-shadow: var(--focus-ring); }
+
+/* 置顶目录：常驻淡强调色左轨（复用"活动会话左轨"视觉语言）+ 标题变色 */
+.group.pinned { box-shadow: inset 2px 0 0 rgba(124, 156, 255, 0.40); }
+.group.pinned .group-name { color: var(--accent); }
 
 /* Session list */
 .session-list { overflow-y: auto; flex: 1; padding: var(--sp-2) 0; }
@@ -145,7 +181,7 @@
 .header-error { margin-left: auto; font-size: var(--fs-xs); color: var(--danger); }
 
 /* Terminal area + host */
-.terminal-area { flex: 1; position: relative; }
+.terminal-area { flex: 1; position: relative; padding-right: var(--sp-2); }
 .terminal-host {
   position: absolute;
   inset: 0;
@@ -214,3 +250,42 @@
   transition: background-color var(--transition), border-color var(--transition), color var(--transition);
 }
 .modal-ok:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
+
+/* 置底按钮（需求 5）：仅活动且未贴底的会话显示。固定在终端区右下角，
+   但右移以避开原生竖向滚动条——滚动条 10px 宽、紧贴 viewport 右缘，
+   而 viewport 又位于 host 8px 内边距内。故按钮右缘 = 8px(内边距) + 10px(滚动条) + 4px(间隙)，
+   确保不遮挡滚动条、不影响上下拖动。 */
+.jump-bottom {
+  position: absolute;
+  right: calc(var(--sp-2) + 10px + var(--sp-1)); /* 8px 内边距 + 10px 滚动条 + 4px 间隙 */
+  bottom: var(--sp-3);
+  z-index: 6;
+  width: 36px; height: 36px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-lg);
+  background: var(--bg-elevated);
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow: var(--shadow-modal);
+  transition: background-color var(--transition), transform var(--transition), opacity var(--transition);
+}
+.jump-bottom.visible { display: inline-flex; animation: jumpIn 160ms ease; }
+.jump-bottom:hover { background: var(--bg-active); }
+.jump-bottom:focus-visible { box-shadow: var(--focus-ring); }
+@keyframes jumpIn {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* 需求 4：让 xterm 原生竖向滚动条可见且可拖动（默认滑块 #283040 在黑底几乎不可见） */
+.xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.xterm-viewport::-webkit-scrollbar { width: 10px; }
+.xterm-viewport::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.03); }
+.xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
+.xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--accent); }
