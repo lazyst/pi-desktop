@@ -2,47 +2,48 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Sidebar } from '../components/Sidebar';
+import type { SessionStatus } from '../types';
 
-const groups = [
-  { cwd: 'C:\\Users\\hcz\\.pi-agent', sessions: [
-    { key: '/a/s1.jsonl', name: '2026-07-03 19:07', time: '2026-07-03 19:07' },
-  ]},
+const sessions = [
+  { key: 'k1', cwd: 'C:\\Users\\hcz\\.pi-agent', name: 'e2e-session', status: 'running' as SessionStatus },
+  { key: 'k2', cwd: 'C:\\Users\\hcz\\project', name: 'other-session', status: 'running' as SessionStatus },
 ];
 
-function renderSidebar(statusMap = {}) {
+function renderSidebar(statusMap: Record<string, SessionStatus> = {}) {
   const api = {
-    listSessions: vi.fn().mockResolvedValue(groups),
-    openSession: vi.fn().mockResolvedValue({ key: 'k', cwd: 'x', name: 'n', status: 'running' }),
-    terminate: vi.fn().mockResolvedValue(undefined),
-    input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
+    listSessions: vi.fn(),
+    openSession: vi.fn(),
+    terminate: vi.fn(),
   };
   (window as any).pi = api;
   const onOpen = vi.fn(), onTerminate = vi.fn();
-  render(<Sidebar statusMap={statusMap} onOpen={onOpen} onTerminate={onTerminate} />);
+  render(<Sidebar sessions={sessions} statusMap={statusMap} onOpen={onOpen} onTerminate={onTerminate} />);
   return { api, onOpen, onTerminate };
 }
 
 describe('Sidebar', () => {
-  it('renders groups and sessions', async () => {
+  it('renders cwd groups', () => {
     renderSidebar();
-    expect(await screen.findByText(/C:\\Users\\hcz/)).toBeInTheDocument();
-    expect(screen.getByText('2026-07-03 19:07')).toBeInTheDocument();
+    expect(screen.getByText(/C:\\Users\\hcz\\.pi-agent/)).toBeInTheDocument();
+    expect(screen.getByText(/C:\\Users\\hcz\\project/)).toBeInTheDocument();
   });
-  it('shows green dot when status running', async () => {
-    renderSidebar({ '/a/s1.jsonl': 'running' });
-    const dot = await screen.findByText('2026-07-03 19:07');
-    const item = dot.closest('.session-item')!;
+  it('shows green dot when status running (and defaults to running)', () => {
+    renderSidebar({ k1: 'running' });
+    const item = screen.getByText('e2e-session').closest('.session-item')!;
     expect(item.querySelector('.dot.running')).toBeInTheDocument();
+    // k2 has no statusMap entry → defaults to running
+    const item2 = screen.getByText('other-session').closest('.session-item')!;
+    expect(item2.querySelector('.dot.running')).toBeInTheDocument();
   });
-  it('clicking a session opens it', async () => {
-    const { onOpen } = renderSidebar();
-    fireEvent.click(await screen.findByText('2026-07-03 19:07'));
-    expect(onOpen).toHaveBeenCalledWith({ key: '/a/s1.jsonl' });
+  it('clicking a session opens it by key', () => {
+    const { onOpen } = renderSidebar({ k1: 'running' });
+    fireEvent.click(screen.getByText('e2e-session'));
+    expect(onOpen).toHaveBeenCalledWith({ key: 'k1' });
   });
-  it('hover terminate calls onTerminate', async () => {
-    const { onTerminate } = renderSidebar({ '/a/s1.jsonl': 'running' });
-    const item = (await screen.findByText('2026-07-03 19:07')).closest('.session-item')!;
+  it('hover terminate calls onTerminate', () => {
+    const { onTerminate } = renderSidebar({ k1: 'running' });
+    const item = screen.getByText('e2e-session').closest('.session-item')!;
     fireEvent.click(item.querySelector('.terminate')!);
-    expect(onTerminate).toHaveBeenCalledWith('/a/s1.jsonl');
+    expect(onTerminate).toHaveBeenCalledWith('k1');
   });
 });
