@@ -7,9 +7,11 @@ export interface PiApi {
   input(key: string, data: string): void;
   resize(key: string, cols: number, rows: number): void;
   debug(): Promise<{ count: number; pids: number[] }>;
+  pickDirectory(): Promise<string | null>;
   onData(cb: (key: string, data: string) => void): void;
   onStatus(cb: (key: string, status: SessionStatus) => void): void;
   onExit(cb: (key: string) => void): void;
+  onIndex(cb: (groups: SessionGroup[]) => void): void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at
