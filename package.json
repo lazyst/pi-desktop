@@ -5,7 +5,7 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node scripts/copy-assets.mjs",
     "start": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
