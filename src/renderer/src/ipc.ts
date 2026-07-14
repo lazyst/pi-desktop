@@ -11,4 +11,10 @@ export interface PiApi {
   onStatus(cb: (key: string, status: SessionStatus) => void): void;
   onExit(cb: (key: string) => void): void;
 }
-export const pi = (window as any).pi as PiApi;
+
+// Resolve `window.pi` lazily so the live IPC object injected by Electron at
+// runtime (or by tests) is always used, instead of a snapshot captured at
+// module-load time (when `window.pi` is still undefined).
+export const pi: PiApi = new Proxy({} as PiApi, {
+  get: (_target, prop) => (window as any).pi?.[prop],
+});
