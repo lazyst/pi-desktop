@@ -48,6 +48,8 @@ test('open disk session → continuity across switch → hover terminate → clo
   await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('fake-pi ready', { timeout: 15000 });
   const before = Number((await page.locator('.terminal-host.active .xterm-rows').innerText()).match(/tick (\d+)/)?.[1] ?? '0');
   expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
+  // 记录 session-A 首个进程 pid，用于验证“切走再切回”是否复用同一进程。
+  const aPid = (await page.evaluate(() => (window as any).pi.debug())).pids[0];
 
   await page.locator('.session-item', { hasText: 'session-B' }).click();
   expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(2);
@@ -55,7 +57,10 @@ test('open disk session → continuity across switch → hover terminate → clo
   await page.locator('.session-item', { hasText: 'session-A' }).click();
   await expect.poll(async () => Number((await page.locator('.terminal-host.active .xterm-rows').innerText()).match(/tick (\d+)/)?.[1] ?? '0'), { timeout: 10000 }).toBeGreaterThan(before);
 
+  // 切回同一会话必须复用原进程（而非新起一个）：原 A 进程 pid 必须仍在被追踪的进程集中。
+  // 修复前会再 spawn 一个 pi 并覆盖池记录，使原进程被孤儿化、不再被追踪 → 该断言失败。
   const pidsAll = (await page.evaluate(() => (window as any).pi.debug())).pids as number[];
+  expect(pidsAll).toContain(aPid);
   const item = page.locator('.session-item', { hasText: 'session-A' }).first();
   await item.hover();
   await item.locator('.terminate').click();
@@ -120,6 +125,9 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
 
   await expect(page.locator('.session-item', { hasText: 'jump-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'jump-seeded' }).click();
+  // 先把焦点移到终端，让后续键入真正进入 pty（否则焦点停在会话项上，
+  // 每行末尾的回车会误触发 Sidebar 的 onKeyDown→重新打开会话）。
+  await page.locator('.terminal-host.active').click();
   // Flood the terminal so it overflows the viewport (FAB only shows when scrolled up).
   for (let i = 0; i < 60; i++) {
     await page.keyboard.type(`fill ${i}\n`);
