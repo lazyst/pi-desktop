@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pi Desktop — 产品原型</title>
+<style>
+  :root {
+    --bg: #0c0c0c;
+    --sidebar: #16161e;
+    --sidebar-2: #1c1c26;
+    --border: #2a2a36;
+    --fg: #d4d4d8;
+    --muted: #8b8b98;
+    --accent: #3fb950;
+    --accent-dim: #2ea043;
+    --danger: #f85149;
+    --sel: #243042;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: "SFMono-Regular", "Cascadia Code", Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--bg); color: var(--fg); font-size: 13px;
+    display: flex;
+  }
+  .app { display: flex; width: 100vw; height: 100vh; }
+
+  /* ---- 侧栏 ---- */
+  .sidebar {
+    width: 280px; min-width: 280px; background: var(--sidebar);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  }
+  .sidebar-header {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .sidebar-header .title { font-weight: 600; letter-spacing: .5px; }
+  .sidebar-header .actions { display: flex; gap: 6px; }
+  button {
+    font-family: inherit; font-size: 12px; cursor: pointer;
+    background: var(--sidebar-2); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+  }
+  button:hover { border-color: var(--accent-dim); color: #fff; }
+  .tree { overflow-y: auto; flex: 1; padding: 6px 0; }
+  .group { margin-bottom: 4px; }
+  .group-header {
+    padding: 6px 12px; color: var(--muted); font-size: 11px;
+    display: flex; align-items: center; gap: 6px; word-break: break-all;
+  }
+  .group-header .ico { opacity: .7; }
+  .session-item {
+    display: flex; align-items: center; gap: 8px; padding: 5px 12px 5px 26px;
+    cursor: pointer; position: relative;
+  }
+  .session-item:hover { background: var(--sidebar-2); }
+  .session-item.active { background: var(--sel); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #444; flex: none; }
+  .dot.running { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .session-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session-time { color: var(--muted); font-size: 10px; }
+  .terminate {
+    display: none; width: 18px; height: 18px; border-radius: 4px;
+    align-items: center; justify-content: center; padding: 0;
+    color: var(--danger); border-color: transparent; background: transparent;
+  }
+  .session-item:hover .terminate { display: inline-flex; }
+  .terminate:hover { background: rgba(248,81,73,.15); border-color: var(--danger); }
+
+  /* ---- 主区 ---- */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .main-bar {
+    height: 34px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px; padding: 0 12px;
+    background: var(--sidebar);
+  }
+  .main-bar .name { font-weight: 600; }
+  .main-bar .status { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .main-bar .status.running { color: var(--accent); }
+  .terminal {
+    flex: 1; overflow: auto; padding: 12px 14px; white-space: pre-wrap;
+    line-height: 1.5; color: #d4d4d8;
+  }
+  .terminal .cur { display: inline-block; width: 7px; height: 14px; background: var(--accent); vertical-align: text-bottom; animation: blink 1s steps(2) infinite; }
+  .tui-box { color: #6cb6ff; }
+  .tui-accent { color: #d29922; }
+  .tui-tool { color: #3fb950; }
+  .tui-dim { color: #8b8b98; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hint { position: fixed; bottom: 10px; right: 14px; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="title">会话</span>
+      <div class="actions">
+        <button id="btn-new-dir">+ 目录</button>
+        <button id="btn-new-session">+ 会话</button>
+      </div>
+    </div>
+    <div id="tree" class="tree"></div>
+  </aside>
+
+  <main class="main">
+    <div class="main-bar">
+      <span class="name" id="active-name">—</span>
+      <span class="status" id="active-status"></span>
+    </div>
+    <div class="terminal" id="terminal"></div>
+  </main>
+</div>
+<div class="hint">原型（静态）：点击会话切换 · hover 显示终止 · +会话/+目录 可试</div>
+
+<script>
+// ---- 模拟数据（无真实 pi / PTY） ----
+const SAMPLE = {
+  running:
+`<span class="tui-box">╭─ pi · C:\\Users\\hcz\\.pi\\agent ─────────────────────────────╮
+│ HUD  tokens 18.4k / 200k · bg 0 · mcp 0/2                │
+╰────────────────────────────────────────────────────────╯</span>
+
+<span class="tui-dim">&gt;</span> 重构 auth 模块，把 session 存储抽到独立服务
+
+<span class="tui-tool">● bash</span>  <span class="tui-accent">ls src/auth</span>
+  total 8
+  -rw-r--r--  auth.ts
+  -rw-r--r--  session.ts
+
+<span class="tui-tool">● 编辑</span> <span class="tui-accent">src/auth/session.ts</span>
+  <span class="tui-dim">+ export class SessionStore {</span>
+  <span class="tui-dim">+   async save(id: string, data: Session) { ... }</span>
+
+<span class="tui-dim">思考中… 正在分析依赖关系</span><span class="cur"></span>`,
+  done:
+`<span class="tui-box">╭─ pi · D:\\personal\\agent_space\\webterm-app ───────────────╮
+│ HUD  tokens 9.1k / 200k                                 │
+╰────────────────────────────────────────────────────────╯</span>
+
+<span class="tui-dim">&gt;</span> 给终端组件加 resize 处理
+
+<span class="tui-tool">● bash</span>  <span class="tui-accent">npm run build</span>
+  ✓ built in 1.2s
+
+<span class="tui-tool">✓</span> 完成：resize 已接入 FitAddon，窗口变化时重排。
+`,
+  idle:
+`<span class="tui-dim">（该会话无运行中的进程，点开即是普通 pi 终端）</span>
+
+<span class="tui-dim">&gt;</span> <span class="cur"></span>`
+};
+
+let uid = 0;
+const sessions = [
+  { id: ++uid, group: "C:\\Users\\hcz\\.pi\\agent", name: "refactor-auth", time: "07-14 09:15", running: true,  content: SAMPLE.running },
+  { id: ++uid, group: "C:\\Users\\hcz\\.pi\\agent", name: "mcp-adapter-fix", time: "07-13 22:40", running: false, content: SAMPLE.done },
+  { id: ++uid, group: "D:\\personal\\agent_space\\webterm-app", name: "resize-handling", time: "07-14 08:02", running: true, content: SAMPLE.running },
+  { id: ++uid, group: "D:\\personal\\agent_space\\webterm-app", name: "scratch", time: "07-12 11:20", running: false, content: SAMPLE.idle },
+];
+
+let activeId = sessions[0].id;
+
+function groups() {
+  const map = new Map();
+  for (const s of sessions) {
+    if (!map.has(s.group)) map.set(s.group, []);
+    map.get(s.group).push(s);
+  }
+  return map;
+}
+
+function render() {
+  const tree = document.getElementById("tree");
+  tree.innerHTML = "";
+  for (const [group, items] of groups()) {
+    const g = document.createElement("div");
+    g.className = "group";
+    const gh = document.createElement("div");
+    gh.className = "group-header";
+    gh.innerHTML = `<span class="ico">📁</span><span>${esc(group)}</span>`;
+    g.appendChild(gh);
+    for (const s of items) {
+      const it = document.createElement("div");
+      it.className = "session-item" + (s.id === activeId ? " active" : "");
+      it.innerHTML = `
+        <span class="dot ${s.running ? "running" : ""}"></span>
+        <span class="session-name">${esc(s.name)}</span>
+        <span class="session-time">${esc(s.time)}</span>
+        <button class="terminate" title="终止会话">✕</button>`;
+      it.addEventListener("click", (e) => {
+        if (e.target.classList.contains("terminate")) return;
+        activeId = s.id; render();
+      });
+      it.querySelector(".terminate").addEventListener("click", (e) => {
+        e.stopPropagation();
+        s.running = false;
+        if (s.id === activeId) render();
+        else render();
+      });
+      g.appendChild(it);
+    }
+    tree.appendChild(g);
+  }
+  const a = sessions.find((s) => s.id === activeId);
+  document.getElementById("active-name").textContent = a.name + "  ·  " + a.group;
+  const st = document.getElementById("active-status");
+  st.className = "status" + (a.running ? " running" : "");
+  st.innerHTML = a.running ? `<span class="dot running"></span> 运行中` : `空闲`;
+  document.getElementById("terminal").innerHTML = a.content;
+}
+
+function esc(t) { return t.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+// ---- 新建（原型交互） ----
+document.getElementById("btn-new-session").addEventListener("click", () => {
+  const active = sessions.find((s) => s.id === activeId);
+  const grp = active ? active.group : (groups().keys().next().value || "C:\\");
+  const name = prompt("新会话名称：", "new-session-" + (uid + 1));
+  if (!name) return;
+  const s = { id: ++uid, group: grp, name, time: now(), running: false, content: SAMPLE.idle };
+  sessions.push(s); activeId = s.id; render();
+});
+document.getElementById("btn-new-dir").addEventListener("click", () => {
+  const grp = prompt("选择目录（真实文件夹路径）：", "C:\\Users\\hcz\\project");
+  if (!grp) return;
+  const s = { id: ++uid, group: grp, name: "new-session", time: now(), running: false, content: SAMPLE.idle };
+  sessions.push(s); activeId = s.id; render();
+});
+function now() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+render();
+</script>
+</body>
+</html>
