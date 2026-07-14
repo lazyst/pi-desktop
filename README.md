@@ -1,5 +1,7 @@
 # pi-desktop
 
+> 📖 中文文档：[README.zh-CN.md](./README.zh-CN.md)
+
 A desktop application that wraps the [`pi`](https://gitcode.com) CLI's real
 terminal UI (TUI) in multiple, isolated terminals — managed from a
 sidebar-organized session list.
