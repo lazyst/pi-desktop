@@ -4,7 +4,7 @@
 
 **Goal:** 在不改动架构 / IPC / 会话模型的前提下，用设计令牌系统（CSS 变量 + 语义化 class）替换渲染进程散落的 inline style，并统一等宽字体、引入冷蓝 `#7c9cff` 主色与"激活轨"签名元素。
 
-**Architecture:** 纯视觉层重写。新增 `tokens.css`（`:root` 变量 + 基础/焦点/reduced-motion/滚动条）与 `app.css`（语义化组件 class）；`main.tsx` 引入两者与字体包；`App.tsx` / `Sidebar.tsx` / `TerminalPane.tsx` 去掉 inline style、改用 class + token。不新增功能、不改 IPC 契约。使用 `@fontsource/jetbrains-mono` 本地打包 woff2（满足 spec "随应用本地打包" 的要求，无需手管字体文件）。
+**Architecture:** 纯视觉层重写。新增 `tokens.css`（`:root` 变量 + `@font-face` 本地字体 + 基础/焦点/reduced-motion/滚动条）与 `app.css`（语义化组件 class）；`main.tsx` 引入两者；`App.tsx` / `Sidebar.tsx` / `TerminalPane.tsx` 去掉 inline style、改用 class + token。不新增功能、不改 IPC 契约、不新增 npm 依赖。字体用 `@font-face` 引入从 jsdelivr 下载的 JetBrains Mono woff2（满足 spec "随应用本地打包" 要求，且规避环境禁止的 `pnpm add`）。
 
 **Tech Stack:** React 18 + TypeScript, electron-vite (Vite), xterm.js, `@fontsource/jetbrains-mono`, Vitest + Playwright（回归）。
 
@@ -17,6 +17,7 @@
 - **必须保留的既有选择器**（单测 + e2e 依赖，改名会破坏测试）：`.session-item`（含 `data-key`）、`.dot`、`.dot.running`、`.terminate`、`.group`、`.modal-overlay`、`.modal-input`、`.modal-ok`、`.modal-cancel`、`.terminal-host`、`.terminal-host.active`；侧栏标题文案 `会话`；按钮文案 `+ 会话` / `+ 目录`。
 - 质量底线：键盘焦点可见（`:focus-visible` 冷蓝焦点环）、尊重 `prefers-reduced-motion`、响应式（窄屏侧栏可用）、功能零回归（现有 vitest + playwright 通过）。
 - xterm 按字符格渲染，连字在终端内不合成（仅 UI 文字体现）；终端 `fontFamily` 用与 `--font-mono` 同栈的 JS 常量（xterm 不读 CSS 变量）。
+- **环境限制（强制）**：禁止运行 `pnpm install` / `pnpm add`（会触发被忽略的构建门，破坏现有原生模块）；字体通过 jsdelivr 下载 woff2 + `@font-face` 本地打包，**不新增任何 npm 依赖**；离线时省略 `@font-face`，由 `--font-mono` 回退栈兜底。
 
 ---
 
@@ -28,7 +29,7 @@
 - `src/renderer/src/components/Sidebar.tsx` —— **Modify**。去掉 inline style → class；新增可选 `activeKey` prop；激活项加 `.active`（激活轨 + 淡染）；会话项可键盘聚焦（`tabIndex` + Enter/Space 打开）+ `aria-label`。
 - `src/renderer/src/App.tsx` —— **Modify**。去掉 inline style 与组件内 `<style>`；`main`/header/terminal-area 改用 class；向 `Sidebar` 传 `activeKey`；错误/状态改用 class。
 - `src/renderer/src/components/TerminalPane.tsx` —— **Modify**。`fontFamily` 改为 `FONT_MONO` 常量；宿主 `div` 用 `.terminal-host` class（样式在 app.css）。
-- `package.json` —— **Modify**（由 `pnpm add` 自动）。新增 `@fontsource/jetbrains-mono` 依赖。
+- `src/renderer/src/assets/fonts/jetbrains-mono-latin-{400,500,600}-normal.woff2` —— **Create**（Task 3 从 jsdelivr 下载；若离线则省略，回退栈兜底）。
 - `src/renderer/src/__tests__/Sidebar.test.tsx` —— **Modify**。新增一条断言 `.active` class 的测试（Task 4 的 TDD 红→绿）。
 
 ---
@@ -365,21 +366,53 @@ git commit -m "style: add component classes in app.css (preserves test selectors
 
 **Files:**
 - Modify: `src/renderer/src/main.tsx`
-- Modify (自动): `package.json`（`pnpm add` 写入 `@fontsource/jetbrains-mono`）
+- Modify: `src/renderer/src/styles/tokens.css`（Task 1 创建后，本任务追加 `@font-face` 块）
+- Create: `src/renderer/src/assets/fonts/jetbrains-mono-latin-{400,500,600}-normal.woff2`
 
-**Interfaces:** 消费 `tokens.css` / `app.css`（Task 1/2）与 `@fontsource/jetbrains-mono`（Task 7 安装）。本任务先把样式引入接好；字体包在 Task 7 安装后其 `@font-face` 才生效。
+**Interfaces:** 消费 `tokens.css` / `app.css`（Task 1/2）。本任务接好字体：下载 woff2 并在 `tokens.css` 顶部追加 `@font-face`，让 `--font-mono` 真正解析到 JetBrains Mono。**禁止 `pnpm add`/`pnpm install`**。
 
-- [ ] **Step 1: 安装字体包（本地打包 woff2）**
+- [ ] **Step 1: 从 jsdelivr 下载 JetBrains Mono woff2（三档字重）到 `src/renderer/src/assets/fonts/`**
 
-Run: `pnpm add @fontsource/jetbrains-mono`
-Expected: 写入 `package.json` 的 `dependencies`；`node_modules/@fontsource/jetbrains-mono` 存在。
+```bash
+mkdir -p src/renderer/src/assets/fonts
+base="https://cdn.jsdelivr.net/npm/@fontsource/jetbrains-mono@5/files"
+curl -fL -o src/renderer/src/assets/fonts/jetbrains-mono-latin-400-normal.woff2 "$base/jetbrains-mono-latin-400-normal.woff2"
+curl -fL -o src/renderer/src/assets/fonts/jetbrains-mono-latin-500-normal.woff2 "$base/jetbrains-mono-latin-500-normal.woff2"
+curl -fL -o src/renderer/src/assets/fonts/jetbrains-mono-latin-600-normal.woff2 "$base/jetbrains-mono-latin-600-normal.woff2"
+ls -l src/renderer/src/assets/fonts/
+```
+Expected: 三个 `.woff2` 文件存在且非空（各约 30–60KB）。
+**离线兜底**：若 `curl` 失败（无网络），跳过本步与 Step 2，不写 `@font-face`；`--font-mono` 回退栈（ui-monospace/Menlo/Consolas…）仍保证全应用统一等宽，spec 不阻塞。在报告中注明已走回退。
 
-- [ ] **Step 2: 修改 `src/renderer/src/main.tsx`，在最顶部按顺序引入**
+- [ ] **Step 2: 在 `src/renderer/src/styles/tokens.css` 顶部（`:root` 之前）追加 `@font-face` 块**
+
+```css
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../assets/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../assets/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../assets/fonts/jetbrains-mono-latin-600-normal.woff2') format('woff2');
+}
+```
+
+- [ ] **Step 3: 修改 `src/renderer/src/main.tsx`，在最顶部按顺序引入两个样式表（不引入 fontsource）**
 
 ```tsx
-import '@fontsource/jetbrains-mono/400.css';
-import '@fontsource/jetbrains-mono/500.css';
-import '@fontsource/jetbrains-mono/600.css';
 import './styles/tokens.css';
 import './styles/app.css';
 import React from 'react';
@@ -389,16 +422,16 @@ import App from './App';
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
 ```
 
-- [ ] **Step 3: 运行类型检查确认无报错**
+- [ ] **Step 4: 运行类型检查确认无报错**
 
 Run: `pnpm exec tsc --noEmit -p tsconfig.json`
 Expected: 退出码 0。
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/renderer/src/main.tsx package.json pnpm-lock.yaml
-git commit -m "style: wire font package + tokens/app styles in renderer entry"
+git add src/renderer/src/main.tsx src/renderer/src/styles/tokens.css src/renderer/src/assets/fonts/
+git commit -m "style: wire local JetBrains Mono (woff2 via @font-face) + tokens/app styles"
 ```
 
 ---
@@ -782,24 +815,24 @@ git commit -m "style: tokenize TerminalPane font + host class"
 
 ---
 
-## Task 7: 字体包接入校验（@fontsource 已装，确认本地打包生效）
+## Task 7: 字体接入校验（woff2 已下载，确认本地打包生效）
 
 **Files:**
-- 无新文件（Task 3 已 `pnpm add` 并引入 400/500/600.css）。
+- 无新文件（Task 3 已下载 woff2 并写入 `@font-face`）。
 
-**Interfaces:** 校验 `JetBrains Mono` 通过 `@fontsource/jetbrains-mono` 本地打包（离线可用），`--font-mono` 栈回退到其他系统等宽。
+**Interfaces:** 校验 `JetBrains Mono` 通过本地 `@font-face` 打包（离线可用），`--font-mono` 栈在缺失时回退到其他系统等宽。
 
-- [ ] **Step 1: 确认字体包已安装且字重文件存在**
+- [ ] **Step 1: 确认 woff2 文件存在且非空**
 
-Run: `ls node_modules/@fontsource/jetbrains-mono/400.css node_modules/@fontsource/jetbrains-mono/500.css node_modules/@fontsource/jetbrains-mono/600.css`
-Expected: 三个文件均存在（否则回到 Task 3 Step 1 重新 `pnpm add`）。
+Run: `ls -l src/renderer/src/assets/fonts/jetbrains-mono-latin-400-normal.woff2 src/renderer/src/assets/fonts/jetbrains-mono-latin-500-normal.woff2 src/renderer/src/assets/fonts/jetbrains-mono-latin-600-normal.woff2`
+Expected: 三个文件均存在且非空（约 30–60KB）。若缺失（离线），确认 `tokens.css` 未写 `@font-face` 且 `--font-mono` 回退栈生效——属预期兜底，不阻塞。
 
 - [ ] **Step 2: 类型检查**
 
 Run: `pnpm exec tsc --noEmit -p tsconfig.json`
 Expected: 退出码 0。
 
-- [ ] **Step 3: Commit（若 Task 3 已提交可跳过；仅当本任务有补充改动时提交）**
+- [ ] **Step 3: Commit（若本任务有补充改动时提交；否则跳过）**
 
 ```bash
 git add -A && git commit -m "style: verify local JetBrains Mono packaging" || echo "nothing to commit"
