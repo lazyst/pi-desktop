@@ -9,7 +9,7 @@ interface Props {
 
 export function ConfirmDialog({ title, message, confirmLabel = '删除', cancelLabel = '取消', onConfirm, onCancel }: Props) {
   return (
-    <div className="modal-overlay" onClick={onCancel} role="presentation">
+    <div className="confirm-overlay" onClick={onCancel} role="presentation">
       <div
         className="confirm-dialog"
         role="alertdialog"
