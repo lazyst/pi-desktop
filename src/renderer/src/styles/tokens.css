@@ -1,0 +1,84 @@
+:root {
+  /* Backgrounds */
+  --bg-app: #0d1117;
+  --bg-panel: #161b22;
+  --bg-hover: #1c2230;
+  --bg-active: rgba(124, 156, 255, 0.10);
+  --bg-elevated: #1b2230;
+
+  /* Borders */
+  --border: #283040;
+  --border-strong: #36405a;
+
+  /* Text */
+  --text: #c9d1d9;
+  --text-muted: #8b949e;
+  --text-faint: #6e7681;
+
+  /* Accent + semantic */
+  --accent: #7c9cff;
+  --accent-hover: #93acff;
+  --success: #3fb950;
+  --danger: #f85149;
+  --danger-hover: #ff6b62;
+  --focus-ring: 0 0 0 2px rgba(124, 156, 255, 0.55);
+
+  /* Type */
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 14px;
+  --fs-xl: 16px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --lh-tight: 1.3;
+  --lh-base: 1.45;
+  --ls-label: 0.02em;
+
+  /* Space / radius / shadow / motion */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --shadow-modal: 0 10px 40px rgba(0, 0, 0, 0.55);
+  --transition: 140ms ease;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg-app);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Slim themed scrollbars (replaces App.tsx inline <style>) */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+/* Global keyboard focus ring (signature: cool-blue) */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
