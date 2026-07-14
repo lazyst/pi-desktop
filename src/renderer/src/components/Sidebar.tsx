@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { SessionStatus } from '../types';
 import { IconNewSession, IconPin } from './icons';
+import { ContextMenu } from './ContextMenu';
 
 interface Session { key: string; cwd: string; name: string; time?: string; }
 interface Props {
@@ -12,10 +13,12 @@ interface Props {
   onTerminate: (key: string) => void;
   onPickDirectory: () => void;
   onTogglePin: (cwd: string) => void;
+  onDeleteSession: (key: string, name: string) => void;
 }
 
-export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin }: Props) {
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
   // 分组按 cwd；置顶分组排到最前（保持置顶先后顺序），其余维持原序。
   const pinnedSet = new Set(pinned);
@@ -33,7 +36,8 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
   });
 
   return (
-    <aside className="sidebar">
+    <>
+      <aside className="sidebar">
       <div className="sidebar-header">
         <span className="sidebar-title">会话</span>
         <div className="sidebar-actions">
@@ -88,6 +92,10 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                         onOpen({ key: s.key });
                       }
                     }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setMenu({ key: s.key, name: s.name, x: e.clientX, y: e.clientY });
+                    }}
                   >
                     <span className={`dot ${running ? 'running' : ''}`} />
                     <span className="session-name">
@@ -112,6 +120,15 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           );
         })}
       </div>
-    </aside>
+      </aside>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={[{ label: '删除会话', danger: true, onClick: () => onDeleteSession(menu.key, menu.name) }]}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </>
   );
 }

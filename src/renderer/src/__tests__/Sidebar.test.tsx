@@ -14,6 +14,7 @@ function renderSidebar(overrides: any = {}) {
   const onTerminate = vi.fn();
   const onPickDirectory = vi.fn();
   const onTogglePin = vi.fn();
+  const onDeleteSession = vi.fn();
   (window as any).pi = {
     listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
@@ -28,9 +29,10 @@ function renderSidebar(overrides: any = {}) {
       onTerminate={onTerminate}
       onPickDirectory={onPickDirectory}
       onTogglePin={onTogglePin}
+      onDeleteSession={overrides.onDeleteSession ?? onDeleteSession}
     />,
   );
-  return { onOpen, onTerminate, onPickDirectory, onTogglePin, ...utils };
+  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, ...utils };
 }
 
 describe('Sidebar', () => {
@@ -91,5 +93,15 @@ describe('Sidebar', () => {
     const active = screen.getByText('e2e-session').closest('.session-item')!;
     expect(active).toHaveClass('active');
     expect(container.querySelector('.session-item:not(.active)')).not.toHaveClass('active');
+  });
+
+  it('right-click a session opens a context menu with 删除会话', async () => {
+    const { onDeleteSession } = renderSidebar({ statusMap: { k1: 'running' } });
+    const item = screen.getByText('e2e-session').closest('.session-item')!;
+    fireEvent.contextMenu(item);
+    const menuItem = await screen.findByText('删除会话');
+    expect(menuItem).toBeInTheDocument();
+    fireEvent.click(menuItem);
+    expect(onDeleteSession).toHaveBeenCalledWith('k1', 'e2e-session');
   });
 });
