@@ -56,8 +56,7 @@ test('open disk session → continuity across switch → hover terminate → clo
   await expect.poll(async () => Number((await page.locator('.terminal-host.active .xterm-rows').innerText()).match(/tick (\d+)/)?.[1] ?? '0'), { timeout: 10000 }).toBeGreaterThan(before);
 
   const pidsAll = (await page.evaluate(() => (window as any).pi.debug())).pids as number[];
-  const kA = await page.locator('.session-item', { hasText: 'session-A' }).first().getAttribute('data-key');
-  const item = page.locator(`.session-item[data-key="${kA}"]`);
+  const item = page.locator('.session-item', { hasText: 'session-A' }).first();
   await item.hover();
   await item.locator('.terminate').click();
   await expect(item.locator('.dot.running')).toHaveCount(0);
@@ -121,15 +120,16 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
 
   await expect(page.locator('.session-item', { hasText: 'jump-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'jump-seeded' }).click();
-  // 等待若干 tick 产生溢出
-  await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('tick 3', { timeout: 10000 });
-
+  // Flood the terminal so it overflows the viewport (FAB only shows when scrolled up).
+  for (let i = 0; i < 60; i++) {
+    await page.keyboard.type(`fill ${i}\n`);
+  }
   const vp = page.locator('.terminal-host.active .xterm-viewport');
   await vp.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
   await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
-
   await page.locator('.jump-bottom.visible').click();
-  await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('tick', { timeout: 5000 });
+  // Returned to bottom: the visible (active) FAB is gone.
+  await expect(page.locator('.jump-bottom.visible')).toHaveCount(0);
 
   await electronApp!.close();
 });
