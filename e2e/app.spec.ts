@@ -125,7 +125,24 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
     await page.keyboard.type(`fill ${i}\n`);
   }
   const vp = page.locator('.terminal-host.active .xterm-viewport');
-  await vp.evaluate((el) => { el.scrollTop = 0; el.dispatchEvent(new Event('scroll')); });
+  // Ensure the viewport actually overflows (the 60 typed lines are flushed into the scroll area).
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.terminal-host.active .xterm-viewport') as HTMLElement | null;
+    return !!el && el.scrollHeight > el.clientHeight + 10;
+  }, undefined, { timeout: 10000 });
+  // Scroll up with a REAL wheel so it travels through xterm's own wheel handler and updates its
+  // internal viewportY. xterm re-syncs scrollTop from ydisp on every buffer change (the fake pty
+  // keeps ticking), so retry until the scroll actually sticks (scrollTop stays well above bottom) —
+  // this removes the race between the wheel's async scroll event and xterm's syncScrollArea().
+  await vp.hover({ force: true });
+  let scrolledUp = false;
+  for (let i = 0; i < 30 && !scrolledUp; i++) {
+    await page.mouse.wheel(0, -1000);
+    await page.waitForTimeout(50);
+    const m = await vp.evaluate((el) => ({ top: el.scrollTop, bottom: el.scrollHeight - el.clientHeight }));
+    if (m.top <= m.bottom - 30) scrolledUp = true;
+  }
+  expect(scrolledUp).toBe(true);
   await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
   await page.locator('.jump-bottom.visible').click();
   // Returned to bottom: the visible (active) FAB is gone.
