@@ -144,6 +144,17 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
   }
   expect(scrolledUp).toBe(true);
   await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
+
+  // Requirement 4 (runtime): once scrolled up, incoming data (the fake pty keeps ticking)
+  // must NOT snap the viewport back to the bottom — otherwise the scrollbar would feel
+  // "undraggable" because drag-up is immediately undone. Verify stability over several ticks.
+  await page.waitForTimeout(2500);
+  const heldUp = await vp.evaluate(
+    (el) => el.scrollTop <= el.scrollHeight - el.clientHeight - 30,
+  );
+  expect(heldUp).toBe(true);
+  await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
+
   await page.locator('.jump-bottom.visible').click();
   // Returned to bottom: the visible (active) FAB is gone.
   await expect(page.locator('.jump-bottom.visible')).toHaveCount(0);
