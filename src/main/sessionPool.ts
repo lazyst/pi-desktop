@@ -80,6 +80,17 @@ export class SessionPool {
     this.opts.onStatus(key, 'dead');
     this.opts.onExit(key);
   }
+  deleteSession(key: string) {
+    // 先终止进程（杀 pty + 触发 onStatus('dead') / onExit，渲染层据此关闭终端面板）。
+    this.terminate(key);
+    // 仅删除 sessionsDir 内的 .jsonl 文件，防止越权删除任意文件。
+    if (!key.endsWith('.jsonl')) return;
+    const dir = path.resolve(this.opts.sessionsDir);
+    const target = path.resolve(key);
+    const inside = target === dir || target.startsWith(dir + path.sep);
+    if (!inside) return;
+    try { fs.rmSync(target, { force: true }); } catch { /* 忽略占用 / 竞态 */ }
+  }
   killAll() { for (const k of [...this.entries.keys()]) this.terminate(k); }
   get(key: string) { return this.entries.get(key)?.info; }
   debugInfo(): { count: number; pids: number[] } {
