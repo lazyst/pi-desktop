@@ -35,9 +35,14 @@ function createWindow() {
 
   ipcMain.handle('session:list', () => pool.listFiles());
   ipcMain.handle('session:open', (_e, req: { key?: string; cwd?: string; name?: string }) => {
-    if (req.key && req.key.endsWith('.jsonl')) return pool.openExisting(req.key);
-    if (req.cwd) return pool.openNew(req.cwd, req.name);
-    throw new Error('session:open requires key or cwd');
+    try {
+      if (req.key && req.key.endsWith('.jsonl')) return pool.openExisting(req.key);
+      if (req.cwd) return pool.openNew(req.cwd, req.name);
+      throw new Error('session:open requires key or cwd');
+    } catch (err) {
+      console.error('[session:open] failed:', err);
+      throw new Error('无法启动 pi 会话，请确认 pi 已在 PATH 中且目录可访问');
+    }
   });
   ipcMain.handle('session:terminate', (_e, key: string) => pool.terminate(key));
   ipcMain.handle('session:debug', () => pool.debugInfo());
@@ -45,6 +50,7 @@ function createWindow() {
   ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));
 
   win.on('closed', () => pool.killAll());
+  app.on('before-quit', () => { /* pool is per-window; killAll already on window 'closed' */ });
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
