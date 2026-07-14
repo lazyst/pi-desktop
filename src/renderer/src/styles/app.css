@@ -181,7 +181,7 @@
 .header-error { margin-left: auto; font-size: var(--fs-xs); color: var(--danger); }
 
 /* Terminal area + host */
-.terminal-area { flex: 1; position: relative; }
+.terminal-area { flex: 1; position: relative; padding-right: var(--sp-2); }
 .terminal-host {
   position: absolute;
   inset: 0;
