@@ -47,4 +47,40 @@ describe('TerminalPane', () => {
     fireEvent.click(container.querySelector('.jump-bottom')!);
     expect(scrollToBottom).toHaveBeenCalled();
   });
+
+  it('right-click with a selection copies it to the clipboard', () => {
+    const api = makeApi();
+    (window as any).pi = api;
+    const hasSelection = vi.spyOn(Terminal.prototype, 'hasSelection').mockReturnValue(true);
+    const getSelection = vi.spyOn(Terminal.prototype, 'getSelection').mockReturnValue('hello');
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText, readText: vi.fn() },
+    });
+    const { container } = render(<TerminalPane sessionKey="k" active={true} />);
+    const host = container.querySelector('.terminal-host') as HTMLElement;
+    fireEvent.contextMenu(host);
+    expect(writeText).toHaveBeenCalledWith('hello');
+    hasSelection.mockRestore();
+    getSelection.mockRestore();
+  });
+
+  it('right-click without a selection pastes from the clipboard', async () => {
+    const api = makeApi();
+    (window as any).pi = api;
+    const hasSelection = vi.spyOn(Terminal.prototype, 'hasSelection').mockReturnValue(false);
+    const paste = vi.spyOn(Terminal.prototype, 'paste').mockImplementation(() => {});
+    const readText = vi.fn().mockResolvedValue('world');
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(), readText },
+    });
+    const { container } = render(<TerminalPane sessionKey="k" active={true} />);
+    const host = container.querySelector('.terminal-host') as HTMLElement;
+    fireEvent.contextMenu(host);
+    await vi.waitFor(() => expect(paste).toHaveBeenCalledWith('world'));
+    hasSelection.mockRestore();
+    paste.mockRestore();
+  });
 });

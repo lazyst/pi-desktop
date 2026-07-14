@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback, type MouseEvent } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { pi } from '../ipc';
@@ -17,6 +17,21 @@ export function TerminalPane({ sessionKey, active }: Props) {
   const fitRef = useRef<FitAddon>();
   const openedRef = useRef(false);
   const [showJump, setShowJump] = useState(false);
+
+  const handleContextMenu = useCallback((e: MouseEvent) => {
+    e.preventDefault();
+    const term = termRef.current;
+    if (!term) return;
+    try {
+      const clip = navigator.clipboard;
+      if (!clip) return;
+      if (term.hasSelection()) {
+        clip.writeText(term.getSelection()).catch(() => {});
+      } else {
+        clip.readText().then((text) => { if (text) term.paste(text); }).catch(() => {});
+      }
+    } catch { /* 剪贴板不可用（如非安全上下文）时静默跳过 */ }
+  }, []);
 
   useEffect(() => {
     // xterm lineHeight is a multiplier (default 1.0); 1.2 is a comfortable
@@ -82,7 +97,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
 
   return (
     <>
-      <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} />
+      <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} onContextMenu={handleContextMenu} />
       {active && (
         <button
           className={`jump-bottom${showJump ? ' visible' : ''}`}
