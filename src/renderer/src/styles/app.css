@@ -251,10 +251,13 @@
 }
 .modal-ok:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
 
-/* 置底按钮（需求 5）：仅活动且未贴底的会话显示，固定在终端区右下角 */
+/* 置底按钮（需求 5）：仅活动且未贴底的会话显示。固定在终端区右下角，
+   但右移以避开原生竖向滚动条——滚动条 10px 宽、紧贴 viewport 右缘，
+   而 viewport 又位于 host 8px 内边距内。故按钮右缘 = 8px(内边距) + 10px(滚动条) + 4px(间隙)，
+   确保不遮挡滚动条、不影响上下拖动。 */
 .jump-bottom {
   position: absolute;
-  right: var(--sp-3);
+  right: calc(var(--sp-2) + 10px + var(--sp-1)); /* 8px 内边距 + 10px 滚动条 + 4px 间隙 */
   bottom: var(--sp-3);
   z-index: 6;
   width: 36px; height: 36px;

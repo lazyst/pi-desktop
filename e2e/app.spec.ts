@@ -145,6 +145,20 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
   expect(scrolledUp).toBe(true);
   await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
 
+  // Requirement 5 (layout): the FAB must NOT overlap the native vertical scrollbar.
+  // The xterm scrollbar is the rightmost 10px of the viewport (which sits 8px inside the
+  // terminal host padding). Assert the button's right edge sits left of the scrollbar.
+  const noOverlap = await page.evaluate(() => {
+    const btn = document.querySelector('.jump-bottom.visible') as HTMLElement | null;
+    const vp = document.querySelector('.terminal-host.active .xterm-viewport') as HTMLElement | null;
+    if (!btn || !vp) return false;
+    const b = btn.getBoundingClientRect();
+    const v = vp.getBoundingClientRect();
+    const scrollbarLeft = v.right - 10; // 10px webkit scrollbar width (见 .xterm-viewport CSS)
+    return b.right <= scrollbarLeft + 1;
+  });
+  expect(noOverlap).toBe(true);
+
   // Requirement 4 (runtime): once scrolled up, incoming data (the fake pty keeps ticking)
   // must NOT snap the viewport back to the bottom — otherwise the scrollbar would feel
   // "undraggable" because drag-up is immediately undone. Verify stability over several ticks.
