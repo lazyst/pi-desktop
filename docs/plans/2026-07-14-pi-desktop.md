@@ -82,7 +82,8 @@ pi-desktop/
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
@@ -93,6 +94,7 @@ pi-desktop/
   "devDependencies": {
     "@testing-library/react": "^16.0.1",
     "@testing-library/jest-dom": "^6.5.0",
+    "@playwright/test": "^1.47.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1",
@@ -360,6 +362,10 @@ export class SessionPool {
   }
   killAll() { for (const k of [...this.entries.keys()]) this.terminate(k); }
   get(key: string) { return this.entries.get(key)?.info; }
+  debugInfo(): { count: number; pids: number[] } {
+    const running = [...this.entries.values()].filter((e) => e.info.status === 'running');
+    return { count: running.length, pids: running.map((e) => e.pty.pid ?? -1).filter((p) => p > 0) };
+  }
   listFiles(): SessionGroup[] {
     const root = this.opts.sessionsDir;
     if (!fs.existsSync(root)) return [];
@@ -412,6 +418,42 @@ function randomUUID(): string {
 
 Run: `cd pi-desktop && pnpm test src/main/__tests__/sessionPool.test.ts`
 Expected: PASS (all cases). Fix the `write` test to capture the returned pty instance from `factory.mock.results` so the assertion is meaningful.
+
+- [ ] **Step 4b: Add a real-PTY integration test (no mock, no `pi`)**
+
+```ts
+// src/main/__tests__/sessionPool.realpty.test.ts
+import { describe, it, expect } from 'vitest';
+import * as nodePty from 'node-pty';
+import { SessionPool } from '../sessionPool';
+
+const shell = process.platform === 'win32' ? 'cmd.exe' : 'bash';
+
+describe('SessionPool real PTY', () => {
+  it('spawns a real shell, echoes input, and reports exit on kill', async () => {
+    const onData = vi.fn(); // not used; we read synchronously below
+    const onStatus = vi.fn();
+    const onExit = vi.fn();
+    const pool = new SessionPool(
+      (_file, _args, opts) => nodePty.spawn(shell, [], { ...opts, shell: true }) as any,
+      { cols: 80, rows: 24, sessionsDir: '/tmp/sessions', onData, onStatus, onExit },
+    );
+    const info = pool.openNew('C:\\', 'realshell'); // factory ignores 'pi' and spawns the real shell
+    const pty = (pool as any).entries.get(info.key).pty;
+    const got: string[] = [];
+    pty.on('data', (d: string) => got.push(d));
+    await new Promise((r) => setTimeout(r, 200));
+    pty.write('echo HELLO_PTY\r\n');
+    await new Promise((r) => setTimeout(r, 400));
+    expect(got.join('')).toContain('HELLO_PTY');
+    pool.terminate(info.key);
+    expect(pool.get(info.key)).toBeUndefined();
+  });
+});
+```
+
+Run: `cd pi-desktop && pnpm test src/main/__tests__/sessionPool.realpty.test.ts`
+Expected: PASS — proves the real `node-pty` bridge (spawn → data → kill) works, independent of `pi`. (The `(pool as any).entries` access is a test-only reach-in; acceptable for integration coverage.)
 
 - [ ] **Step 5: Commit**
 
@@ -467,7 +509,32 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('session:status', (_e, m: { key: string; status: SessionStatus }) => cb(m.key, m.status)),
   onExit: (cb: (key: string) => void) =>
     ipcRenderer.on('session:exit', (_e, m: { key: string }) => cb(m.key)),
+  debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
 });
+```
+
+- [ ] **Step 2b: Create `src/main/fake-pi.mjs` (test-only fake backend)**
+
+```js
+// src/main/fake-pi.mjs
+// Stand-in for `pi` in automated E2E: prints a heartbeat every second,
+// echoes stdin lines, and exits cleanly on SIGTERM. No network / model / credentials.
+let n = 0;
+const timer = setInterval(() => { n += 1; process.stdout.write(`tick ${n}\n`); }, 1000);
+process.stdout.write('fake-pi ready\n');
+
+process.stdin.on('data', (d) => {
+  const s = d.toString();
+  process.stdout.write(`echo: ${s}`);
+});
+
+function shutdown() {
+  clearInterval(timer);
+  process.stdout.write('terminated\n');
+  process.exit(0);
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 ```
 
 - [ ] **Step 3: Create `src/main/index.ts`**
@@ -482,8 +549,12 @@ import nodePty from 'node-pty';
 const SESSIONS_DIR = path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
 
 function createPool(win: BrowserWindow) {
-  const ptyFactory = (file: string, args: string[], opts: any): IPtyLike =>
-    nodePty.spawn(file, args, { ...opts, shell: true }) as unknown as IPtyLike;
+  const useFake = process.env.PI_DESKTOP_FAKE === '1';
+  const fakeScript = path.join(__dirname, 'fake-pi.mjs');
+  const ptyFactory = (file: string, args: string[], opts: any): IPtyLike => {
+    if (useFake) return nodePty.spawn('node', [fakeScript], { ...opts, shell: true }) as unknown as IPtyLike;
+    return nodePty.spawn(file, args, { ...opts, shell: true }) as unknown as IPtyLike;
+  };
   return new SessionPool(ptyFactory, {
     cols: 80, rows: 24, sessionsDir: SESSIONS_DIR,
     onData: (key, data) => win.webContents.send('session:data', { key, data }),
@@ -511,6 +582,7 @@ function createWindow() {
     throw new Error('session:open requires key or cwd');
   });
   ipcMain.handle('session:terminate', (_e, key: string) => pool.terminate(key));
+  ipcMain.handle('session:debug', () => pool.debugInfo());
   ipcMain.on('session:input', (_e, m: { key: string; data: string }) => pool.write(m.key, m.data));
   ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));
 
@@ -534,6 +606,7 @@ export interface PiApi {
   terminate(key: string): Promise<void>;
   input(key: string, data: string): void;
   resize(key: string, cols: number, rows: number): void;
+  debug(): Promise<{ count: number; pids: number[] }>;
   onData(cb: (key: string, data: string) => void): void;
   onStatus(cb: (key: string, status: SessionStatus) => void): void;
   onExit(cb: (key: string) => void): void;
@@ -781,7 +854,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
     pi.resize(sessionKey, cols, rows);
   }, [active, sessionKey]);
 
-  return <div ref={hostRef} style={{ flex: 1, padding: 8, background: '#0c0c0c', display: active ? 'block' : 'none' }} />;
+  return <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} style={{ flex: 1, padding: 8, background: '#0c0c0c', display: active ? 'block' : 'none' }} />;
 }
 ```
 
@@ -935,52 +1008,115 @@ cd pi-desktop && git add -A && git commit -m "fix: guard session:open spawn fail
 
 ---
 
-## Task 8: Manual E2E verification
+## Task 8: Automated end-to-end tests (Playwright + fake backend)
 
-**Files:** none (verification only).
+**Files:**
+- Create: `playwright.config.ts`
+- Create: `e2e/app.spec.ts`
 
-- [ ] **Step 1: Run the app**
+**Interfaces:**
+- Consumes: built app (`out/main/index.js`), `window.pi.debug()` (Task 3), `fake-pi.mjs` (Task 3), Sidebar/TerminalPane (Tasks 4/5).
+- Produces: a fully automated E2E that proves, with **NO manual steps** and **NO real `pi`/model/credentials**: sidebar renders, opening a session shows a terminal, switching away keeps the process running (continuity), hover-terminate kills it, and closing the app kills all child processes.
 
-Run: `cd pi-desktop && pnpm dev`
-Expected: window opens with sidebar (your real `~/.pi/agent/sessions` groups) + empty main area.
+- [ ] **Step 1: Create `playwright.config.ts`**
 
-- [ ] **Step 2: New directory + new session**
+```ts
+import { defineConfig } from '@playwright/test';
 
-Action: click **+ 目录**, pick a real folder (e.g. `C:\Users\hcz\.pi\pi_workspace`); then **+ 会话**.
-Expected: a `pi` TUI terminal appears; it is active; green dot not yet shown in sidebar until `onStatus` fires (it does on spawn). The new session shows under that folder group.
+export default defineConfig({
+  testDir: 'e2e',
+  timeout: 60000,
+  expect: { timeout: 10000 },
+  reporter: [['list']],
+});
+```
 
-- [ ] **Step 3: Start a long task, then switch**
+- [ ] **Step 2: Create `e2e/app.spec.ts`**
 
-Action: in the terminal, type a prompt that runs a while (e.g. `重构这个模块` or any multi-turn task). While it streams, click a **different** session in the sidebar.
-Expected: the first session's `pi` process keeps running (green dot stays); the second session's terminal shows. The first task is NOT interrupted.
+```ts
+import { test, expect, _electron, type Page } from '@playwright/test';
+import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 
-- [ ] **Step 4: Switch back**
+const MAIN = path.join(__dirname, '..', 'out', 'main', 'index.js');
 
-Action: click the first (running) session again.
-Expected: you see the task still progressing / completed. Green dot present.
+async function latestTick(page: Page): Promise<number> {
+  const txt = await page.locator('.terminal-host.active .xterm-rows').innerText().catch(() => '');
+  const m = [...txt.matchAll(/tick (\d+)/g)];
+  return m.length ? Number(m[m.length - 1][1]) : -1;
+}
 
-- [ ] **Step 5: Hover terminate**
+function pidAlive(pid: number): boolean {
+  try { execSync(`tasklist /FI "PID eq ${pid}"`); return true; }
+  catch { return false; }
+}
 
-Action: hover the running session item → red `✕` appears → click it.
-Expected: `pi` process killed; green dot disappears; terminate button hidden.
+test('list → open → continuity across switch → hover terminate → close kills', async () => {
+  const electronApp = await _electron.launch({ args: [MAIN], env: { ...process.env, PI_DESKTOP_FAKE: '1' } });
+  const page = await electronApp.firstWindow();
+  await page.waitForLoadState('domcontentloaded');
+  page.on('dialog', (d) => d.accept('e2e-session')); // auto-answer +会话 window.prompt
 
-- [ ] **Step 6: Close and reopen**
+  // 1) app loaded (sidebar header visible)
+  await expect(page.getByText('会话')).toBeVisible({ timeout: 15000 });
 
-Action: close the app; run `pnpm dev` again.
-Expected: sidebar lists session files; no green dots (all dead, processes killed on close).
+  // 2) open first fake session → terminal renders, green dot running
+  await page.locator('button', { hasText: '+ 会话' }).click();
+  await expect(page.locator('.terminal-host.active .xterm-rows').innerText()).toContain('fake-pi ready', { timeout: 15000 });
+  await expect(page.locator('.session-item', { hasText: 'e2e-session' }).first().locator('.dot.running')).toBeVisible();
+  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
 
-- [ ] **Step 7: Commit verification notes (optional)**
+  // 3) open a second session, switch back to first, prove it kept ticking while hidden
+  const before = await latestTick(page);
+  await page.locator('button', { hasText: '+ 会话' }).click();
+  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(2);
+  await page.waitForTimeout(3000);
+  await page.locator('.session-item', { hasText: 'e2e-session' }).first().click();
+  const after = await latestTick(page);
+  expect(after).toBeGreaterThan(before); // process ran while hidden → continuity proven
+
+  // 4) capture all child pids, then hover-terminate the first session
+  const pidsAll = (await page.evaluate(() => (window as any).pi.debug())).pids as number[];
+  const item = page.locator('.session-item', { hasText: 'e2e-session' }).first();
+  await item.hover();
+  await item.locator('.terminate').click();
+  await expect(item.locator('.dot.running')).toHaveCount(0);
+  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
+
+  // 5) close app → all child pids must be gone (kill-on-close)
+  await electronApp.close();
+  await page.waitForTimeout(1500);
+  for (const pid of pidsAll) expect(pidAlive(pid)).toBe(false);
+});
+```
+
+> `tasklist` is Windows-specific (this environment is Windows). On other platforms swap `pidAlive` for `ps -p <pid>`. The PID-based assertion removes any need for manual verification of process cleanup.
+
+- [ ] **Step 3: Build the app, then run E2E**
+
+Run:
+```bash
+cd pi-desktop && pnpm build && pnpm exec playwright install && pnpm test:e2e
+```
+Expected:
+- `pnpm build` produces `out/main`, `out/preload`, `out/renderer`.
+- `playwright install` fetches the Electron build Playwright drives.
+- `pnpm test:e2e` → the spec PASSES: sidebar renders, fake terminal shows `fake-pi ready`, green dot present, tick count increases after switching away and back (continuity), hover-terminate drops the running count and removes the dot, and after `app.close()` the child `node fake-pi.mjs` PIDs are no longer alive.
+
+- [ ] **Step 4: Commit**
 
 ```bash
-cd pi-desktop && git add -A && git commit -m "docs: manual E2E of session switch / continuity / terminate verified"
+cd pi-desktop && git add -A && git commit -m "test: add automated Playwright E2E (fake backend) for session flow + continuity + terminate + close-kill"
 ```
-(Only if you added a NOTES file; otherwise skip.)
+
+**Optional (only if `pi` + a model key are available in CI):** add a second spec that launches WITHOUT `PI_DESKTOP_FAKE`, opens a real session, and asserts the TUI renders (`xterm-rows` contains known `pi` TUI text). This exercises the real `pi` path but is gated behind credential availability so the default suite stays hermetic.
 
 ---
 
 ## Self-Review Notes (per skill)
 
-- **Spec coverage:** §1 goals (sidebar groups, green dot, hover terminate, task continuity, close-kills) → Tasks 4/5/6/7/8. §2 stack → Task 1. §3 architecture → Tasks 2/3. §4 pool → Task 2. §5 sidebar → Task 4. §6 terminal → Task 5. §7 IPC → Task 3. §8 lifecycle → Task 7. §9 verification → Task 8. No gaps.
+- **Spec coverage:** §1 goals (sidebar groups, green dot, hover terminate, task continuity, close-kills) → Tasks 4/5/6/7/8. §2 stack → Task 1. §3 architecture → Tasks 2/3. §4 pool → Task 2. §5 sidebar → Task 4. §6 terminal → Task 5. §7 IPC → Task 3. §8 lifecycle → Task 7. §9 verification → **Task 8 is now FULLY AUTOMATED (Playwright + fake backend); no manual E2E remains.** No gaps.
+- **Automated testing:** Unit (SessionPool mock + real PTY, Sidebar, TerminalPane via vitest) + E2E (Playwright drives the built app in fake mode: list → open → continuity-across-switch → hover-terminate → close-kills, with PID-level process assertions). The real-`pi` path is covered by the same `SessionPool` spawn code (real-PTY integration test) and an optional gated spec; the default suite is hermetic (no `pi`/model/credentials).
 - **Placeholders:** None. All code steps show real code; no "TBD"/"implement later". The `write` test note is an explicit implementer instruction, not a placeholder.
-- **Type consistency:** `SessionInfo`/`SessionGroup`/`SessionStatus`/`OpenRequest` defined in `types.ts` (Task 3) and `sessionPool.ts` (Task 2); reused identically in Sidebar/TerminalPane/App and IPC signatures. `window.pi` API shape in `ipc.ts` matches `preload/index.ts`.
+- **Type consistency:** `SessionInfo`/`SessionGroup`/`SessionStatus`/`OpenRequest` defined in `types.ts` (Task 3) and `sessionPool.ts` (Task 2); reused identically in Sidebar/TerminalPane/App and IPC signatures. `window.pi` API shape in `ipc.ts` matches `preload/index.ts`. `debug()` returns `{count, pids}` consistently across SessionPool/ipyMain/preload/ipc.
 - **Known simplification:** `pi.onData`/`onStatus`/`onExit` in preload have no `off()`; `TerminalPane` guards by `key === sessionKey` and relies on component unmount + key guard. Acceptable for v1; a follow-up can add an unsubscribe handle. Flagged, not a blocker.
