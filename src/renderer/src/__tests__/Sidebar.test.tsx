@@ -48,4 +48,24 @@ describe('Sidebar', () => {
     fireEvent.click(item.querySelector('.terminate')!);
     expect(onTerminate).toHaveBeenCalledWith('k1');
   });
+  it('marks the active session item with .active class', () => {
+    const onOpen = vi.fn(), onTerminate = vi.fn();
+    (window as any).pi = {
+      listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
+      input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
+    };
+    render(
+      <Sidebar
+        sessions={sessions}
+        statusMap={{ k1: 'running' }}
+        activeKey="k1"
+        onOpen={onOpen}
+        onTerminate={onTerminate}
+      />
+    );
+    const active = screen.getByText('e2e-session').closest('.session-item')!;
+    expect(active).toHaveClass('active');
+    const other = screen.getByText('other-session').closest('.session-item')!;
+    expect(other).not.toHaveClass('active');
+  });
 });
