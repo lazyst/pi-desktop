@@ -13,7 +13,12 @@ export default function App() {
 
   useEffect(() => {
     pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
-    pi.onExit((key) => setStatusMap((m) => ({ ...m, [key]: 'dead' })));
+    pi.onExit((key) => {
+      setStatusMap((m) => ({ ...m, [key]: 'dead' }));
+      // Drop the terminated session from the open list so its pane unmounts and
+      // the sidebar stops showing a stale (dead) entry.
+      setOpen((list) => list.filter((s) => s.key !== key));
+    });
   }, []);
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
