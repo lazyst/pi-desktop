@@ -1,1 +1,1 @@
-@README.zh-CN.md
+新会话先阅读 @README.zh-CN.md 初步了解项目
