@@ -50,5 +50,21 @@ export function TerminalPane({ sessionKey, active }: Props) {
     pi.resize(sessionKey, cols, rows);
   }, [active, sessionKey]);
 
-  return <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} style={{ flex: 1, padding: 8, background: '#0c0c0c', display: active ? 'block' : 'none' }} />;
+  // Re-fit whenever the pane's box changes size (window resize, layout shifts).
+  // The ResizeObserver also fires when the pane goes from display:none to visible,
+  // which keeps the terminal filling the area after switching sessions.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const ro = new ResizeObserver(() => {
+      if (!active || !openedRef.current || !termRef.current || !fitRef.current) return;
+      try { fitRef.current.fit(); } catch {}
+      const { cols, rows } = termRef.current;
+      pi.resize(sessionKey, cols, rows);
+    });
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, [active, sessionKey]);
+
+  return <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, padding: 8, background: '#0c0c0c', display: active ? 'block' : 'none' }} />;
 }
