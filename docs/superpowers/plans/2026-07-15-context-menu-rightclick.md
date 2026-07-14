@@ -93,10 +93,10 @@ Expected: FAIL —— `deleteSession is not a function`
   }
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [ ] **Step 4: 运行测试 + 主进程类型检查确认通过**
 
-Run: `pnpm test src/main/__tests__/sessionPool.test.ts`
-Expected: PASS（含两个新增用例）
+Run: `pnpm test src/main/__tests__/sessionPool.test.ts && pnpm exec tsc -p tsconfig.node.json --noEmit`
+Expected: PASS（含两个新增用例）；类型检查无错误。
 
 - [ ] **Step 5: 提交**
 
@@ -147,8 +147,8 @@ git commit -m "feat(main): add SessionPool.deleteSession with path-traversal gua
 
 - [ ] **Step 4: 类型检查 + 全量单测确认无回归**
 
-Run: `pnpm exec tsc --noEmit -p tsconfig.json && pnpm test`
-Expected: 类型检查通过；`pnpm test` 全绿（无回归）。
+Run: `pnpm exec tsc -p tsconfig.node.json --noEmit && pnpm test`
+Expected: 类型检查通过（`main/index.ts` 与 `preload/index.ts` 均被 `tsconfig.node.json` 覆盖）；`pnpm test` 全绿（无回归）。
 
 - [ ] **Step 5: 提交**
 
@@ -767,7 +767,7 @@ git commit -m "feat(app): wire delete-session confirm dialog to session:delete I
 - [ ] **Step 2: 类型检查 + 全量单测（确认无回归）**
 
 Run: `pnpm exec tsc --noEmit -p tsconfig.json && pnpm test`
-Expected: 类型检查通过；`pnpm test` 全绿。
+Expected: 类型检查通过（渲染进程）；`pnpm test` 全绿。
 
 - [ ] **Step 3: 提交**
 
@@ -786,9 +786,9 @@ git commit -m "style: add context-menu and confirm-dialog styles using tokens"
 
 Run:
 ```bash
-pnpm test && pnpm exec tsc --noEmit -p tsconfig.json && pnpm build
+pnpm test && pnpm exec tsc --noEmit -p tsconfig.json && pnpm exec tsc --noEmit -p tsconfig.node.json && pnpm build
 ```
-Expected: 全部通过；`pnpm build` 成功产出 `out/`。
+Expected: 全部通过；两个类型检查均无错误；`pnpm build` 成功产出 `out/`。
 
 - [ ] **Step 2: 手动冒烟（`pnpm dev`）**
 
