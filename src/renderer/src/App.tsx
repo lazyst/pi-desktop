@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { pi } from './ipc';
 import type { SessionInfo, SessionStatus } from './types';
 
@@ -75,6 +76,22 @@ export default function App() {
     });
   };
 
+  const [confirm, setConfirm] = useState<{ key: string; name: string } | null>(null);
+
+  const handleDeleteRequest = (key: string, name: string) => setConfirm({ key, name });
+
+  const handleDeleteConfirm = async () => {
+    if (!confirm) return;
+    const { key } = confirm;
+    setConfirm(null);
+    setError(null);
+    try {
+      await pi.deleteSession(key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const handleTerminate = (key: string) => { pi.terminate(key); };
 
   const active = open.find((s) => s.key === activeKey);
@@ -91,6 +108,7 @@ export default function App() {
         onTerminate={handleTerminate}
         onPickDirectory={handlePickDirectory}
         onTogglePin={handleTogglePin}
+        onDeleteSession={handleDeleteRequest}
       />
       <main className="main">
         <div className="header">
@@ -107,6 +125,14 @@ export default function App() {
           {!active && <div className="empty-state">从左侧选择一个会话，或新建会话。</div>}
         </div>
       </main>
+      {confirm && (
+        <ConfirmDialog
+          title="删除会话"
+          message={`确定删除会话「${confirm.name}」？该会话文件将被删除且不可恢复，若进程正在运行也会被终止。`}
+          onConfirm={handleDeleteConfirm}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
     </div>
   );
 }
