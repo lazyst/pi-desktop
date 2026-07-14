@@ -4,6 +4,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { pi } from '../ipc';
 import '@xterm/xterm/css/xterm.css';
 
+// Mirrors --font-mono in tokens.css. xterm reads a literal font-family string,
+// not a CSS variable, so we repeat the stack here (kept in sync with tokens.css).
+const FONT_MONO = "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace";
+
 interface Props { sessionKey: string; active: boolean; }
 
 export function TerminalPane({ sessionKey, active }: Props) {
@@ -13,7 +17,9 @@ export function TerminalPane({ sessionKey, active }: Props) {
   const openedRef = useRef(false);
 
   useEffect(() => {
-    const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: 'monospace', fontSize: 13 });
+    // xterm lineHeight is a multiplier (default 1.0); 1.2 is a comfortable
+    // spacing that honors the spec's intent without over-loose rows.
+    const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1.2 });
     const fit = new FitAddon();
     term.loadAddon(fit);
     termRef.current = term; fitRef.current = fit;
@@ -23,23 +29,13 @@ export function TerminalPane({ sessionKey, active }: Props) {
 
     term.onData((d) => pi.input(sessionKey, d));
 
-    // Create the terminal + wire I/O here. Opening/fitting is deferred to the
-    // [active] effect so we never fit a hidden (display:none) element to 0x0,
-    // which would resize the PTY to 0x0 and drop buffered output (breaking
-    // session-continuity). A newly opened pane is always mounted active, so it
-    // opens immediately on first activation.
     return () => {
       term.dispose();
       openedRef.current = false;
-      // Note: pi.onData has no off(); a production build should track and ignore stale keys.
     };
   }, [sessionKey]);
 
   useEffect(() => {
-    // Only open/fit/resize while the pane is actually visible. Fitting a hidden
-    // element yields a 0x0 size and would resize the PTY to 0x0, dropping buffered
-    // output — which breaks session-continuity. The terminal is opened once (when
-    // first active); subsequent activations just re-fit and re-resize.
     if (!active || !hostRef.current || !termRef.current || !fitRef.current) return;
     if (!openedRef.current) {
       termRef.current.open(hostRef.current);
@@ -50,9 +46,6 @@ export function TerminalPane({ sessionKey, active }: Props) {
     pi.resize(sessionKey, cols, rows);
   }, [active, sessionKey]);
 
-  // Re-fit whenever the pane's box changes size (window resize, layout shifts).
-  // The ResizeObserver also fires when the pane goes from display:none to visible,
-  // which keeps the terminal filling the area after switching sessions.
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -66,5 +59,5 @@ export function TerminalPane({ sessionKey, active }: Props) {
     return () => ro.disconnect();
   }, [active, sessionKey]);
 
-  return <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, padding: 8, background: '#0c0c0c', display: active ? 'block' : 'none' }} />;
+  return <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} />;
 }
