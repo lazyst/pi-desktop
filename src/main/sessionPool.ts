@@ -38,6 +38,16 @@ export class SessionPool {
   constructor(private ptyFactory: PtyFactory, private opts: SessionPoolOptions) {}
 
   openExisting(sessionFile: string): SessionInfo {
+    // Reuse an already-running process for this session file instead of always
+    // spawning a new one. Without this, switching back to a session the user
+    // already opened would launch a fresh `pi --session` process and overwrite
+    // the pool entry, orphaning the previously running process (it could never
+    // be terminated, killed on quit, or switched back to). The process must
+    // keep running while another session is active, and reopening just
+    // re-attaches the same terminal buffer — the "switch, don't kill" contract
+    // (design §4, e2e "continuity across switch").
+    const existing = this.entries.get(sessionFile);
+    if (existing && existing.info.status === 'running') return existing.info;
     const cwd = readSessionCwd(sessionFile) ?? decodeCwd(path.basename(path.dirname(sessionFile)));
     const name = formatTimestamp(path.basename(sessionFile));
     return this.spawn(['--session', sessionFile], cwd, name, sessionFile, sessionFile);
