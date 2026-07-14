@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { SessionStatus } from '../types';
 
 interface Props {
-  sessions: Array<{ key: string; cwd: string; name: string; status: SessionStatus }>;
+  sessions: Array<{ key: string; cwd: string; name: string; time?: string }>;
   statusMap: Record<string, SessionStatus>;
   onOpen: (req: { key?: string; cwd?: string; name?: string }) => void;
   onTerminate: (key: string) => void;
@@ -17,13 +17,15 @@ interface PromptState {
 export function Sidebar({ sessions, statusMap, onOpen, onTerminate }: Props) {
   const [prompt, setPrompt] = useState<PromptState | null>(null);
   const [inputValue, setInputValue] = useState('');
+  // Collapsed state per directory group: show at most 5 sessions unless expanded.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const openPrompt = (cfg: PromptState) => {
     setInputValue(cfg.defaultValue);
     setPrompt(cfg);
   };
 
-  // Group the OPEN sessions by cwd, preserving first-seen order.
+  // Group the sessions by cwd, preserving first-seen order.
   const groups: Array<{ cwd: string; items: Props['sessions'] }> = [];
   const cwdIndex = new Map<string, number>();
   for (const s of sessions) {
@@ -54,25 +56,41 @@ export function Sidebar({ sessions, statusMap, onOpen, onTerminate }: Props) {
         </div>
       </div>
       <div style={{ overflowY: 'auto', flex: 1, padding: '6px 0' }}>
-        {groups.map((g) => (
-          <div key={g.cwd} className="group" style={{ marginBottom: 4 }}>
-            <div style={{ padding: '6px 12px', color: '#8b8b98', fontSize: 11, wordBreak: 'break-all' }}>
-              📁 {g.cwd}
-            </div>
-            {g.items.map((s) => {
-              const running = (statusMap[s.key] ?? 'running') === 'running';
-              return (
-                <div key={s.key} className="session-item" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px 5px 26px', cursor: 'pointer' }}
-                     onClick={() => onOpen({ key: s.key })}>
-                  <span className={`dot ${running ? 'running' : ''}`} style={{ width: 8, height: 8, borderRadius: '50%', background: running ? '#3fb950' : '#444', flex: 'none' }} />
-                  <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</span>
-                  <button className="terminate" title="终止会话" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}
-                    style={{ display: 'none', width: 18, height: 18, border: 'none', background: 'transparent', color: '#f85149', cursor: 'pointer' }} >✕</button>
+        {groups.map((g) => {
+          const isOpen = !!expanded[g.cwd];
+          const visible = isOpen ? g.items : g.items.slice(0, 5);
+          const hidden = g.items.length - visible.length;
+          return (
+            <div key={g.cwd} className="group" style={{ marginBottom: 4 }}>
+              <div style={{ padding: '6px 12px', color: '#8b8b98', fontSize: 11, wordBreak: 'break-all' }}>
+                📁 {g.cwd}
+              </div>
+              {visible.map((s) => {
+                const running = statusMap[s.key] === 'running';
+                return (
+                  <div key={s.key} data-key={s.key} className="session-item" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px 5px 26px', cursor: 'pointer' }}
+                       onClick={() => onOpen({ key: s.key })}>
+                    <span className={`dot ${running ? 'running' : ''}`} style={{ width: 8, height: 8, borderRadius: '50%', background: running ? '#3fb950' : '#444', flex: 'none' }} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</div>
+                      {s.time && <div style={{ fontSize: 10, color: '#6b6b76', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.time}</div>}
+                    </span>
+                    <button className="terminate" title="终止会话" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}
+                      style={{ display: 'none', width: 18, height: 18, border: 'none', background: 'transparent', color: '#f85149', cursor: 'pointer' }}>✕</button>
+                  </div>
+                );
+              })}
+              {g.items.length > 5 && (
+                <div
+                  onClick={() => setExpanded((m) => ({ ...m, [g.cwd]: !isOpen }))}
+                  style={{ padding: '4px 12px 4px 26px', fontSize: 11, color: '#58a6ff', cursor: 'pointer' }}
+                >
+                  {isOpen ? '收起' : `展开 ${hidden} 个更多`}
                 </div>
-              );
-            })}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {prompt && (

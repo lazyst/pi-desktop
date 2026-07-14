@@ -1,24 +1,75 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
 
-const SESSIONS_DIR = path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
+const SESSIONS_DIR =
+  process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
+
+// Resolve the `pi` executable to an absolute path. The electron child process does
+// NOT always inherit the user's shell PATH (e.g. when the app is launched by
+// double-clicking the .exe), so a bare `pi` fails with ENOENT. We search PATH plus
+// the well-known pnpm global bin location, preferring Windows script extensions.
+function resolvePi(): string {
+  const explicit = process.env.PI_BIN;
+  if (explicit) return explicit;
+  const exts = ['.cmd', '.exe', '.ps1', '.bat', ''];
+  const dirs = [
+    ...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean),
+    path.join(os.homedir(), 'AppData', 'Local', 'pnpm', 'bin'),
+  ];
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const cand = path.join(dir, 'pi' + ext);
+      if (fs.existsSync(cand)) return cand;
+    }
+  }
+  return 'pi';
+}
+
+// `pi.cmd` ultimately runs `node cli.js`, so `node` must also be resolvable in the
+// child's PATH. When the app is launched without the user's shell PATH (e.g. by
+// double-clicking the .exe), `node` may be missing — so resolve it and prepend it.
+function resolveNodeDir(): string | undefined {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    if (fs.existsSync(path.join(dir, 'node.exe')) || fs.existsSync(path.join(dir, 'node'))) return dir;
+  }
+  const miseNode = path.join(os.homedir(), 'AppData', 'Local', 'mise', 'installs', 'node');
+  if (fs.existsSync(miseNode)) {
+    for (const ver of fs.readdirSync(miseNode)) {
+      const d = path.join(miseNode, ver);
+      if (fs.existsSync(path.join(d, 'node.exe'))) return d;
+    }
+  }
+  return undefined;
+}
 
 function createPool(win: BrowserWindow) {
   const useFake = process.env.PI_DESKTOP_FAKE === '1';
   const fakeScript = path.join(__dirname, 'fake-pi.mjs');
+  const piBin = resolvePi();
+  const nodeDir = resolveNodeDir();
+  // Ensure `node` (used by the pi.cmd shim) is on the child PATH even when the app
+  // was launched without the user's shell PATH.
+  const childEnv = nodeDir
+    ? { ...process.env, PATH: [nodeDir, process.env.PATH].filter(Boolean).join(path.delimiter) }
+    : process.env;
   const ptyFactory = (file: string, args: string[], opts: any): IPtyLike => {
-    if (useFake) return nodePty.spawn('node', [fakeScript], { ...opts, shell: true }) as unknown as IPtyLike;
-    return nodePty.spawn(file, args, { ...opts, shell: true }) as unknown as IPtyLike;
+    if (useFake) return nodePty.spawn('node', [fakeScript], { ...opts, shell: true, env: childEnv }) as unknown as IPtyLike;
+    // `file` is always 'pi' from the pool; use the resolved absolute path so the
+    // real `pi` is found even when PATH doesn't contain the pnpm bin.
+    return nodePty.spawn(piBin, args, { ...opts, shell: true, env: childEnv }) as unknown as IPtyLike;
   };
   return new SessionPool(ptyFactory, {
     cols: 80, rows: 24, sessionsDir: SESSIONS_DIR,
-    onData: (key, data) => win.webContents.send('session:data', { key, data }),
-    onStatus: (key, status) => win.webContents.send('session:status', { key, status }),
-    onExit: (key) => win.webContents.send('session:exit', { key }),
+    // The window may already be destroyed when these fire (e.g. during killAll on
+    // 'closed'), so guard every send to avoid "Object has been destroyed" exceptions.
+    onData: (key, data) => { if (!win.isDestroyed()) win.webContents.send('session:data', { key, data }); },
+    onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
+    onExit: (key) => { if (!win.isDestroyed()) win.webContents.send('session:exit', { key }); },
   });
 }
 

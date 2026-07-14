@@ -5,8 +5,8 @@ import { Sidebar } from '../components/Sidebar';
 import type { SessionStatus } from '../types';
 
 const sessions = [
-  { key: 'k1', cwd: 'C:\\Users\\hcz\\.pi-agent', name: 'e2e-session', status: 'running' as SessionStatus },
-  { key: 'k2', cwd: 'C:\\Users\\hcz\\project', name: 'other-session', status: 'running' as SessionStatus },
+  { key: 'k1', cwd: 'C:\\Users\\hcz\\.pi-agent', name: 'e2e-session' },
+  { key: 'k2', cwd: 'C:\\Users\\hcz\\project', name: 'other-session' },
 ];
 
 function renderSidebar(statusMap: Record<string, SessionStatus> = {}) {
@@ -14,6 +14,7 @@ function renderSidebar(statusMap: Record<string, SessionStatus> = {}) {
     listSessions: vi.fn(),
     openSession: vi.fn(),
     terminate: vi.fn(),
+    input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
   };
   (window as any).pi = api;
   const onOpen = vi.fn(), onTerminate = vi.fn();
@@ -22,27 +23,28 @@ function renderSidebar(statusMap: Record<string, SessionStatus> = {}) {
 }
 
 describe('Sidebar', () => {
-  it('renders cwd groups', () => {
+  it('renders cwd groups and sessions from disk + live', async () => {
     renderSidebar();
-    expect(screen.getByText(/C:\\Users\\hcz\\.pi-agent/)).toBeInTheDocument();
-    expect(screen.getByText(/C:\\Users\\hcz\\project/)).toBeInTheDocument();
+    expect(await screen.findByText(/C:\\Users\\hcz\\.pi-agent/)).toBeInTheDocument();
+    expect(screen.getByText('e2e-session')).toBeInTheDocument();
+    expect(screen.getByText('other-session')).toBeInTheDocument();
   });
-  it('shows green dot when status running (and defaults to running)', () => {
+  it('shows green dot only when status running', async () => {
     renderSidebar({ k1: 'running' });
-    const item = screen.getByText('e2e-session').closest('.session-item')!;
+    const item = (await screen.findByText('e2e-session')).closest('.session-item')!;
     expect(item.querySelector('.dot.running')).toBeInTheDocument();
-    // k2 has no statusMap entry → defaults to running
-    const item2 = screen.getByText('other-session').closest('.session-item')!;
-    expect(item2.querySelector('.dot.running')).toBeInTheDocument();
+    // k2 is not running -> no green dot
+    const item2 = (await screen.findByText('other-session')).closest('.session-item')!;
+    expect(item2.querySelector('.dot.running')).toBeNull();
   });
-  it('clicking a session opens it by key', () => {
+  it('clicking a session opens it by key', async () => {
     const { onOpen } = renderSidebar({ k1: 'running' });
-    fireEvent.click(screen.getByText('e2e-session'));
+    fireEvent.click(await screen.findByText('e2e-session'));
     expect(onOpen).toHaveBeenCalledWith({ key: 'k1' });
   });
-  it('hover terminate calls onTerminate', () => {
+  it('hover terminate calls onTerminate', async () => {
     const { onTerminate } = renderSidebar({ k1: 'running' });
-    const item = screen.getByText('e2e-session').closest('.session-item')!;
+    const item = (await screen.findByText('e2e-session')).closest('.session-item')!;
     fireEvent.click(item.querySelector('.terminate')!);
     expect(onTerminate).toHaveBeenCalledWith('k1');
   });

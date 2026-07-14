@@ -63,7 +63,12 @@ export class SessionPool {
     if (!e) return;
     e.pty.kill();
     this.entries.delete(key);
+    // Update status AND notify the UI that the session ended. We call onExit
+    // explicitly (not only via the pty 'exit' event) so the renderer updates
+    // reliably even if the killed process does not emit a clean 'exit'. The
+    // pty 'exit' handler may also fire onExit — that is idempotent.
     this.opts.onStatus(key, 'dead');
+    this.opts.onExit(key);
   }
   killAll() { for (const k of [...this.entries.keys()]) this.terminate(k); }
   get(key: string) { return this.entries.get(key)?.info; }
@@ -82,8 +87,10 @@ export class SessionPool {
       const sessions = fs.readdirSync(dir)
         .filter((f) => f.endsWith('.jsonl'))
         .map((f) => {
-          const name = formatTimestamp(f);
-          return { key: path.join(dir, f), name, time: name };
+          const file = path.join(dir, f);
+          const stamp = formatTimestamp(f);
+          const name = readSessionName(file) ?? stamp;
+          return { key: file, name, time: stamp };
         });
       groups.push({ cwd, sessions });
     }
@@ -109,6 +116,36 @@ function readSessionCwd(file: string): string | undefined {
     const obj = JSON.parse(line);
     return typeof obj?.cwd === 'string' ? obj.cwd : undefined;
   } catch { return undefined; }
+}
+// A session's human-friendly name is the text of its first user message.
+// The .jsonl stores no explicit title, so derive it from the first user turn.
+function readSessionName(file: string): string | undefined {
+  let fd: number;
+  try { fd = fs.openSync(file, 'r'); } catch { return undefined; }
+  try {
+    const buf = Buffer.alloc(65536);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const text = buf.toString('utf8', 0, n);
+    for (const line of text.split('\n')) {
+      const t = line.trim();
+      if (!t) continue;
+      try {
+        const obj = JSON.parse(t);
+        if (obj?.type === 'message' && obj?.message?.role === 'user') {
+          const c = obj.message.content;
+          const str = Array.isArray(c)
+            ? c.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join(' ')
+            : String(c ?? '');
+          const clean = str.replace(/\s+/g, ' ').trim();
+          if (clean) return clean.length > 80 ? clean.slice(0, 80) : clean;
+        }
+      } catch { /* skip non-JSON / malformed lines */ }
+    }
+  } catch { /* ignore read errors (e.g. file being written) */
+  } finally {
+    try { fs.closeSync(fd); } catch { /* noop */ }
+  }
+  return undefined;
 }
 function readGroupCwd(dir: string): string | undefined {
   const first = fs.readdirSync(dir).find((f) => f.endsWith('.jsonl'));
