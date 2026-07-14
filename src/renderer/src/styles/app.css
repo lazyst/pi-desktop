@@ -1,0 +1,216 @@
+/* App shell */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  background: var(--bg-app);
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 280px;
+  flex: none;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  position: relative;
+}
+.sidebar-header {
+  padding: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.sidebar-title { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
+.sidebar-actions { display: flex; gap: var(--sp-2); }
+
+/* Buttons (sidebar + modal) */
+.btn {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  cursor: pointer;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+.btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.btn-primary { color: var(--accent); }
+.btn-primary:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
+
+/* Group */
+.group { margin-bottom: var(--sp-1); }
+.group-title {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  word-break: break-all;
+  letter-spacing: var(--ls-label);
+}
+
+/* Session list */
+.session-list { overflow-y: auto; flex: 1; padding: var(--sp-2) 0; }
+
+/* Session item (signature: active rail) */
+.session-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3) var(--sp-2) var(--sp-4);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background-color var(--transition), border-color var(--transition);
+}
+.session-item:hover { background: var(--bg-hover); }
+.session-item.active {
+  background: var(--bg-active);
+  border-left-color: var(--accent);
+}
+.session-item:focus-visible { box-shadow: var(--focus-ring); }
+
+/* Status dot */
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #444; flex: none;
+  transition: background-color var(--transition), box-shadow var(--transition);
+}
+.dot.running {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.6);
+}
+
+/* Session name block */
+.session-name { flex: 1; min-width: 0; }
+.session-name .name {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.session-name .time {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Terminate (shown on hover/focus) */
+.terminate {
+  display: none;
+  border: none;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  padding: 0 var(--sp-1);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  transition: color var(--transition);
+}
+.terminate:hover { color: var(--danger-hover); }
+.session-item:hover .terminate,
+.session-item:focus-within .terminate { display: inline-flex; }
+
+/* Group expand toggle */
+.group-expand {
+  padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-4);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  cursor: pointer;
+  letter-spacing: var(--ls-label);
+}
+.group-expand:hover { color: var(--accent-hover); }
+
+/* Header (accent hairline) */
+.header {
+  height: 34px;
+  border-bottom: 1px solid var(--accent);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-3);
+  background: var(--bg-panel);
+}
+.header-title { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
+.header-status { font-size: var(--fs-xs); color: var(--text-muted); }
+.header-status.running { color: var(--success); }
+.header-error { margin-left: auto; font-size: var(--fs-xs); color: var(--danger); }
+
+/* Terminal area + host */
+.terminal-area { flex: 1; position: relative; }
+.terminal-host {
+  position: absolute;
+  inset: 0;
+  padding: var(--sp-2);
+  background: var(--bg-app);
+  display: none;
+}
+.terminal-host.active { display: block; }
+
+.empty-state { padding: var(--sp-4); color: var(--text-muted); }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: var(--sp-4);
+  border-radius: var(--r-md);
+  min-width: 320px;
+  box-shadow: var(--shadow-modal);
+}
+.modal-label { margin-bottom: var(--sp-2); color: var(--text); }
+.modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--sp-2);
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  transition: border-color var(--transition);
+}
+.modal-input:focus { outline: none; border-color: var(--border-strong); box-shadow: var(--focus-ring); }
+.modal-actions { display: flex; justify-content: flex-end; gap: var(--sp-2); margin-top: var(--sp-3); }
+.modal-cancel {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+.modal-cancel:hover { background: var(--bg-hover); border-color: var(--border-strong); }
+.modal-ok {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-3);
+  cursor: pointer;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+.modal-ok:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
