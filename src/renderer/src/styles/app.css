@@ -290,3 +290,90 @@
 .xterm-viewport::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.03); }
 .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
 .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* 右键上下文菜单 */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 160px;
+  padding: var(--sp-1) 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+.context-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.context-menu-item:hover,
+.context-menu-item:focus-visible {
+  background: var(--bg-hover);
+  outline: none;
+}
+.context-menu-item.danger {
+  color: var(--danger);
+}
+.context-menu-item.danger:hover,
+.context-menu-item.danger:focus-visible {
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--danger-hover);
+}
+
+/* 确认弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.confirm-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: var(--sp-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-modal);
+}
+.confirm-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.confirm-message {
+  margin: 0 0 var(--sp-4);
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  color: var(--text-muted);
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+.btn-danger {
+  color: #fff;
+  background: var(--danger);
+  border: 1px solid var(--danger);
+}
+.btn-danger:hover {
+  background: var(--danger-hover);
+  border-color: var(--danger-hover);
+}
+.btn-danger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
