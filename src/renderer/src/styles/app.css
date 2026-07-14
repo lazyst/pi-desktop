@@ -1,7 +1,8 @@
 /* App shell */
 .app-shell {
   display: flex;
-  height: 100vh;
+  height: 100%;        /* 与 #root 的 100% 口径一致，避免 100vh 取整/滚动条占位导致的多余滚动条 */
+  overflow: hidden;    /* 兜底：外壳本身永不滚动；内部滚动交给 .session-list 与 .xterm-viewport */
   background: var(--bg-app);
   color: var(--text);
   font-family: var(--font-mono);
@@ -11,6 +12,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;       /* 允许在 flex 列中收缩，防止子内容把外壳撑出滚动条 */
 }
 
 /* Sidebar */
@@ -97,7 +99,7 @@
 .group.pinned .group-name { color: var(--accent); }
 
 /* Session list */
-.session-list { overflow-y: auto; flex: 1; padding: var(--sp-2) 0; }
+.session-list { overflow-y: auto; flex: 1; padding: var(--sp-2) 0; min-height: 0; }
 
 /* Session item (signature: active rail) */
 .session-item {
@@ -181,7 +183,7 @@
 .header-error { margin-left: auto; font-size: var(--fs-xs); color: var(--danger); }
 
 /* Terminal area + host */
-.terminal-area { flex: 1; position: relative; padding-right: var(--sp-2); }
+.terminal-area { flex: 1; position: relative; padding-right: var(--sp-2); min-height: 0; }
 .terminal-host {
   position: absolute;
   inset: 0;
