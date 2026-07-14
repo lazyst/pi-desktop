@@ -103,7 +103,7 @@
 ```
 
 - **侧栏（280px）**：分组目录标题用 `--text-faint` / `--fs-xs` 弱化；会话项 `padding` 用 token；hover → `--bg-hover`；激活项 → 左侧 2px `--accent` 竖条（激活轨）+ `--bg-active` 淡染底色。
-- **标题栏（34px）**：底部一条 1px `--accent`（或 `--border` + accent 收口）细线；左侧会话名 `--fs-lg` `--fw-semibold`；状态点用 `--success`/`--text-muted`；错误提示用 `--danger`。
+- **标题栏（34px）**：底部一条 1px `--accent` 细线收口；左侧会话名 `--fs-lg` `--fw-semibold`；状态点用 `--success`/`--text-muted`；错误提示用 `--danger`。
 - **终端主区**：保留方形（终端惯例，不加圆角）；统一内边距 `--sp-2` 与底色 `--bg-app`。
 - **弹窗（modal）**：`--bg-elevated` + `--r-md` + `--shadow-modal`；输入框 `--bg-app` 底、`--border` 边，focus 时 `--border-strong` + `--focus-ring`。
 - **滚动条**：沿用细滚动条，颜色由 `#2a2a36` 收敛为 `--border`。
