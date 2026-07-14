@@ -10,6 +10,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal>();
   const fitRef = useRef<FitAddon>();
+  const openedRef = useRef(false);
 
   useEffect(() => {
     const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: 'monospace', fontSize: 13 });
@@ -22,26 +23,28 @@ export function TerminalPane({ sessionKey, active }: Props) {
 
     term.onData((d) => pi.input(sessionKey, d));
 
-    const host = hostRef.current;
-    if (host) {
-      term.open(host);
-      try { fit.fit(); } catch {}
-      const { cols, rows } = term;
-      pi.resize(sessionKey, cols, rows);
-    }
-
+    // Create the terminal + wire I/O here. Opening/fitting is deferred to the
+    // [active] effect so we never fit a hidden (display:none) element to 0x0,
+    // which would resize the PTY to 0x0 and drop buffered output (breaking
+    // session-continuity). A newly opened pane is always mounted active, so it
+    // opens immediately on first activation.
     return () => {
       term.dispose();
+      openedRef.current = false;
       // Note: pi.onData has no off(); a production build should track and ignore stale keys.
     };
   }, [sessionKey]);
 
   useEffect(() => {
-    // Only (re)fit while the pane is actually visible. Fitting a hidden (display:none)
-    // element yields a 0×0 size and would resize the PTY to 0×0, dropping buffered
-    // output — which breaks session-continuity checks. The terminal is opened once on
-    // mount; here we just keep it sized correctly when it becomes active again.
-    if (!active || !termRef.current || !fitRef.current) return;
+    // Only open/fit/resize while the pane is actually visible. Fitting a hidden
+    // element yields a 0x0 size and would resize the PTY to 0x0, dropping buffered
+    // output — which breaks session-continuity. The terminal is opened once (when
+    // first active); subsequent activations just re-fit and re-resize.
+    if (!active || !hostRef.current || !termRef.current || !fitRef.current) return;
+    if (!openedRef.current) {
+      termRef.current.open(hostRef.current);
+      openedRef.current = true;
+    }
     try { fitRef.current.fit(); } catch {}
     const { cols, rows } = termRef.current;
     pi.resize(sessionKey, cols, rows);
