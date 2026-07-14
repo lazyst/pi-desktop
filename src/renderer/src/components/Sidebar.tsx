@@ -75,8 +75,10 @@ export function Sidebar({ sessions, statusMap, onOpen, onTerminate }: Props) {
                       <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.name}</div>
                       {s.time && <div style={{ fontSize: 10, color: '#6b6b76', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.time}</div>}
                     </span>
-                    <button className="terminate" title="终止会话" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}
-                      style={{ display: 'none', width: 18, height: 18, border: 'none', background: 'transparent', color: '#f85149', cursor: 'pointer' }}>✕</button>
+                    {running && (
+                      <button className="terminate" title="终止进程" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}
+                        style={{ display: 'none', border: 'none', background: 'transparent', color: '#f85149', cursor: 'pointer', fontSize: 11, padding: '0 2px', whiteSpace: 'nowrap' }}>终止进程</button>
+                    )}
                   </div>
                 );
               })}

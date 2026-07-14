@@ -82,7 +82,15 @@ export default function App() {
           {!active && <div style={{ padding: 20, color: '#8b8b98' }}>从左侧选择一个会话，或新建会话。</div>}
         </div>
       </main>
-      <style>{`.session-item:hover .terminate { display: inline-flex !important; }`}</style>
+      <style>{`
+        .session-item:hover .terminate { display: inline-flex !important; }
+        /* Slim, themed scrollbars */
+        *::-webkit-scrollbar { width: 8px; height: 8px; }
+        *::-webkit-scrollbar-track { background: transparent; }
+        *::-webkit-scrollbar-thumb { background: #2a2a36; border-radius: 4px; }
+        *::-webkit-scrollbar-thumb:hover { background: #3a3a48; }
+        * { scrollbar-width: thin; scrollbar-color: #2a2a36 transparent; }
+      `}</style>
     </div>
   );
 }
