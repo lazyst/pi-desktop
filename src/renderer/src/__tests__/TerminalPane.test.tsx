@@ -53,6 +53,7 @@ describe('TerminalPane', () => {
     (window as any).pi = api;
     const hasSelection = vi.spyOn(Terminal.prototype, 'hasSelection').mockReturnValue(true);
     const getSelection = vi.spyOn(Terminal.prototype, 'getSelection').mockReturnValue('hello');
+    const clearSelection = vi.spyOn(Terminal.prototype, 'clearSelection').mockImplementation(() => {});
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -62,8 +63,10 @@ describe('TerminalPane', () => {
     const host = container.querySelector('.terminal-host') as HTMLElement;
     fireEvent.contextMenu(host);
     expect(writeText).toHaveBeenCalledWith('hello');
+    expect(clearSelection).toHaveBeenCalled();
     hasSelection.mockRestore();
     getSelection.mockRestore();
+    clearSelection.mockRestore();
   });
 
   it('right-click without a selection pastes from the clipboard', async () => {

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface ContextMenuItem {
   label: string;
@@ -13,17 +13,23 @@ interface Props {
 }
 
 export function ContextMenu({ x, y, items, onClose }: Props) {
+  const ref = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    const onDocClick = () => onClose();
+    // 捕获阶段的 mousedown：即使焦点落在 xterm 终端内（其可能阻止事件冒泡），
+    // document 层也能在捕获阶段拿到该事件，从而点按菜单外部（如主终端区）即关闭菜单。
+    const onPointerDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
     const onScroll = () => onClose();
     const onResize = () => onClose();
-    document.addEventListener('click', onDocClick);
+    document.addEventListener('mousedown', onPointerDown, true);
     document.addEventListener('keydown', onKey);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
     return () => {
-      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('mousedown', onPointerDown, true);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
@@ -37,7 +43,7 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
   const top = Math.min(y, window.innerHeight - MENU_H - 8);
 
   return (
-    <div className="context-menu" style={{ left, top }} role="menu" onClick={(e) => e.stopPropagation()}>
+    <div ref={ref} className="context-menu" style={{ left, top }} role="menu" onClick={(e) => e.stopPropagation()}>
       {items.map((it, i) => (
         <button
           key={i}

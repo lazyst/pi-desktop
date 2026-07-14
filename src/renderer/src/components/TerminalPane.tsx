@@ -27,6 +27,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
       if (!clip) return;
       if (term.hasSelection()) {
         clip.writeText(term.getSelection()).catch(() => {});
+        term.clearSelection(); // 复制后清空选区，给用户“已复制”的视觉反馈
       } else {
         clip.readText().then((text) => { if (text) term.paste(text); }).catch(() => {});
       }
