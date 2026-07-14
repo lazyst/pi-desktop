@@ -9,63 +9,87 @@ const sessions = [
   { key: 'k2', cwd: 'C:\\Users\\hcz\\project', name: 'other-session' },
 ];
 
-function renderSidebar(statusMap: Record<string, SessionStatus> = {}) {
-  const api = {
-    listSessions: vi.fn(),
-    openSession: vi.fn(),
-    terminate: vi.fn(),
+function renderSidebar(overrides: any = {}) {
+  const onOpen = vi.fn();
+  const onTerminate = vi.fn();
+  const onPickDirectory = vi.fn();
+  const onTogglePin = vi.fn();
+  (window as any).pi = {
+    listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
   };
-  (window as any).pi = api;
-  const onOpen = vi.fn(), onTerminate = vi.fn();
-  render(<Sidebar sessions={sessions} statusMap={statusMap} onOpen={onOpen} onTerminate={onTerminate} />);
-  return { api, onOpen, onTerminate };
+  const utils = render(
+    <Sidebar
+      sessions={overrides.sessions ?? sessions}
+      statusMap={overrides.statusMap ?? {}}
+      activeKey={overrides.activeKey}
+      pinned={overrides.pinned ?? []}
+      onOpen={onOpen}
+      onTerminate={onTerminate}
+      onPickDirectory={onPickDirectory}
+      onTogglePin={onTogglePin}
+    />,
+  );
+  return { onOpen, onTerminate, onPickDirectory, onTogglePin, ...utils };
 }
 
 describe('Sidebar', () => {
-  it('renders cwd groups and sessions from disk + live', async () => {
+  it('no longer renders a top-level "+ 会话" button', () => {
+    renderSidebar();
+    expect(screen.queryByText('+ 会话')).toBeNull();
+  });
+
+  it('"+ 目录" triggers onPickDirectory (native picker)', () => {
+    const { onPickDirectory } = renderSidebar();
+    fireEvent.click(screen.getByText('+ 目录'));
+    expect(onPickDirectory).toHaveBeenCalled();
+  });
+
+  it('renders cwd groups and sessions from the sessions prop', async () => {
     renderSidebar();
     expect(await screen.findByText(/C:\\Users\\hcz\\.pi-agent/)).toBeInTheDocument();
     expect(screen.getByText('e2e-session')).toBeInTheDocument();
     expect(screen.getByText('other-session')).toBeInTheDocument();
   });
-  it('shows green dot only when status running', async () => {
-    renderSidebar({ k1: 'running' });
-    const item = (await screen.findByText('e2e-session')).closest('.session-item')!;
-    expect(item.querySelector('.dot.running')).toBeInTheDocument();
-    // k2 is not running -> no green dot
-    const item2 = (await screen.findByText('other-session')).closest('.session-item')!;
-    expect(item2.querySelector('.dot.running')).toBeNull();
+
+  it('clicking new-session action opens a session in that cwd', () => {
+    const { onOpen } = renderSidebar();
+    fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\project 新建会话'));
+    expect(onOpen).toHaveBeenCalledWith({ cwd: 'C:\\Users\\hcz\\project' });
   });
+
+  it('clicking pin action toggles pin for that cwd', () => {
+    const { onTogglePin } = renderSidebar();
+    fireEvent.click(screen.getByLabelText('置顶 C:\\Users\\hcz\\project'));
+    expect(onTogglePin).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
+  });
+
+  it('pins a group: adds pinned class and sorts it first', () => {
+    const { container } = renderSidebar({ pinned: ['C:\\Users\\hcz\\project'] });
+    const groups = container.querySelectorAll('.group');
+    expect(groups.length).toBe(2);
+    expect(groups[0]).toHaveClass('pinned');
+    expect(groups[0].textContent).toContain('C:\\Users\\hcz\\project');
+    expect(groups[1].textContent).toContain('C:\\Users\\hcz\\.pi-agent');
+  });
+
   it('clicking a session opens it by key', async () => {
-    const { onOpen } = renderSidebar({ k1: 'running' });
+    const { onOpen } = renderSidebar({ statusMap: { k1: 'running' } });
     fireEvent.click(await screen.findByText('e2e-session'));
     expect(onOpen).toHaveBeenCalledWith({ key: 'k1' });
   });
+
   it('hover terminate calls onTerminate', async () => {
-    const { onTerminate } = renderSidebar({ k1: 'running' });
+    const { onTerminate } = renderSidebar({ statusMap: { k1: 'running' } });
     const item = (await screen.findByText('e2e-session')).closest('.session-item')!;
     fireEvent.click(item.querySelector('.terminate')!);
     expect(onTerminate).toHaveBeenCalledWith('k1');
   });
+
   it('marks the active session item with .active class', () => {
-    const onOpen = vi.fn(), onTerminate = vi.fn();
-    (window as any).pi = {
-      listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
-      input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
-    };
-    render(
-      <Sidebar
-        sessions={sessions}
-        statusMap={{ k1: 'running' }}
-        activeKey="k1"
-        onOpen={onOpen}
-        onTerminate={onTerminate}
-      />
-    );
+    const { container } = renderSidebar({ statusMap: { k1: 'running' }, activeKey: 'k1' });
     const active = screen.getByText('e2e-session').closest('.session-item')!;
     expect(active).toHaveClass('active');
-    const other = screen.getByText('other-session').closest('.session-item')!;
-    expect(other).not.toHaveClass('active');
+    expect(container.querySelector('.session-item:not(.active)')).not.toHaveClass('active');
   });
 });
