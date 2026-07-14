@@ -17,7 +17,9 @@ export default function App() {
   }, []);
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
-    const info = await pi.openSession(req);
+    // A bare `{ name }` (from "+ 会话") has no cwd yet. The renderer is sandboxed and
+    // has no `process`, so the cwd default is resolved in the main process.
+    const info = await pi.openSession(req.key ? { key: req.key } : { cwd: req.cwd, name: req.name });
     setOpen((list) => list.some((s) => s.key === info.key) ? list : [...list, info as OpenSession]);
     setActiveKey(info.key);
   };
@@ -27,7 +29,7 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#0c0c0c', color: '#d4d4d8', fontFamily: 'monospace' }}>
-      <Sidebar statusMap={statusMap} onOpen={handleOpen} onTerminate={handleTerminate} />
+      <Sidebar sessions={open} statusMap={statusMap} onOpen={handleOpen} onTerminate={handleTerminate} />
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <div style={{ height: 34, borderBottom: '1px solid #2a2a36', display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: '#16161e' }}>
           <span style={{ fontWeight: 600 }}>{active ? `${active.name} · ${active.cwd}` : '—'}</span>

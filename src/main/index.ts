@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
@@ -36,9 +37,21 @@ function createWindow() {
   ipcMain.handle('session:list', () => pool.listFiles());
   ipcMain.handle('session:open', (_e, req: { key?: string; cwd?: string; name?: string }) => {
     try {
-      if (req.key && req.key.endsWith('.jsonl')) return pool.openExisting(req.key);
-      if (req.cwd) return pool.openNew(req.cwd, req.name);
-      throw new Error('session:open requires key or cwd');
+      if (req.key) {
+        // Disk-backed session → reopen its file. Live session (key already in the
+        // pool, e.g. `live-<uuid>`) → return the existing entry so the UI can
+        // SWITCH to it instead of spawning a duplicate process.
+        if (req.key.endsWith('.jsonl')) return pool.openExisting(req.key);
+        const existing = pool.get(req.key);
+        if (existing) return existing;
+        // Unknown key → open a new session carrying that key.
+        return pool.openNew(req.cwd && fs.existsSync(req.cwd) ? req.cwd : process.cwd(), req.name, req.key);
+      }
+      // The renderer is sandboxed and has no `process`, so default the cwd here
+      // in the main process, and fall back to an existing directory to avoid
+      // node-pty's ERROR_DIRECTORY (267) on Windows.
+      const cwd = req.cwd && fs.existsSync(req.cwd) ? req.cwd : process.cwd();
+      return pool.openNew(cwd, req.name);
     } catch (err) {
       console.error('[session:open] failed:', err);
       throw new Error('无法启动 pi 会话，请确认 pi 已在 PATH 中且目录可访问');

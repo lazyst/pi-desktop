@@ -22,6 +22,14 @@ export function TerminalPane({ sessionKey, active }: Props) {
 
     term.onData((d) => pi.input(sessionKey, d));
 
+    const host = hostRef.current;
+    if (host) {
+      term.open(host);
+      try { fit.fit(); } catch {}
+      const { cols, rows } = term;
+      pi.resize(sessionKey, cols, rows);
+    }
+
     return () => {
       term.dispose();
       // Note: pi.onData has no off(); a production build should track and ignore stale keys.
@@ -29,8 +37,11 @@ export function TerminalPane({ sessionKey, active }: Props) {
   }, [sessionKey]);
 
   useEffect(() => {
-    if (!hostRef.current || !termRef.current || !fitRef.current) return;
-    termRef.current.open(hostRef.current);
+    // Only (re)fit while the pane is actually visible. Fitting a hidden (display:none)
+    // element yields a 0×0 size and would resize the PTY to 0×0, dropping buffered
+    // output — which breaks session-continuity checks. The terminal is opened once on
+    // mount; here we just keep it sized correctly when it becomes active again.
+    if (!active || !termRef.current || !fitRef.current) return;
     try { fitRef.current.fit(); } catch {}
     const { cols, rows } = termRef.current;
     pi.resize(sessionKey, cols, rows);

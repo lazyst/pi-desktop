@@ -42,8 +42,8 @@ export class SessionPool {
     const name = formatTimestamp(path.basename(sessionFile));
     return this.spawn(['--session', sessionFile], cwd, name, sessionFile, sessionFile);
   }
-  openNew(cwd: string, name?: string): SessionInfo {
-    const key = `live-${randomUUID()}`;
+  openNew(cwd: string, name?: string, explicitKey?: string): SessionInfo {
+    const key = explicitKey ?? `live-${randomUUID()}`;
     const args = name ? ['--name', name] : [];
     return this.spawn(args, cwd, name || 'new-session', key, key);
   }
