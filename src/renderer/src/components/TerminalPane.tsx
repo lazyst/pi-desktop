@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { pi } from '../ipc';
+import { IconArrowDown } from './icons';
 import '@xterm/xterm/css/xterm.css';
 
 // Mirrors --font-mono in tokens.css. xterm reads a literal font-family string,
@@ -15,11 +16,12 @@ export function TerminalPane({ sessionKey, active }: Props) {
   const termRef = useRef<Terminal>();
   const fitRef = useRef<FitAddon>();
   const openedRef = useRef(false);
+  const [showJump, setShowJump] = useState(false);
 
   useEffect(() => {
     // xterm lineHeight is a multiplier (default 1.0); 1.2 is a comfortable
     // spacing that honors the spec's intent without over-loose rows.
-    const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1.2 });
+    const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1.2, scrollback: 5000 });
     const fit = new FitAddon();
     term.loadAddon(fit);
     termRef.current = term; fitRef.current = fit;
@@ -37,13 +39,32 @@ export function TerminalPane({ sessionKey, active }: Props) {
 
   useEffect(() => {
     if (!active || !hostRef.current || !termRef.current || !fitRef.current) return;
-    if (!openedRef.current) {
-      termRef.current.open(hostRef.current);
-      openedRef.current = true;
-    }
+    try {
+      if (!openedRef.current) { termRef.current.open(hostRef.current); openedRef.current = true; }
+    } catch { /* jsdom/headless: ignore open failures */ }
     try { fitRef.current.fit(); } catch {}
     const { cols, rows } = termRef.current;
     pi.resize(sessionKey, cols, rows);
+
+    // 需求 5：未贴底时显示置底按钮。
+    // 优先监听真实 xterm viewport 的原生 scroll（浏览器精确）；
+    // jsdom 下 xterm 不会创建 .xterm-viewport，故同时挂到 hostRef 作为兜底
+    // （真实浏览器中 host 不滚动，该兜底是无害的死重）。
+    const viewport = termRef.current.element?.querySelector('.xterm-viewport') as HTMLElement | null;
+    const host = hostRef.current;
+    const onScrollEvt = () => {
+      const el = viewport ?? host ?? null;
+      if (!el) return;
+      const atBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - 2;
+      setShowJump(!atBottom);
+    };
+    viewport?.addEventListener('scroll', onScrollEvt);
+    host?.addEventListener('scroll', onScrollEvt);
+    onScrollEvt();
+    return () => {
+      viewport?.removeEventListener('scroll', onScrollEvt);
+      host?.removeEventListener('scroll', onScrollEvt);
+    };
   }, [active, sessionKey]);
 
   useEffect(() => {
@@ -59,5 +80,19 @@ export function TerminalPane({ sessionKey, active }: Props) {
     return () => ro.disconnect();
   }, [active, sessionKey]);
 
-  return <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} />;
+  return (
+    <>
+      <div ref={hostRef} data-session={sessionKey} className={active ? 'terminal-host active' : 'terminal-host'} />
+      {active && (
+        <button
+          className={`jump-bottom${showJump ? ' visible' : ''}`}
+          title="滚动到最新"
+          aria-label="滚动到最新"
+          onClick={() => termRef.current?.scrollToBottom()}
+        >
+          <IconArrowDown />
+        </button>
+      )}
+    </>
+  );
 }
