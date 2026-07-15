@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getTheme, setTheme } from '../theme';
-import type { Theme } from '../types';
+import { pi } from '../ipc';
+import type { Theme, CloseBehavior } from '../types';
 
 interface Props {
   onClose: () => void;
@@ -11,10 +12,22 @@ interface Props {
 // "更多设置即将到来" hint).
 export function SettingsPanel({ onClose }: Props) {
   const [theme, setLocal] = useState<Theme>(getTheme());
+  // 关闭按钮行为：默认最小化到托盘，可在「直接关闭」间切换（见 docs/adr/0001）。
+  const [closeBehavior, setCloseBehavior] = useState<CloseBehavior>('minimize-to-tray');
+
+  useEffect(() => {
+    pi.getConfig().then((cfg) => setCloseBehavior(cfg.closeBehavior)).catch(() => {});
+  }, []);
 
   const choose = (t: Theme) => {
     setTheme(t);
     setLocal(t);
+  };
+
+  const chooseClose = (b: CloseBehavior) => {
+    setCloseBehavior(b);
+    // config 经异步 IPC 持久化；用 .catch 吸收拒绝（try/catch 抓不到 Promise 拒绝）。
+    pi.setConfig({ closeBehavior: b }).catch(() => {});
   };
 
   return (
@@ -46,6 +59,29 @@ export function SettingsPanel({ onClose }: Props) {
               onClick={() => choose('light')}
             >
               亮色
+            </button>
+          </div>
+        </div>
+        <div className="settings-row">
+          <span className="settings-label">关闭按钮</span>
+          <div className="segmented" role="radiogroup" aria-label="关闭按钮行为">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={closeBehavior === 'close'}
+              className={`seg${closeBehavior === 'close' ? ' active' : ''}`}
+              onClick={() => chooseClose('close')}
+            >
+              直接关闭
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={closeBehavior === 'minimize-to-tray'}
+              className={`seg${closeBehavior === 'minimize-to-tray' ? ' active' : ''}`}
+              onClick={() => chooseClose('minimize-to-tray')}
+            >
+              最小化到托盘
             </button>
           </div>
         </div>
