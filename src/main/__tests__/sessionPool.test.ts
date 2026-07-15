@@ -5,11 +5,13 @@ import * as path from 'node:path';
 import { SessionPool, decodeCwd, formatTimestamp } from '../sessionPool';
 
 function mockPty() {
+  const cbs: Record<string, (d?: any) => void> = {};
   return {
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
-    on: vi.fn((_e: string, _cb: (d: string) => void) => { /* capture not needed for unit test */ }),
+    on: vi.fn((e: string, cb: (d?: any) => void) => { cbs[e] = cb; }),
+    emit: (e: string, d?: any) => cbs[e]?.(d),
     pid: 999,
   };
 }
@@ -120,5 +122,49 @@ describe('SessionPool.deleteSession', () => {
     const { pool } = makePoolIn(dir);
     pool.deleteSession(file);
     expect(fs.existsSync(file)).toBe(true); // 未被删除
+  });
+});
+
+describe('SessionPool promotion linking (live -> disk)', () => {
+  it('links a new live session to its written .jsonl and reuses it on openExisting', () => {
+    const { pool, factory, onStatus } = makePool();
+    const live = pool.openNew('/some/cwd', 'n'); // keyed live-<uuid>
+    expect(factory).toHaveBeenCalledTimes(1);
+    // pi writes the .jsonl; the filesystem watcher reports it
+    pool.reconcile([{ cwd: '/some/cwd', sessions: [{ key: '/tmp/sessions/some/abc.jsonl', name: 'hi', time: 't' }] }]);
+    // status is also emitted under the on-disk key so the sidebar dot is correct
+    expect(onStatus).toHaveBeenCalledWith('/tmp/sessions/some/abc.jsonl', 'running');
+    // clicking the promoted sidebar entry reuses the live process (no duplicate spawn)
+    const reopened = pool.openExisting('/tmp/sessions/some/abc.jsonl');
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(reopened.key).toBe(live.key); // reports live key → same terminal pane
+    expect(pool.debugInfo().count).toBe(1);
+  });
+
+  it('does not link when the cwd differs', () => {
+    const { pool, factory } = makePool();
+    pool.openNew('/cwdA', 'n');
+    pool.reconcile([{ cwd: '/cwdB', sessions: [{ key: '/tmp/sessions/cwdB/x.jsonl', name: 'hi', time: 't' }] }]);
+    pool.openExisting('/tmp/sessions/cwdB/x.jsonl');
+    expect(factory).toHaveBeenCalledTimes(2); // spawned fresh, not reused
+  });
+
+  it('resize on an exited pty does not throw', () => {
+    const { pool, factory } = makePool();
+    const key = pool.openNew('/cwd', 'n').key;
+    pool.terminate(key); // exits + removes entry
+    expect(() => pool.resize(key, 80, 24)).not.toThrow();
+    const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+    expect(pty.resize).not.toHaveBeenCalled(); // skipped for dead/removed pty
+  });
+
+  it('resize after the pty quits (Ctrl+C) does not throw or call pty.resize', () => {
+    const { pool, factory } = makePool();
+    const key = pool.openNew('/cwd', 'n').key;
+    // simulate pi quitting via Ctrl+C: the pty emits 'exit' (entry stays until terminated)
+    const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+    pty.emit('exit');
+    expect(() => pool.resize(key, 80, 24)).not.toThrow();
+    expect(pty.resize).not.toHaveBeenCalled(); // dead pty is skipped
   });
 });

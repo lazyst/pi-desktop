@@ -12,6 +12,7 @@ export interface PiApi {
   onData(cb: (key: string, data: string) => void): void;
   onStatus(cb: (key: string, status: SessionStatus) => void): void;
   onExit(cb: (key: string) => void): void;
+  onRelink(cb: (from: string, to: string) => void): void;
   onIndex(cb: (groups: SessionGroup[]) => void): void;
 }
 
