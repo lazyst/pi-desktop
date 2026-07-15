@@ -11,18 +11,18 @@ export interface PiApi {
   resize(key: string, cols: number, rows: number): void;
   debug(): Promise<{ count: number; pids: number[] }>;
   pickDirectory(): Promise<string | null>;
-  onData(cb: (key: string, data: string) => void): void;
-  onStatus(cb: (key: string, status: SessionStatus) => void): void;
-  onExit(cb: (key: string) => void): void;
-  onRelink(cb: (from: string, to: string) => void): void;
-  onIndex(cb: (groups: SessionGroup[]) => void): void;
+  onData(cb: (key: string, data: string) => void): () => void;
+  onStatus(cb: (key: string, status: SessionStatus) => void): () => void;
+  onExit(cb: (key: string) => void): () => void;
+  onRelink(cb: (from: string, to: string) => void): () => void;
+  onIndex(cb: (groups: SessionGroup[]) => void): () => void;
   // 无边框窗口的窗口控制（对应自建标题条）
   minimizeWindow(): void;
   toggleMaximizeWindow(): void;
   closeWindow(): void;
   getWindowBounds(): Promise<Bounds>;
   setWindowBounds(bounds: Bounds): void;
-  onMaximizeChange(cb: (maximized: boolean) => void): void;
+  onMaximizeChange(cb: (maximized: boolean) => void): () => void;
   // 配置存储（主进程 config.json 唯一真源，见 docs/adr/0001）
   getInitialConfig(): AppConfig | null; // 窗口创建时经 additionalArguments 同步注入，首屏零闪烁
   getConfig(): Promise<AppConfig>;

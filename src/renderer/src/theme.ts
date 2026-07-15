@@ -4,10 +4,12 @@ import type { ITheme } from '@xterm/xterm';
 
 const listeners = new Set<(t: Theme) => void>();
 
-// 终端（xterm 5.x 以 canvas 渲染，颜色只来自 theme 选项，不支持 CSS 变量覆盖）
+// 终端（xterm 6.0.0：WebGL 渲染优先、内建 DOM 兜底，颜色只来自 theme 选项，不支持 CSS 变量覆盖）
 // 与 tokens.css 的 DOM 令牌共享同一套 GitHub 语义：背景=--bg-app、前景=--text、
 // 选区=accent 半透明；16 色 ANSI 用 GitHub 官方暗/亮调色板，使 CLI 输出与窗口
 // 同属一个视觉语言。与 tokens.css 的等值约束由 theme.test.ts 守护，防漂移。
+// 滚动条滑块配色（scrollbarSlider*）供 xterm 6.0.0 的 VS Code 风格覆盖滚动条使用，
+// 使其与主题一致。
 export const TERM_THEMES: Record<Theme, ITheme> = {
   dark: {
     background: '#0d1117',
@@ -20,6 +22,10 @@ export const TERM_THEMES: Record<Theme, ITheme> = {
     brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
     brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
     brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
+    // xterm 6.0.0 覆盖滚动条滑块（VS Code 风格）：默认淡、悬停加深、拖拽偏 accent
+    scrollbarSliderBackground: 'rgba(201, 209, 217, 0.15)',
+    scrollbarSliderHoverBackground: 'rgba(201, 209, 217, 0.40)',
+    scrollbarSliderActiveBackground: 'rgba(124, 156, 255, 0.60)',
   },
   light: {
     background: '#ffffff',
@@ -32,6 +38,9 @@ export const TERM_THEMES: Record<Theme, ITheme> = {
     brightBlack: '#6e7681', brightRed: '#a40e26', brightGreen: '#1a7f37',
     brightYellow: '#bf8700', brightBlue: '#218bff', brightMagenta: '#a475f9',
     brightCyan: '#3192aa', brightWhite: '#d1d9e0',
+    scrollbarSliderBackground: 'rgba(31, 35, 40, 0.16)',
+    scrollbarSliderHoverBackground: 'rgba(31, 35, 40, 0.38)',
+    scrollbarSliderActiveBackground: 'rgba(59, 91, 219, 0.55)',
   },
 };
 

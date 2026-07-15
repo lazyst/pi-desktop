@@ -20,6 +20,24 @@ describe('TerminalPane', () => {
     expect(api.onData).toHaveBeenCalled();
   });
 
+  it('coalesces pty chunks arriving in the same frame into a single term.write', async () => {
+    const api = makeApi();
+    (window as any).pi = api;
+    // 确定性：让 requestAnimationFrame 走 setTimeout(0)，便于 waitFor 捕获 flush。
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => { setTimeout(() => cb(0), 0); return 1; });
+    const write = vi.spyOn(Terminal.prototype, 'write').mockImplementation(() => {});
+    render(<TerminalPane sessionKey="k" active={true} />);
+    const onData = api.onData.mock.calls[0][0];
+    // 模拟 pi-tui「清屏 → 重绘」落在同一帧
+    onData('k', '\x1b[2J');
+    onData('k', 'hello world');
+    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
+    // 合并为一次写入，由 xterm 一次性合成渲染，消除中间空屏帧
+    expect(write.mock.calls[0][0]).toBe('\x1b[2Jhello world');
+    write.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
   it('shows jump-to-bottom button only when scrolled up, and clicks scrollToBottom', () => {
     const api = makeApi();
     (window as any).pi = api;
