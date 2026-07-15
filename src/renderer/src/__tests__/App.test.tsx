@@ -10,7 +10,7 @@ describe('App', () => {
       openSession: vi.fn(),
       terminate: vi.fn(),
       input: vi.fn(), resize: vi.fn(),
-      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(),
+      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
       pickDirectory: vi.fn(), debug: vi.fn(),
     };
     (window as any).pi = api;

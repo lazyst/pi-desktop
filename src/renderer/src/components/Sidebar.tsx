@@ -14,11 +14,19 @@ interface Props {
   onPickDirectory: () => void;
   onTogglePin: (cwd: string) => void;
   onDeleteSession: (key: string, name: string) => void;
+  // live `live-<uuid>` key → on-disk `.jsonl` path, so a promoted session can be
+  // highlighted as active using its on-disk key.
+  relink?: Record<string, string>;
 }
 
-export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession }: Props) {
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, relink }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
+
+  // A new session is keyed `live-<uuid>` in the terminal area but appears in the
+  // sidebar under its on-disk `.jsonl` path once promoted. Map the active key to
+  // its disk path so the promoted entry is highlighted as active.
+  const effectiveActive = activeKey ? (relink?.[activeKey] ?? activeKey) : null;
 
   // 分组按 cwd；置顶分组排到最前（保持置顶先后顺序），其余维持原序。
   const pinnedSet = new Set(pinned);
@@ -77,7 +85,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
               </div>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
-                const isActive = s.key === activeKey;
+                const isActive = s.key === effectiveActive;
                 return (
                   <div
                     key={s.key}

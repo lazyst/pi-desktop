@@ -70,6 +70,7 @@ function createPool(win: BrowserWindow) {
     onData: (key, data) => { if (!win.isDestroyed()) win.webContents.send('session:data', { key, data }); },
     onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
     onExit: (key) => { if (!win.isDestroyed()) win.webContents.send('session:exit', { key }); },
+    onRelink: (from, to) => { if (!win.isDestroyed()) win.webContents.send('session:relink', { from, to }); },
   });
 }
 
@@ -101,7 +102,12 @@ function createWindow() {
   const pushIndex = () => {
     if (indexTimer) clearTimeout(indexTimer);
     indexTimer = setTimeout(() => {
-      if (!win.isDestroyed()) win.webContents.send('session:index', pool.listFiles());
+      if (win.isDestroyed()) return;
+      const groups = pool.listFiles();
+      // Link freshly-written disk sessions to the live processes that created them
+      // so clicking a promoted sidebar entry reuses the same process.
+      pool.reconcile(groups);
+      win.webContents.send('session:index', groups);
     }, 300);
   };
   try {

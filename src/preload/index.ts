@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('session:status', (_e, m: { key: string; status: SessionStatus }) => cb(m.key, m.status)),
   onExit: (cb: (key: string) => void) =>
     ipcRenderer.on('session:exit', (_e, m: { key: string }) => cb(m.key)),
+  onRelink: (cb: (from: string, to: string) => void) =>
+    ipcRenderer.on('session:relink', (_e, m: { from: string; to: string }) => cb(m.from, m.to)),
   onIndex: (cb: (groups: SessionGroup[]) => void) =>
     ipcRenderer.on('session:index', (_e, groups: SessionGroup[]) => cb(groups)),
 });

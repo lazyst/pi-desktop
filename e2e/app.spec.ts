@@ -96,6 +96,45 @@ test('new session from a directory promotes into the sidebar after first message
   await electronApp!.close();
 });
 
+test('promoted session reuses the live process (no duplicate) and is highlighted', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-reuse-'));
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));
+  writeDiskSession(dir, proj, 'seeded-session');
+  const { page } = await launch({ PI_DESKTOP_FAKE: '1', PI_DESKTOP_SESSIONS_DIR: dir });
+
+  await expect(page.getByText('会话', { exact: true })).toBeVisible({ timeout: 15000 });
+
+  // hover 目录 → 点新建会话图标（需求 2）。这会创建一个 live 会话（key live-<uuid>）。
+  await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
+  await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('fake-pi ready', { timeout: 15000 });
+  // 新建会话在写盘前，终端标题显示占位名 “new-session”
+  await expect(page.locator('.header-title')).toContainText('new-session');
+
+  // 发送首条消息 → fake-pi 写盘 → 晋升进侧边栏
+  await page.locator('.terminal-host.active').click();
+  await page.keyboard.type('hello from new session\n');
+  await expect(page.locator('.session-item', { hasText: 'hello from new session' })).toBeVisible({ timeout: 8000 });
+
+  // 晋升后终端标题应更新为真实会话名（首条消息），不再显示占位名 “new-session”
+  await expect(page.locator('.header-title')).toContainText('hello from new session');
+  await expect(page.locator('.header-title')).not.toContainText('new-session ·');
+
+  // 晋升后只有一个 live pty 在跑（seeded 是 disk-only）
+  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
+
+  // 点击晋升后的侧边栏会话：必须复用同一个 live 进程，而非再 spawn 一个重复进程
+  await page.locator('.session-item', { hasText: 'hello from new session' }).click();
+  await page.waitForTimeout(500);
+  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
+
+  // 晋升后的会话应被高亮为当前活动会话
+  await expect(
+    page.locator('.group', { hasText: proj }).locator('.session-item.active', { hasText: 'hello from new session' }),
+  ).toBeVisible({ timeout: 5000 });
+
+  await electronApp!.close();
+});
+
 test('pinning a directory persists across reload', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-pin-'));
   const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-proj-'));

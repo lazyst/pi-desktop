@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -31,6 +31,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
   const [pinned, setPinned] = useState<string[]>(() => readPinned());
+  // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
+  // is written. Lets the sidebar highlight the promoted entry as the active one.
+  const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
+  // Same mapping held in a ref so the `onIndex` handler (which fires right after
+  // `onRelink` in the same tick) can read the fresh link without stale closure state.
+  const liveToDiskRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
@@ -38,8 +44,32 @@ export default function App() {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
       setOpen((list) => list.filter((s) => s.key !== key));
     });
-    // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）
-    pi.onIndex((groups) => setDisk(toDisk(groups)));
+    // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
+    // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
+    // （即首条用户消息），这样终端标题从 “new-session” 更新为实际会话名。
+    pi.onIndex((groups) => {
+      const diskList = toDisk(groups);
+      setDisk(diskList);
+      const map = liveToDiskRef.current;
+      // Promote the display name of a live session once pi writes its `.jsonl`:
+      // the header should show the real session name (first user message) instead of
+      // the placeholder “new-session”.
+      setOpen((list) => {
+        let changed = false;
+        const next = list.map((s) => {
+          const dk = map[s.key];
+          if (!dk) return s;
+          const d = diskList.find((x) => x.key === dk);
+          if (d && d.name && d.name !== s.name) { changed = true; return { ...s, name: d.name }; }
+          return s;
+        });
+        return changed ? next : list;
+      });
+    });
+    pi.onRelink((from, to) => {
+      liveToDiskRef.current = { ...liveToDiskRef.current, [from]: to };
+      setLiveToDisk(liveToDiskRef.current);
+    });
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
   }, []);
 
@@ -109,6 +139,7 @@ export default function App() {
         onPickDirectory={handlePickDirectory}
         onTogglePin={handleTogglePin}
         onDeleteSession={handleDeleteRequest}
+        relink={liveToDisk}
       />
       <main className="main">
         <div className="header">
