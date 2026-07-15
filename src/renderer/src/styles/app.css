@@ -322,15 +322,13 @@
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* 需求 4：让 xterm 原生竖向滚动条可见且可拖动（默认滑块 #283040 在黑底几乎不可见） */
+/* xterm 6.0.0 采用 VS Code 风格覆盖滚动条（.xterm-scrollable-element > .scrollbar），
+   其滑块配色由 xterm 据 ITheme 的 scrollbarSlider* 字段注入、已与主题对齐。
+   此处隐藏原生滚动条，避免与覆盖滚动条出现双条。仍保留滚动能力（scrollTop 有效）。 */
 .xterm-viewport {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: none; /* Firefox：隐藏原生滚动条 */
 }
-.xterm-viewport::-webkit-scrollbar { width: 10px; }
-.xterm-viewport::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.03); }
-.xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
-.xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.xterm-viewport::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
 /* 覆盖 xterm.css 写死的 #000：让终端视口与输入法浮层底色随主题（选择器加权以压过
    xterm.css 同等/靠后的规则），使终端与窗口浑然一体、过滚动不露黑边。 */

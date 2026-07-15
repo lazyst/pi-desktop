@@ -25,16 +25,31 @@ contextBridge.exposeInMainWorld('pi', {
   resize: (key: string, cols: number, rows: number) => ipcRenderer.send('session:resize', { key, cols, rows }),
   debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('session:pickDirectory'),
-  onData: (cb: (key: string, data: string) => void) =>
-    ipcRenderer.on('session:data', (_e, m: { key: string; data: string }) => cb(m.key, m.data)),
-  onStatus: (cb: (key: string, status: SessionStatus) => void) =>
-    ipcRenderer.on('session:status', (_e, m: { key: string; status: SessionStatus }) => cb(m.key, m.status)),
-  onExit: (cb: (key: string) => void) =>
-    ipcRenderer.on('session:exit', (_e, m: { key: string }) => cb(m.key)),
-  onRelink: (cb: (from: string, to: string) => void) =>
-    ipcRenderer.on('session:relink', (_e, m: { from: string; to: string }) => cb(m.from, m.to)),
-  onIndex: (cb: (groups: SessionGroup[]) => void) =>
-    ipcRenderer.on('session:index', (_e, groups: SessionGroup[]) => cb(groups)),
+  onData: (cb: (key: string, data: string) => void) => {
+    const handler = (_e: unknown, m: { key: string; data: string }) => cb(m.key, m.data);
+    ipcRenderer.on('session:data', handler);
+    return () => ipcRenderer.removeListener('session:data', handler);
+  },
+  onStatus: (cb: (key: string, status: SessionStatus) => void) => {
+    const handler = (_e: unknown, m: { key: string; status: SessionStatus }) => cb(m.key, m.status);
+    ipcRenderer.on('session:status', handler);
+    return () => ipcRenderer.removeListener('session:status', handler);
+  },
+  onExit: (cb: (key: string) => void) => {
+    const handler = (_e: unknown, m: { key: string }) => cb(m.key);
+    ipcRenderer.on('session:exit', handler);
+    return () => ipcRenderer.removeListener('session:exit', handler);
+  },
+  onRelink: (cb: (from: string, to: string) => void) => {
+    const handler = (_e: unknown, m: { from: string; to: string }) => cb(m.from, m.to);
+    ipcRenderer.on('session:relink', handler);
+    return () => ipcRenderer.removeListener('session:relink', handler);
+  },
+  onIndex: (cb: (groups: SessionGroup[]) => void) => {
+    const handler = (_e: unknown, groups: SessionGroup[]) => cb(groups);
+    ipcRenderer.on('session:index', handler);
+    return () => ipcRenderer.removeListener('session:index', handler);
+  },
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.send('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
@@ -42,8 +57,11 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('window:get-bounds'),
   setWindowBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.send('window:set-bounds', bounds),
-  onMaximizeChange: (cb: (maximized: boolean) => void) =>
-    ipcRenderer.on('window:maximize-change', (_e, m: boolean) => cb(m)),
+  onMaximizeChange: (cb: (maximized: boolean) => void) => {
+    const handler = (_e: unknown, m: boolean) => cb(m);
+    ipcRenderer.on('window:maximize-change', handler);
+    return () => ipcRenderer.removeListener('window:maximize-change', handler);
+  },
   getInitialConfig: (): AppConfig | null => initialConfig,
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
   setConfig: (partial: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:set', partial),

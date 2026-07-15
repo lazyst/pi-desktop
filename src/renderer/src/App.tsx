@@ -40,15 +40,15 @@ export default function App() {
   const liveToDiskRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
-    pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
-    pi.onExit((key) => {
+    const offStatus = pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
+    const offExit = pi.onExit((key) => {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
       setOpen((list) => list.filter((s) => s.key !== key));
     });
     // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
     // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
     // （即首条用户消息），这样终端标题从 “new-session” 更新为实际会话名。
-    pi.onIndex((groups) => {
+    const offIndex = pi.onIndex((groups) => {
       const diskList = toDisk(groups);
       setDisk(diskList);
       const map = liveToDiskRef.current;
@@ -67,7 +67,7 @@ export default function App() {
         return changed ? next : list;
       });
     });
-    pi.onRelink((from, to) => {
+    const offRelink = pi.onRelink((from, to) => {
       liveToDiskRef.current = { ...liveToDiskRef.current, [from]: to };
       setLiveToDisk(liveToDiskRef.current);
     });
@@ -75,6 +75,7 @@ export default function App() {
     pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
+    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
   }, []);
 
   // 侧边栏只渲染 disk 会话；live 会话只活在终端区，发消息写盘后才出现。

@@ -5,3 +5,6 @@ dist/
 .DS_Store
 playwright-report/
 test-results/
+
+# 分析用：克隆的 VS Code 源码（仅本地参考，不入库）
+vscode-src/

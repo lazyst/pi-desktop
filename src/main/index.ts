@@ -6,6 +6,15 @@ import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
 
+// 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
+// terminal.integrated.gpuAcceleration 机制）。现代 Electron/Chromium 在无硬件 GPU 时
+// 默认禁用 WebGL 且不再自动软件回退，会导致 xterm 静默回退到 DOM 渲染器而闪烁。
+// 显式允许 SwiftShader 软件回退（对应 VS Code 的 gpuAcceleration: 'swiftshader'）：
+// 有硬件 GPU 时仍走硬件 WebGL，无硬件时走软件 WebGL，保证 GPU 渲染器始终可用。
+// 必须在 app ready / GPU 进程启动前设置。
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
+
 // 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
 import { defaultConfig, parseConfig, mergeConfig } from './config';
@@ -158,11 +167,18 @@ function createPool(win: BrowserWindow) {
   const fakeScript = path.join(__dirname, 'fake-pi.mjs');
   const piBin = resolvePi();
   const nodeDir = resolveNodeDir();
+  // 像 VS Code / 其他终端模拟器一样，向 pty 显式声明终端类型与真彩色支持。
+  // 否则从 GUI 启动的 Electron 主进程不携带 TERM，pi-tui 会降级运行：不隐藏硬件光标
+  // （光标在 pi-tui 自建光标之上闪烁）→ 残留闪烁；布局模式不同 → 内容遮挡底部编辑器。
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    TERM: 'xterm-256color',
+    COLORTERM: 'truecolor',
+    TERM_PROGRAM: 'pi-desktop',
+  };
   // Ensure `node` (used by the pi.cmd shim) is on the child PATH even when the app
   // was launched without the user's shell PATH.
-  const childEnv = nodeDir
-    ? { ...process.env, PATH: [nodeDir, process.env.PATH].filter(Boolean).join(path.delimiter) }
-    : process.env;
+  if (nodeDir) childEnv.PATH = [nodeDir, process.env.PATH].filter(Boolean).join(path.delimiter);
   const ptyFactory = (file: string, args: string[], opts: any): IPtyLike => {
     if (useFake) return nodePty.spawn('node', [fakeScript], { ...opts, shell: true, env: childEnv }) as unknown as IPtyLike;
     // `file` is always 'pi' from the pool; use the resolved absolute path so the
@@ -197,6 +213,17 @@ function createWindow() {
     },
   });
   if (cfg.window.maximized) win.maximize();
+  // 开发调试：Ctrl+Shift+I / F12 切换 DevTools，便于查看渲染进程 console / 网络。
+  // （本应用无内置 DevTools 入口，故在此补一个快捷键。）
+  win.webContents.on('before-input-event', (_e, input) => {
+    const isDevToolsKey =
+      input.key === 'F12' ||
+      (input.control && input.shift && (input.key === 'I' || input.key === 'i'));
+    if (isDevToolsKey) {
+      if (win.webContents.isDevToolsOpened()) win.webContents.closeDevTools();
+      else win.webContents.openDevTools();
+    }
+  });
   const pool = createPool(win);
 
   // 记住窗口几何与最大化状态（见 docs/adr/0001 决策②）：maximize / unmaximize /
