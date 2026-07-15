@@ -170,9 +170,12 @@ export function TerminalPane({ sessionKey, active }: Props) {
       const chunks = pending.length;
       const data = pending.join('');
       pending.length = 0;
-      if (TERM_DEBUG && chunks > 1) {
+      if (TERM_DEBUG) {
         const t = Date.now();
-        if (t - lastDebugLog >= 1000) { lastDebugLog = t; console.debug(`[terminal:debug] 合并 ${chunks} 块 pty 输出为一次 term.write`); }
+        if (t - lastDebugLog >= 1000) {
+          lastDebugLog = t;
+          console.debug(`[terminal:debug] 本次 flush 合并 ${chunks} 块 pty 输出${chunks > 1 ? '' : '（单块，无需合并）'}`);
+        }
       }
       try { term.write(data); } catch { /* 终端已销毁等边界 */ }
     };
