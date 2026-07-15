@@ -52,6 +52,25 @@
 .btn-primary { color: var(--accent); }
 .btn-primary:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
 
+/* 多选模式：已选计数 + 危险操作按钮配色（复用 --danger 变量） */
+.select-count {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.session-item.selectable { cursor: pointer; }
+.session-item.selectable.selected {
+  background: var(--bg-active);
+  border-left-color: var(--accent);
+}
+.select-box {
+  width: 15px; height: 15px;
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
 /* Group */
 .group { margin-bottom: var(--sp-1); }
 .group-title {

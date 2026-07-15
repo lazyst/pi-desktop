@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { SessionStatus } from '../types';
-import { IconNewSession, IconPin } from './icons';
+import { IconNewSession, IconPin, IconTrash } from './icons';
 import { ContextMenu } from './ContextMenu';
 
 interface Session { key: string; cwd: string; name: string; time?: string; }
@@ -14,12 +14,21 @@ interface Props {
   onPickDirectory: () => void;
   onTogglePin: (cwd: string) => void;
   onDeleteSession: (key: string, name: string) => void;
+  // 多选模式：整条侧边栏进入选择态，每条会话显示 checkbox，点击切换勾选。
+  selectionMode?: boolean;
+  selectedKeys?: Set<string>;
+  onToggleSelect?: (key: string) => void;
+  onClearDirectory?: (cwd: string) => void;
+  onEnterSelect?: () => void;
+  onExitSelect?: (clear?: boolean) => void;
+  onBatchDelete?: () => void;
   // live `live-<uuid>` key → on-disk `.jsonl` path, so a promoted session can be
   // highlighted as active using its on-disk key.
   relink?: Record<string, string>;
 }
 
-export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, relink }: Props) {
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, relink,
+  selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -49,7 +58,18 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
       <div className="sidebar-header">
         <span className="sidebar-title">会话</span>
         <div className="sidebar-actions">
-          <button className="btn" onClick={onPickDirectory}>+ 目录</button>
+          {selectionMode ? (
+            <>
+              <span className="select-count">已选 {selectedKeys?.size ?? 0} 项</span>
+              <button className="btn btn-danger" data-action="batch-delete" onClick={onBatchDelete}>删除</button>
+              <button className="btn" data-action="exit-select" onClick={() => onExitSelect?.(true)}>取消</button>
+            </>
+          ) : (
+            <>
+              <button className="btn" onClick={onPickDirectory}>+ 目录</button>
+              <button className="btn" data-action="enter-select" title="选择会话进行批量删除" onClick={onEnterSelect}>管理</button>
+            </>
+          )}
         </div>
       </div>
       <div className="session-list">
@@ -81,11 +101,54 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   >
                     <IconNewSession />
                   </button>
+                  <button
+                    className="icon-btn"
+                    title={`清空 ${g.cwd} 下的所有会话`}
+                    aria-label={`清空 ${g.cwd}`}
+                    data-action="clear-directory"
+                    onClick={() => onClearDirectory?.(g.cwd)}
+                  >
+                    <IconTrash />
+                  </button>
                 </span>
               </div>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
                 const isActive = s.key === effectiveActive;
+                const selected = !!selectedKeys?.has(s.key);
+                // 多选模式下：整条变为可勾选行，点击切换选中，不再打开终端面板。
+                if (selectionMode) {
+                  return (
+                    <div
+                      key={s.key}
+                      data-key={s.key}
+                      className={`session-item selectable${selected ? ' selected' : ''}`}
+                      tabIndex={0}
+                      aria-label={`选择会话 ${s.name}`}
+                      aria-pressed={selected}
+                      onClick={() => onToggleSelect?.(s.key)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onToggleSelect?.(s.key);
+                        }
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        className="select-box"
+                        checked={selected}
+                        tabIndex={-1}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={() => onToggleSelect?.(s.key)}
+                      />
+                      <span className="session-name">
+                        <div className="name">{s.name}</div>
+                        {s.time && <div className="time">{s.time}</div>}
+                      </span>
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={s.key}

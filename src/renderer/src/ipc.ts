@@ -5,6 +5,8 @@ export interface PiApi {
   openSession(req: OpenRequest): Promise<SessionInfo>;
   terminate(key: string): Promise<void>;
   deleteSession(key: string): Promise<void>;
+  deleteMany(keys: string[]): Promise<void>;
+  clearDirectory(cwd: string): Promise<void>;
   input(key: string, data: string): void;
   resize(key: string, cols: number, rows: number): void;
   debug(): Promise<{ count: number; pids: number[] }>;

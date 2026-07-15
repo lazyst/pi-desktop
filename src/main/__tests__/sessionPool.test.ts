@@ -125,6 +125,88 @@ describe('SessionPool.deleteSession', () => {
   });
 });
 
+describe('SessionPool.deleteMany', () => {
+  it('terminates and deletes each requested session', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-multi-'));
+    const f1 = path.join(dir, 'a.jsonl');
+    const f2 = path.join(dir, 'b.jsonl');
+    fs.writeFileSync(f1, '{}');
+    fs.writeFileSync(f2, '{}');
+    const { pool, factory } = makePoolIn(dir);
+    pool.openExisting(f1);
+    pool.openExisting(f2);
+    pool.deleteMany([f1, f2]);
+    const pty1 = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+    const pty2 = factory.mock.results[1].value as ReturnType<typeof mockPty>;
+    expect(pty1.kill).toHaveBeenCalledTimes(1);
+    expect(pty2.kill).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(f1)).toBe(false);
+    expect(fs.existsSync(f2)).toBe(false);
+  });
+
+  it('keeps a path-traversal-guarded refusal for out-of-dir keys', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-multi-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-out-'));
+    const evil = path.join(outside, 'evil.jsonl');
+    fs.writeFileSync(evil, '{}');
+    const { pool } = makePoolIn(dir);
+    pool.deleteMany([evil]);
+    expect(fs.existsSync(evil)).toBe(true);
+  });
+});
+
+describe('SessionPool.clearDirectory', () => {
+  it('deletes all .jsonl in the cwd folder and removes the empty folder', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-clr-'));
+    const groupDir = path.join(dir, 'grp');
+    fs.mkdirSync(groupDir);
+    const f1 = path.join(groupDir, 'a.jsonl');
+    const f2 = path.join(groupDir, 'b.jsonl');
+    fs.writeFileSync(f1, JSON.stringify({ cwd: '/my/cwd' }) + '\n');
+    fs.writeFileSync(f2, JSON.stringify({ cwd: '/my/cwd' }) + '\n');
+    const { pool } = makePoolIn(dir);
+    pool.clearDirectory('/my/cwd');
+    expect(fs.existsSync(f1)).toBe(false);
+    expect(fs.existsSync(f2)).toBe(false);
+    expect(fs.existsSync(groupDir)).toBe(false); // 空文件夹已移除
+  });
+
+  it('terminates running processes in the cwd before deleting files', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-clr-'));
+    const groupDir = path.join(dir, 'grp');
+    fs.mkdirSync(groupDir);
+    const f1 = path.join(groupDir, 'a.jsonl');
+    fs.writeFileSync(f1, JSON.stringify({ cwd: '/my/cwd' }) + '\n');
+    const { pool, factory } = makePoolIn(dir);
+    pool.openNew('/my/cwd', 'n'); // running live entry in that cwd
+    pool.clearDirectory('/my/cwd');
+    const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+    expect(pty.kill).toHaveBeenCalled();
+    expect(fs.existsSync(f1)).toBe(false);
+    expect(fs.existsSync(groupDir)).toBe(false);
+  });
+});
+
+describe('SessionPool.deleteSession alias resolution (promoted session)', () => {
+  it('resolves the disk key to the live process, kills it, and emits onExit for the live key', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-alias-'));
+    const { pool, factory, onExit } = makePoolIn(dir);
+    const live = pool.openNew('/some/cwd', 'n'); // keyed live-<uuid>，此刻磁盘上尚无文件
+    // 模拟 pi 在首条消息后写出 .jsonl（晚于 openNew，故不会被 existingDiskKeys 排除 → 晋升关联）
+    const grp = path.join(dir, 'grp');
+    fs.mkdirSync(grp);
+    const disk = path.join(grp, 'abc.jsonl');
+    fs.writeFileSync(disk, JSON.stringify({ cwd: '/some/cwd' }) + '\n');
+    pool.reconcile([{ cwd: '/some/cwd', sessions: [{ key: disk, name: 'hi', time: 't' }] }]);
+    // 删除是通过磁盘 key 触发的（侧边栏点的是磁盘条目）
+    pool.deleteSession(disk);
+    const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+    expect(pty.kill).toHaveBeenCalled(); // 进程被杀（此前会因 alias 漏杀 → 孤儿进程）
+    expect(onExit).toHaveBeenCalledWith(live.key); // 终端面板以 live key 关闭
+    expect(fs.existsSync(disk)).toBe(false);
+  });
+});
+
 describe('SessionPool promotion linking (live -> disk)', () => {
   it('links a new live session to its written .jsonl and reuses it on openExisting', () => {
     const { pool, factory, onStatus } = makePool();
