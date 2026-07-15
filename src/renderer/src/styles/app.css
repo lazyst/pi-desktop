@@ -454,7 +454,7 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: var(--r-sm);
+  border-radius: 0;
   transition: background-color var(--transition), color var(--transition);
 }
 .titlebar-btn:hover { background: var(--bg-hover); color: var(--text); }
