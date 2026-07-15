@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # 暴露 config:get / config:set IPC
 
@@ -10,3 +10,7 @@ Status: ready-for-agent
 - 渲染进程能 `getConfig()` 拿到全量配置、`setConfig({…})` 后主进程落盘并收到 `config:change`。
 
 注意：`AppConfig` 类型定义在渲染端 `types.ts` 或独立 `config.ts`，主进程与预加载共用同一形状。
+
+## Comments
+
+- 已实现并提交：`5a757ad`（config:get/set 经 ipcMain 暴露，预加载与 PiApi 均已接）。
