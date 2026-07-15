@@ -1,4 +1,4 @@
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus } from './types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds } from './types';
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
@@ -20,9 +20,12 @@ export interface PiApi {
   minimizeWindow(): void;
   toggleMaximizeWindow(): void;
   closeWindow(): void;
-  getWindowBounds(): Promise<{ x: number; y: number; width: number; height: number }>;
-  setWindowBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  getWindowBounds(): Promise<Bounds>;
+  setWindowBounds(bounds: Bounds): void;
   onMaximizeChange(cb: (maximized: boolean) => void): void;
+  // 配置存储（主进程 config.json 唯一真源，见 docs/adr/0001）
+  getConfig(): Promise<AppConfig>;
+  setConfig(partial: Partial<AppConfig>): Promise<void>;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at
