@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -15,6 +15,10 @@ const configPath = () => path.join(app.getPath('userData'), 'config.json');
 let configState: AppConfig | undefined;
 let configTimer: ReturnType<typeof setTimeout> | undefined;
 let configDirty = false;
+// 真正退出标志：关闭按钮默认只隐藏窗口（不杀进程），仅「退出」/系统 quit 置位。
+let quitting = false;
+// 托盘常驻：生命周期与应用一致，不随窗口显隐销毁（见 issue 01 / 04）。
+let tray: Tray | undefined;
 
 function loadConfig(): AppConfig {
   try {
@@ -66,6 +70,46 @@ app.on('before-quit', () => {
     writeConfigNow();
   }
 });
+
+// 解析托盘图标路径：dev 用源码、build 用 copy-assets 拷贝出的 out/main/assets，
+// 打包（asar）回退到 resources/assets（见 issue 01）。
+function resolveTrayIcon(): string {
+  const candidates = [
+    path.join(__dirname, 'assets', 'tray-icon.png'),
+    path.join(__dirname, '..', '..', 'src', 'main', 'assets', 'tray-icon.png'),
+  ];
+  for (const c of candidates) if (fs.existsSync(c)) return c;
+  const packed = path.join(process.resourcesPath, 'assets', 'tray-icon.png');
+  if (fs.existsSync(packed)) return packed;
+  return candidates[0];
+}
+
+// 显示并聚焦窗口（托盘「显示」/双击触发）。
+function showWindow(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  if (win.isVisible()) win.focus();
+  else { win.show(); win.focus(); }
+}
+
+// 创建常驻系统托盘：右键「显示 / 退出」，双击显示并聚焦（见 issue 01）。
+function createTray(win: BrowserWindow): void {
+  try {
+    const iconPath = resolveTrayIcon();
+    const icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) console.warn('[tray] icon missing at', iconPath);
+    tray = new Tray(icon);
+    tray.setToolTip('pi-desktop');
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: '显示', click: () => showWindow(win) },
+        { label: '退出', click: () => app.quit() },
+      ]),
+    );
+    tray.on('double-click', () => showWindow(win));
+  } catch (err) {
+    console.error('[tray] failed to create system tray:', err);
+  }
+}
 
 const SESSIONS_DIR =
   process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
@@ -239,11 +283,36 @@ function createWindow() {
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', true); });
   win.on('unmaximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', false); });
 
-  win.on('closed', () => pool.killAll());
-  app.on('before-quit', () => { /* pool is per-window; killAll already on window 'closed' */ });
+  // 关闭语义（见 issue 03 / docs/adr/0001 决策③）：
+  //  - minimize-to-tray（默认）：拦截关闭、隐藏窗口、进程继续跑（托盘可恢复）。
+  //  - close：真正退出应用；app.quit() 经 before-quit 置 quitting 并杀掉全部 pi 进程。
+  win.on('close', (e) => {
+    if (quitting) return; // 真正退出路径：放行 window 关闭
+    if (getConfig().closeBehavior === 'minimize-to-tray') {
+      e.preventDefault();
+      win.hide();
+    } else {
+      // 「直接关闭」：拦截本次关闭，改走统一退出流程（before-quit → killAll → 退出）。
+      e.preventDefault();
+      app.quit();
+    }
+  });
+
+  // 真正退出统一走 before-quit：置 quitting、杀掉所有运行中的 pi 进程。
+  // 关闭按钮（minimize-to-tray）只隐藏窗口、不会触发 before-quit，故进程保持存活。
+  app.on('before-quit', () => {
+    quitting = true;
+    pool.killAll();
+  });
+
+  // 常驻托盘在窗口就绪后创建（见 issue 01）。
+  createTray(win);
+
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
 
 app.whenReady().then(createWindow);
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+// 窗口隐藏（非关闭）时应用保持存活；托盘常驻即入口，真正退出只经 before-quit
+// （见 issue 04）。macOS 本就不退出，其余平台也不再因窗口"关闭"（实为隐藏）而退出。
+app.on('window-all-closed', () => { /* 托盘常驻：不自动退出，仅 before-quit 触发真正退出 */ });

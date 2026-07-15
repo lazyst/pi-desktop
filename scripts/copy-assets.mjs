@@ -9,6 +9,8 @@ const root = path.resolve(__dirname, '..');
 
 const assets = [
   { from: 'src/main/fake-pi.mjs', to: 'out/main/fake-pi.mjs' },
+  // 系统托盘图标：主进程在创建 Tray 时按 dev / build 路径解析（见 issue 01）。
+  { from: 'src/main/assets/tray-icon.png', to: 'out/main/assets/tray-icon.png' },
 ];
 
 function copyAsset(from, to) {
