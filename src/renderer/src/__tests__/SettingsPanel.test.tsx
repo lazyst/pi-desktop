@@ -15,7 +15,7 @@ describe('SettingsPanel', () => {
     (window as any).pi = api;
     render(<SettingsPanel onClose={() => {}} />);
 
-    expect(await screen.findByText('关闭按钮')).toBeInTheDocument();
+    expect(await screen.findByText('关闭按钮行为')).toBeInTheDocument();
     const closeBtn = screen.getByText('直接关闭');
     const minimizeBtn = screen.getByText('最小化到托盘');
     expect(closeBtn).toBeInTheDocument();

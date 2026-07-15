@@ -248,8 +248,11 @@ export function decodeCwd(enc: string): string {
   let s = enc;
   if (s.startsWith('--')) s = s.slice(2);
   if (s.endsWith('--')) s = s.slice(0, -2);
-  s = s.replace(/--/g, '\\').replace(/^([A-Za-z])-/, '$1:');
-  return s;
+  // pi 的目录名编码：反斜杠 → "--"，盘符冒号被直接丢弃（D: → D）。
+  s = s.replace(/--/g, '\\');
+  // 还原 Windows 盘符的绝对路径："X\\" → "X:\\"。否则拿到 D\\foo 这种非法 cwd，
+  // 既会在侧边栏显示为 D\\foo，也会让 spawn 启动 pi 失败。
+  return s.replace(/^([A-Za-z])\\/, '$1:\\');
 }
 export function formatTimestamp(filename: string): string {
   const m = filename.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})/);

@@ -86,6 +86,16 @@ describe('cwd codec', () => {
     expect(decodeCwd('--C--Users-hcz-.pi-agent--')).toContain('Users');
     expect(decodeCwd('--C--Users-hcz-.pi-agent--')).toContain('pi-agent');
   });
+  it('还原 Windows 盘符路径（冒号被编码丢弃，需补回）', () => {
+    // 真实目录名 --D--personal-agent_space-pi-tool-- 来自 D:\personal-agent_space-pi-tool
+    expect(decodeCwd('--D--personal-agent_space-pi-tool--')).toBe('D:\\personal-agent_space-pi-tool');
+  });
+  it('还原多层级 Windows 盘符路径', () => {
+    expect(decodeCwd('--D--a--b--c--')).toBe('D:\\a\\b\\c');
+  });
+  it('还原 C: 盘符路径', () => {
+    expect(decodeCwd('--C--Users-hcz-.pi-agent--')).toBe('C:\\Users-hcz-.pi-agent');
+  });
   it('formatTimestamp parses filename', () => {
     expect(formatTimestamp('2026-07-03T19-07-11-857Z_abc.jsonl')).toBe('2026-07-03 19:07');
   });

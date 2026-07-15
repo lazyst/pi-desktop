@@ -332,6 +332,11 @@
 .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 5px; }
 .xterm-viewport::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
+/* 覆盖 xterm.css 写死的 #000：让终端视口与输入法浮层底色随主题（选择器加权以压过
+   xterm.css 同等/靠后的规则），使终端与窗口浑然一体、过滚动不露黑边。 */
+.terminal-host .xterm .xterm-viewport { background-color: var(--bg-app); }
+.terminal-host .xterm .composition-view { background: var(--bg-elevated); color: var(--text); }
+
 /* 右键上下文菜单 */
 .context-menu {
   position: fixed;
@@ -500,6 +505,7 @@
   justify-content: space-between;
   gap: var(--sp-4);
 }
+.settings-row + .settings-row { margin-top: var(--sp-3); }
 .settings-label { font-size: var(--fs-md); color: var(--text); }
 .segmented {
   display: inline-flex;

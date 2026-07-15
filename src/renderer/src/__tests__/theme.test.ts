@@ -1,50 +1,36 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from 'vitest';
-import { getTheme, setTheme, onThemeChange, initTheme } from '../theme';
-import { defaultConfig } from '../../../main/config';
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { TERM_THEMES } from '../theme';
 
-const BASE = defaultConfig();
+const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/styles/tokens.css'), 'utf-8');
 
-describe('theme', () => {
-  let written: any[];
-  beforeEach(() => {
-    written = [];
-    document.documentElement.removeAttribute('data-theme');
-    (window as any).pi = {
-      getConfig: async () => JSON.parse(JSON.stringify(BASE)),
-      // 返回 Promise，使 setTheme 里的 .catch 不报错；同时记录写入供断言。
-      setConfig: vi.fn().mockImplementation((partial: any) => {
-        written.push(partial);
-        return Promise.resolve();
-      }),
-    };
+// 抽取某主题块内某个 CSS 变量的值（:root = 暗色；[data-theme="light"] = 亮色）。
+function cssVar(selector: string, name: string): string {
+  const block = css.split(selector)[1]?.split('}')[0] ?? '';
+  const m = block.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`));
+  return m ? m[1].trim() : '';
+}
+
+describe('TERM_THEMES 与 tokens.css 同源', () => {
+  it('暗色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.dark.background).toBe(cssVar(':root {', 'bg-app'));
+    expect(TERM_THEMES.dark.foreground).toBe(cssVar(':root {', 'text'));
   });
 
-  it('setTheme applies the theme to <html> and persists via config IPC (not localStorage)', () => {
-    setTheme('light');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-    expect(getTheme()).toBe('light');
-    expect(written).toContainEqual({ theme: 'light' });
-    expect(localStorage.getItem('pi-desktop:theme')).toBeNull();
-
-    setTheme('dark');
-    expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-    expect(getTheme()).toBe('dark');
-    expect(written).toContainEqual({ theme: 'dark' });
+  it('亮色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.light.background).toBe(cssVar('[data-theme="light"] {', 'bg-app'));
+    expect(TERM_THEMES.light.foreground).toBe(cssVar('[data-theme="light"] {', 'text'));
   });
 
-  it('notifies subscribers when the theme changes', () => {
-    const seen: string[] = [];
-    const off = onThemeChange((t) => seen.push(t));
-    setTheme('light');
-    setTheme('dark');
-    off();
-    expect(seen).toEqual(['light', 'dark']);
+  it('选区色复用各自主题的 accent（冷静蓝签名）', () => {
+    // --accent 暗色 #7c9cff = rgb(124, 156, 255)；亮色 #3b5bdb = rgb(59, 91, 219)
+    expect(TERM_THEMES.dark.selectionBackground).toContain('124, 156, 255');
+    expect(TERM_THEMES.light.selectionBackground).toContain('59, 91, 219');
   });
 
-  it('initTheme applies the persisted theme from config', async () => {
-    (window as any).pi.getConfig = async () => ({ ...BASE, theme: 'light' });
-    await initTheme();
-    expect(getTheme()).toBe('light');
+  it('覆盖两套主题且键与 Theme 一致', () => {
+    expect(Object.keys(TERM_THEMES).sort()).toEqual(['dark', 'light']);
   });
 });

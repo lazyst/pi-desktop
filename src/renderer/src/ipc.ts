@@ -24,6 +24,7 @@ export interface PiApi {
   setWindowBounds(bounds: Bounds): void;
   onMaximizeChange(cb: (maximized: boolean) => void): void;
   // 配置存储（主进程 config.json 唯一真源，见 docs/adr/0001）
+  getInitialConfig(): AppConfig | null; // 窗口创建时经 additionalArguments 同步注入，首屏零闪烁
   getConfig(): Promise<AppConfig>;
   setConfig(partial: Partial<AppConfig>): Promise<void>;
 }
