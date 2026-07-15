@@ -19,6 +19,15 @@ re-implementation.
   button.
 - **New directory / new session** — pick a real folder or start a new
   `pi` session under any group.
+- **Clear a directory's sessions** — the trash icon on each group header
+  terminates every running process in that directory and deletes all of its
+  `.jsonl` files at once, so the whole group disappears from the sidebar.
+- **Batch delete sessions** — "管理" in the sidebar enters a multi-select mode
+  where every session gets a checkbox; select arbitrarily across directories,
+  and the header shows "已选 N 项 · 删除 · 取消" (N selected · delete · cancel).
+  Confirm to batch-terminate and delete.
+- **Delete a single session** — right-click a session → "删除会话"; confirm in
+  the dialog to terminate its process and remove its `.jsonl` file.
 - **Switch without killing** — switching to another session keeps the previous
   one running in the background; its task continues and the green dot stays on.
   Switching back re-attaches the same, still-running process (instant, no restart).
@@ -87,7 +96,7 @@ Main Process — SessionPool (single source of truth)
   ▲  IPC (ipcMain / ipcRenderer)
   │
 Renderer (React)
-  ├─ Sidebar     —— sessions grouped by cwd + green dot + hover terminate
+  ├─ Sidebar     —— sessions grouped by cwd + green dot + hover terminate + clear/batch delete
   └─ TerminalPane —— one xterm.js per open session, shown/hidden by `active`
 ```
 
@@ -113,6 +122,9 @@ Renderer → Main:
 - `session:input{ key, data }` — terminal keystrokes
 - `session:resize{ key, cols, rows }` — size changed
 - `session:terminate{ key }` — kill a session
+- `session:delete{ key }` — delete a single session (kill process + remove `.jsonl`)
+- `session:deleteMany{ keys }` — batch-delete multiple sessions (kill + remove files)
+- `session:clearDirectory{ cwd }` — clear all sessions under a directory (kill + remove files)
 - `session:pickDirectory` — native folder picker
 - `session:debug` — pool diagnostics (process count / pids)
 

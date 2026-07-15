@@ -15,6 +15,11 @@ function renderSidebar(overrides: any = {}) {
   const onPickDirectory = vi.fn();
   const onTogglePin = vi.fn();
   const onDeleteSession = vi.fn();
+  const onClearDirectory = vi.fn();
+  const onEnterSelect = vi.fn();
+  const onExitSelect = vi.fn();
+  const onBatchDelete = vi.fn();
+  const onToggleSelect = vi.fn();
   (window as any).pi = {
     listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
@@ -30,10 +35,52 @@ function renderSidebar(overrides: any = {}) {
       onPickDirectory={onPickDirectory}
       onTogglePin={onTogglePin}
       onDeleteSession={overrides.onDeleteSession ?? onDeleteSession}
+      selectionMode={overrides.selectionMode}
+      selectedKeys={overrides.selectedKeys ?? new Set<string>()}
+      onToggleSelect={overrides.onToggleSelect ?? onToggleSelect}
+      onClearDirectory={overrides.onClearDirectory ?? onClearDirectory}
+      onEnterSelect={overrides.onEnterSelect ?? onEnterSelect}
+      onExitSelect={overrides.onExitSelect ?? onExitSelect}
+      onBatchDelete={overrides.onBatchDelete ?? onBatchDelete}
     />,
   );
-  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, ...utils };
+  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, ...utils };
 }
+
+it('group “清空” action calls onClearDirectory with that cwd', () => {
+  const { onClearDirectory } = renderSidebar();
+  fireEvent.click(screen.getByLabelText('清空 C:\\Users\\hcz\\project'));
+  expect(onClearDirectory).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
+});
+
+it('“管理” enters selection mode via onEnterSelect', () => {
+  const { onEnterSelect } = renderSidebar();
+  fireEvent.click(screen.getByText('管理'));
+  expect(onEnterSelect).toHaveBeenCalled();
+});
+
+it('selection mode shows a checkbox per session and toggles selection', () => {
+  const { onToggleSelect } = renderSidebar({ selectionMode: true, selectedKeys: new Set<string>(['k1']) });
+  // header action bar appears
+  expect(screen.getByText('已选 1 项')).toBeInTheDocument();
+  expect(screen.queryByText('管理')).toBeNull(); // 常态“管理”按钮隐藏
+  // 选中项渲染 checkbox 且为 checked
+  const item = screen.getByText('e2e-session').closest('.session-item')!;
+  expect(item).toHaveClass('selectable', 'selected');
+  const box = item.querySelector('input.select-box') as HTMLInputElement;
+  expect(box.checked).toBe(true);
+  // 点击条目切换选择
+  fireEvent.click(item);
+  expect(onToggleSelect).toHaveBeenCalledWith('k1');
+});
+
+it('selection mode action bar: 删除 calls onBatchDelete, 取消 calls onExitSelect', () => {
+  const { onBatchDelete, onExitSelect } = renderSidebar({ selectionMode: true, selectedKeys: new Set<string>(['k1']) });
+  fireEvent.click(screen.getByText('删除'));
+  expect(onBatchDelete).toHaveBeenCalled();
+  fireEvent.click(screen.getByText('取消'));
+  expect(onExitSelect).toHaveBeenCalledWith(true);
+});
 
 describe('Sidebar', () => {
   it('no longer renders a top-level "+ 会话" button', () => {

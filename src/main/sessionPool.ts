@@ -155,9 +155,24 @@ export class SessionPool {
     this.opts.onStatus(key, 'dead');
     this.opts.onExit(key);
   }
+  // Resolve a disk `.jsonl` key to the key of the live process that owns it.
+  // A session promoted from a `live-<uuid>` process links its disk path to that
+  // process via `alias`; the entry is keyed by the live key, NOT the disk path, so
+  // terminating by the disk key would miss the process. Resolve first so the right
+  // pty is killed and `onExit` fires for the live key (the terminal pane's key),
+  // avoiding orphaned processes and ghost panes.
+  private liveKeyFor(key: string): string {
+    if (this.entries.has(key)) return key;
+    const linked = this.alias.get(key);
+    if (linked && this.entries.has(linked)) return linked;
+    return key;
+  }
   deleteSession(key: string) {
+    const liveKey = this.liveKeyFor(key);
     // 先终止进程（杀 pty + 触发 onStatus('dead') / onExit，渲染层据此关闭终端面板）。
-    this.terminate(key);
+    this.terminate(liveKey);
+    // 该磁盘 key 此前若已“晋升”关联到某个 live 进程，清理此映射以免悬空。
+    for (const [dk, lk] of this.alias) if (lk === liveKey) this.alias.delete(dk);
     // 仅删除 sessionsDir 内的 .jsonl 文件，防止越权删除任意文件。
     if (!key.endsWith('.jsonl')) return;
     const dir = path.resolve(this.opts.sessionsDir);
@@ -165,6 +180,41 @@ export class SessionPool {
     const inside = target === dir || target.startsWith(dir + path.sep);
     if (!inside) return;
     try { fs.rmSync(target, { force: true }); } catch { /* 忽略占用 / 竞态 */ }
+  }
+  // 批量删除：对一组会话 key 逐个执行 deleteSession（含磁盘→live 反查与越权防护）。
+  deleteMany(keys: string[]) {
+    for (const k of keys) this.deleteSession(k);
+  }
+  // 清空目录：终止该 cwd 工作组下所有运行中的进程，并删除对应的全部 .jsonl 文件
+  // （整组从侧边栏消失）。等价于“选中该组全部会话并删除”。
+  clearDirectory(cwd: string) {
+    // 1) 终止该 cwd 下所有运行中的进程（命中 live 与已晋升的磁盘条目）。
+    for (const [k, e] of [...this.entries]) {
+      if (e.info.cwd !== cwd) continue;
+      for (const [dk, lk] of this.alias) if (lk === k) this.alias.delete(dk);
+      this.terminate(k);
+    }
+    // 2) 删除该 cwd 对应的所有 .jsonl 文件（含尚未晋升、无运行进程的会话）。
+    const dir = this.dirForCwd(cwd);
+    if (!dir) return;
+    for (const f of fs.readdirSync(dir)) {
+      if (!f.endsWith('.jsonl')) continue;
+      try { fs.rmSync(path.join(dir, f), { force: true }); } catch { /* 忽略占用 / 竞态 */ }
+    }
+    // 3) 整组删空后移除空的编码 cwd 文件夹，保持 sessionsDir 整洁。
+    try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* 非空或被占用 */ }
+  }
+  // 返回某 cwd 在 sessionsDir 下的编码文件夹路径（用于清空目录时定位待删文件）。
+  private dirForCwd(cwd: string): string | undefined {
+    const root = this.opts.sessionsDir;
+    if (!fs.existsSync(root)) return undefined;
+    for (const enc of fs.readdirSync(root)) {
+      const dir = path.join(root, enc);
+      if (!fs.statSync(dir).isDirectory()) continue;
+      const groupCwd = readGroupCwd(dir) ?? decodeCwd(enc);
+      if (groupCwd === cwd) return dir;
+    }
+    return undefined;
   }
   killAll() { for (const k of [...this.entries.keys()]) this.terminate(k); }
   get(key: string) { return this.entries.get(key)?.info; }

@@ -144,6 +144,14 @@ function createWindow() {
     pool.deleteSession(key);
     pushIndex(); // 与 fs.watch debounce 互补，保证侧边栏即时更新
   });
+  ipcMain.handle('session:deleteMany', (_e, keys: string[]) => {
+    pool.deleteMany(keys);
+    pushIndex(); // 与 fs.watch debounce 互补，保证侧边栏即时更新
+  });
+  ipcMain.handle('session:clearDirectory', (_e, cwd: string) => {
+    pool.clearDirectory(cwd);
+    pushIndex(); // 与 fs.watch debounce 互补，保证侧边栏即时更新
+  });
   ipcMain.handle('session:debug', () => pool.debugInfo());
   ipcMain.on('session:input', (_e, m: { key: string; data: string }) => pool.write(m.key, m.data));
   ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));

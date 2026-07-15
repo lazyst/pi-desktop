@@ -106,17 +106,56 @@ export default function App() {
     });
   };
 
-  const [confirm, setConfirm] = useState<{ key: string; name: string } | null>(null);
+  // 待确认的危险操作：单条删除 / 清空目录 / 批量删除，统一用一份确认弹窗。
+  type PendingDelete =
+    | { kind: 'session'; key: string; name: string }
+    | { kind: 'directory'; cwd: string; count: number }
+    | { kind: 'batch'; keys: string[]; count: number };
+  const [confirm, setConfirm] = useState<PendingDelete | null>(null);
 
-  const handleDeleteRequest = (key: string, name: string) => setConfirm({ key, name });
+  // 多选模式：进入后侧边栏每条会话出现 checkbox，点击切换勾选；用于批量删除。
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+  const handleEnterSelect = () => setSelectionMode(true);
+  const handleExitSelect = (clear = true) => {
+    setSelectionMode(false);
+    if (clear) setSelectedKeys(new Set());
+  };
+  const handleToggleSelect = (key: string) => {
+    setSelectedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const handleDeleteRequest = (key: string, name: string) => setConfirm({ kind: 'session', key, name });
+
+  const handleClearDirectory = (cwd: string) => {
+    const count = disk.filter((d) => d.cwd === cwd).length;
+    setConfirm({ kind: 'directory', cwd, count });
+  };
+
+  const handleBatchDelete = () => {
+    if (selectedKeys.size === 0) return;
+    setConfirm({ kind: 'batch', keys: [...selectedKeys], count: selectedKeys.size });
+  };
 
   const handleDeleteConfirm = async () => {
     if (!confirm) return;
-    const { key } = confirm;
+    const pending = confirm;
     setConfirm(null);
     setError(null);
     try {
-      await pi.deleteSession(key);
+      if (pending.kind === 'session') {
+        await pi.deleteSession(pending.key);
+      } else if (pending.kind === 'directory') {
+        await pi.clearDirectory(pending.cwd);
+        handleExitSelect(true); // 清空后退出多选态并清空选择
+      } else {
+        await pi.deleteMany(pending.keys);
+        handleExitSelect(true); // 批量删除后退出多选态并清空选择
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -140,6 +179,13 @@ export default function App() {
         onTogglePin={handleTogglePin}
         onDeleteSession={handleDeleteRequest}
         relink={liveToDisk}
+        selectionMode={selectionMode}
+        selectedKeys={selectedKeys}
+        onToggleSelect={handleToggleSelect}
+        onClearDirectory={handleClearDirectory}
+        onEnterSelect={handleEnterSelect}
+        onExitSelect={handleExitSelect}
+        onBatchDelete={handleBatchDelete}
       />
       <main className="main">
         <div className="header">
@@ -158,8 +204,14 @@ export default function App() {
       </main>
       {confirm && (
         <ConfirmDialog
-          title="删除会话"
-          message={`确定删除会话「${confirm.name}」？该会话文件将被删除且不可恢复，若进程正在运行也会被终止。`}
+          title={confirm.kind === 'directory' ? '清空目录' : '删除会话'}
+          message={
+            confirm.kind === 'session'
+              ? `确定删除会话「${confirm.name}」？该会话文件将被删除且不可恢复，若进程正在运行也会被终止。`
+              : confirm.kind === 'directory'
+                ? `确定清空目录「${confirm.cwd}」下的 ${confirm.count} 个会话？运行中的进程将被终止，文件不可恢复。`
+                : `确定删除选中的 ${confirm.count} 个会话？运行中的进程将被终止，文件不可恢复。`
+          }
           onConfirm={handleDeleteConfirm}
           onCancel={() => setConfirm(null)}
         />
