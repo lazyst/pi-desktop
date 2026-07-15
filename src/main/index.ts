@@ -9,6 +9,7 @@ import nodePty from 'node-pty';
 // 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
 import { defaultConfig, parseConfig, mergeConfig } from './config';
+import { snapshotWindowState, initialBoundsOptions } from './windowState';
 import type { AppConfig } from '../renderer/src/types';
 
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
@@ -180,8 +181,10 @@ function createPool(win: BrowserWindow) {
 }
 
 function createWindow() {
+  const cfg = getConfig();
+  // 还原上次窗口几何（最大化状态单独存标志，bounds 永远是非最大化尺寸）。
   const win = new BrowserWindow({
-    width: 1100, height: 720,
+    ...initialBoundsOptions(cfg.window.bounds),
     frame: false, // 无边框：原生菜单与标题条随之消失（任务 2），标题条改由渲染进程自建（任务 3）
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -190,7 +193,25 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  if (cfg.window.maximized) win.maximize();
   const pool = createPool(win);
+
+  // 记住窗口几何与最大化状态（见 docs/adr/0001 决策②）：maximize / unmaximize /
+  // resize / move 实时（防抖 200ms）回写 config.window。用 getNormalBounds() 取非
+  // 最大化几何，无论当前是否最大化，存进去的都是「还原后」的尺寸。
+  let winStateTimer: ReturnType<typeof setTimeout> | undefined;
+  const persistWindowState = () => {
+    if (winStateTimer) clearTimeout(winStateTimer);
+    winStateTimer = setTimeout(() => {
+      winStateTimer = undefined;
+      if (win.isDestroyed()) return;
+      setConfig({ window: snapshotWindowState(win) });
+    }, 200);
+  };
+  win.on('maximize', persistWindowState);
+  win.on('unmaximize', persistWindowState);
+  win.on('resize', persistWindowState);
+  win.on('move', persistWindowState);
 
   // 配置存储：渲染进程经 IPC 读写主进程 config.json（唯一真源，见 docs/adr/0001）。
   ipcMain.handle('config:get', () => getConfig());

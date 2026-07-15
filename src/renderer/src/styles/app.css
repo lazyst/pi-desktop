@@ -32,6 +32,22 @@
   color: var(--text);
   position: relative;
 }
+
+/* 侧边栏拖拽条：右边框 4px、整高、ew-resize；hover 淡淡高亮成强调色。
+   位于侧边栏右缘，与窗口最右的 rz-right 缩放热区（窗口最右 4px）不冲突。 */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--transition);
+}
+.sidebar-resizer:hover { background: var(--accent-soft); }
+.sidebar-resizer:active { background: var(--accent); }
+
 .sidebar-header {
   padding: var(--sp-3);
   border-bottom: 1px solid var(--border);
@@ -409,7 +425,7 @@
   align-items: center;
   height: 34px;
   flex: none;
-  padding: 0 var(--sp-2);
+  padding: 0 0 0 var(--sp-2);
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
   -webkit-app-region: drag;
@@ -430,7 +446,7 @@
 }
 .titlebar-btn {
   width: 32px;
-  height: 28px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -444,6 +460,12 @@
 .titlebar-btn:hover { background: var(--bg-hover); color: var(--text); }
 .titlebar-btn:focus-visible { box-shadow: var(--focus-ring); }
 .titlebar-btn-close:hover { background: var(--danger); color: #fff; }
+
+/* 缩放热区层：仅在非最大化时渲染（最大化时组件直接不渲染任何 .rz）。
+   非最大化下让出右上角——top 停在最右 36px 外、right 从标题条下方(34px)开始，
+   右上角交给关闭按钮（见 docs/adr/0001 决策⑤）。 */
+.rz-layer .rz-top { right: 36px; }
+.rz-layer .rz-right { top: 34px; }
 
 /* 无边框窗口的边缘缩放热区（替代系统原生缩放手柄） */
 .rz { position: fixed; z-index: 50; -webkit-app-region: no-drag; }

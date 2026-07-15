@@ -7,6 +7,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
 import { pi } from './ipc';
 import { initTheme } from './theme';
+import { defaultConfig } from '../../main/config';
 import type { SessionInfo, SessionStatus, AppConfig } from './types';
 
 interface OpenSession extends SessionInfo { key: string; cwd: string; name: string; status: SessionStatus; }
@@ -28,6 +29,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
   const [pinned, setPinned] = useState<string[]>([]);
+  // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
+  const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
@@ -69,7 +72,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => setPinned(readPinned(cfg))).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
   }, []);
@@ -106,6 +109,12 @@ export default function App() {
       pi.setConfig({ pinnedDirs: next }).catch(() => {});
       return next;
     });
+  };
+
+  // 侧边栏拖拽实时改宽后由 Sidebar 调用，回写 config 并同步本地 state。
+  const handleSidebarResize = (w: number) => {
+    setSidebarWidth(w);
+    pi.setConfig({ sidebarWidth: w }).catch(() => {});
   };
 
   // 待确认的危险操作：单条删除 / 清空目录 / 批量删除，统一用一份确认弹窗。
@@ -190,6 +199,8 @@ export default function App() {
         onEnterSelect={handleEnterSelect}
         onExitSelect={handleExitSelect}
         onBatchDelete={handleBatchDelete}
+        sidebarWidth={sidebarWidth}
+        onSidebarResize={handleSidebarResize}
       />
       <main className="main">
         <div className="header">

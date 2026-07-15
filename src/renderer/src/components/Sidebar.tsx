@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState, useRef, useCallback, type MouseEvent } from 'react';
 import type { SessionStatus } from '../types';
 import { IconNewSession, IconPin, IconTrash } from './icons';
 import { ContextMenu } from './ContextMenu';
+import { clampSidebarWidth } from './sidebarGeometry';
+import { defaultConfig } from '../../../main/config';
 
 interface Session { key: string; cwd: string; name: string; time?: string; }
 interface Props {
@@ -25,12 +27,56 @@ interface Props {
   // live `live-<uuid>` key → on-disk `.jsonl` path, so a promoted session can be
   // highlighted as active using its on-disk key.
   relink?: Record<string, string>;
+  // 侧边栏宽度（持久化于 config.sidebarWidth）与拖拽松手后的回写回调
+  // （见 docs/adr/0001 决策④）。
+  sidebarWidth?: number;
+  onSidebarResize?: (w: number) => void;
 }
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, relink,
-  selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete }: Props) {
+  selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
+  sidebarWidth, onSidebarResize }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
+
+  // 侧边栏宽度由 state 控制（初始取 config.sidebarWidth，默认 280）；拖拽实时改、松手经
+  // onSidebarResize 回写 config（见 docs/adr/0001 决策④）。
+  const sidebarRef = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState<number>(sidebarWidth ?? defaultConfig().sidebarWidth);
+  const widthRef = useRef<number>(width);
+  // 异步加载的 config.sidebarWidth 经 prop 流入时，同步到本地宽度 state；
+  // 拖拽过程中只走本地 setWidth（prop 不变，故本 effect 不触发），因此不冲突。
+  useEffect(() => {
+    if (sidebarWidth != null) setWidth(sidebarWidth);
+  }, [sidebarWidth]);
+  const resizeStart = useRef<{ startX: number; startWidth: number } | null>(null);
+  // 把最新的 onSidebarResize 存进 ref，使拖拽监听回调保持稳定、不依赖 prop 身份。
+  const onResizeRef = useRef(onSidebarResize);
+  onResizeRef.current = onSidebarResize;
+
+  const onResizerMove = useCallback((e: globalThis.MouseEvent) => {
+    const s = resizeStart.current;
+    if (!s) return;
+    const next = clampSidebarWidth(s.startWidth + (e.clientX - s.startX), window.innerWidth);
+    widthRef.current = next;
+    setWidth(next); // 实时跟手；终端区靠既有 ResizeObserver 自动重排
+  }, []);
+
+  const onResizerUp = useCallback(() => {
+    resizeStart.current = null;
+    document.removeEventListener('mousemove', onResizerMove);
+    document.removeEventListener('mouseup', onResizerUp);
+    if (onResizeRef.current) onResizeRef.current(widthRef.current);
+  }, [onResizerMove]);
+
+  const onResizerDown = useCallback((e: MouseEvent) => {
+    e.preventDefault();
+    // jsdom / 隐藏态下 offsetWidth 为 0，退回当前跟踪宽度（真实浏览器走 offsetWidth）。
+    const startWidth = sidebarRef.current?.offsetWidth || widthRef.current;
+    resizeStart.current = { startX: e.clientX, startWidth };
+    document.addEventListener('mousemove', onResizerMove);
+    document.addEventListener('mouseup', onResizerUp);
+  }, [onResizerMove, onResizerUp]);
 
   // A new session is keyed `live-<uuid>` in the terminal area but appears in the
   // sidebar under its on-disk `.jsonl` path once promoted. Map the active key to
@@ -54,7 +100,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
 
   return (
     <>
-      <aside className="sidebar">
+      <aside className="sidebar" ref={sidebarRef} style={{ width }}>
       <div className="sidebar-header">
         <span className="sidebar-title">会话</span>
         <div className="sidebar-actions">
@@ -191,6 +237,14 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           );
         })}
       </div>
+      {/* 右侧 4px 拖拽条：整高、ew-resize、hover 淡高亮；与窗口右缘的 rz-right 缩放热区不冲突 */}
+      <div
+        className="sidebar-resizer"
+        onMouseDown={onResizerDown}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖拽调整侧边栏宽度"
+      />
       </aside>
       {menu && (
         <ContextMenu

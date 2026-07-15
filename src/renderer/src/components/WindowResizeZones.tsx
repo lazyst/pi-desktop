@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { pi } from '../ipc';
 
 type Zone = 'top' | 'bottom' | 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -18,6 +18,16 @@ interface DragState {
 // process for the current bounds, then nudges them via `window:set-bounds`.
 export function WindowResizeZones() {
   const drag = useRef<DragState | null>(null);
+  // 最大化时窗口不能拖边 → 缩放热区全隐藏；非最大化时保留、但让出右上角
+  // （见 docs/adr/0001 决策⑤）。复用已有 onMaximizeChange IPC，与 TitleBar 一致。
+  const [maximized, setMaximized] = useState(false);
+
+  // Subscribe to maximize state so the resize zones stay in sync with the window.
+  // Must NOT return ipcRenderer.on's result (it's an object, not a cleanup fn) —
+  // returning it makes React call it as the cleanup and crash ("destroy is not a function").
+  useEffect(() => {
+    pi.onMaximizeChange?.(setMaximized);
+  }, []);
 
   const onMove = useCallback((e: globalThis.MouseEvent) => {
     const d = drag.current;
@@ -55,11 +65,15 @@ export function WindowResizeZones() {
     });
   };
 
+  // 最大化：窗口不能拖边，不渲染任何缩放热区；非最大化：渲染 7 个热区，
+  // 其中 top-right 已删除、top/right 在 CSS 中让出右上角（见 app.css 的 .rz-layer）。
+  if (maximized) return null;
+
   return (
-    <>
-      {ZONES.map((z) => (
+    <div className="rz-layer">
+      {ZONES.filter((z) => z !== 'top-right').map((z) => (
         <div key={z} className={`rz rz-${z}`} onMouseDown={onMouseDown(z)} />
       ))}
-    </>
+    </div>
   );
 }
