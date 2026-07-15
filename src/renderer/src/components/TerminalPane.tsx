@@ -13,9 +13,11 @@ import { getTheme, onThemeChange, TERM_THEMES } from '../theme';
 import { IconArrowDown } from './icons';
 import '@xterm/xterm/css/xterm.css';
 
-// 诊断开关：VITE_TERM_DEBUG=1 pnpm dev 时，打印每次 flush 合并了几块 pty 输出，
-// 用于确认 pi-tui 差分渲染的块分布、微调合并窗口（COALESCE_MS / MAX_WAIT_MS）。
-const TERM_DEBUG = (import.meta as any).env?.VITE_TERM_DEBUG === '1';
+// 诊断开关：dev 模式（pnpm dev）下自动开启，生产构建自动关闭；
+// 也可用 VITE_TERM_DEBUG=1 显式开启（含生产构建）。开启后流式期间每秒打印一次
+// 本次 flush 合并了几块 pty 输出，用于确认 pi-tui 差分渲染的块分布、微调合并窗口。
+// 注：不依赖自定义 VITE_* 从 shell 注入渲染进程（electron-vite 下不可靠），改用 Vite 必注入的 DEV。
+const TERM_DEBUG = (import.meta as any).env?.DEV === true || (import.meta as any).env?.VITE_TERM_DEBUG === '1';
 
 // Mirrors --font-mono in tokens.css. xterm reads a literal font-family string,
 // not a CSS variable, so we repeat the stack here (kept in sync with tokens.css).
