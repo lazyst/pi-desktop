@@ -63,7 +63,7 @@ export function SettingsPanel({ onClose }: Props) {
           </div>
         </div>
         <div className="settings-row">
-          <span className="settings-label">关闭按钮</span>
+          <span className="settings-label">关闭按钮行为</span>
           <div className="segmented" role="radiogroup" aria-label="关闭按钮行为">
             <button
               type="button"

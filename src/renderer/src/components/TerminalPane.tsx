@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, type MouseEvent } from 'react
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { pi } from '../ipc';
+import { getTheme, onThemeChange, TERM_THEMES } from '../theme';
 import { IconArrowDown } from './icons';
 import '@xterm/xterm/css/xterm.css';
 
@@ -37,7 +38,9 @@ export function TerminalPane({ sessionKey, active }: Props) {
   useEffect(() => {
     // xterm lineHeight is a multiplier (default 1.0); 1.2 is a comfortable
     // spacing that honors the spec's intent without over-loose rows.
-    const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1.2, scrollback: 5000 });
+    // theme 来自与 DOM 同一套 GitHub 调色板（TERM_THEMES），构造即按当前主题上色，
+    // 避免首屏白/暗闪；运行期切换经下方 onThemeChange 订阅实时重绘。
+    const term = new Terminal({ convertEol: true, cursorBlink: true, fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1.2, scrollback: 5000, theme: TERM_THEMES[getTheme()] });
     const fit = new FitAddon();
     term.loadAddon(fit);
     termRef.current = term; fitRef.current = fit;
@@ -52,6 +55,14 @@ export function TerminalPane({ sessionKey, active }: Props) {
       openedRef.current = false;
     };
   }, [sessionKey]);
+
+  // 跟随应用主题：订阅 onThemeChange，切换时实时重绘所有已打开终端（xterm 支持运行时改 theme）。
+  useEffect(() => {
+    return onThemeChange((t) => {
+      const term = termRef.current;
+      if (term) term.options.theme = TERM_THEMES[t];
+    });
+  }, []);
 
   useEffect(() => {
     if (!active || !hostRef.current || !termRef.current || !fitRef.current) return;

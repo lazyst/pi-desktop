@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig } from '../renderer/src/types';
 
+// 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
+// 即确定，无需等待异步 IPC），供渲染进程首屏零闪烁地拿到主题等初始值。
+function readInitialConfig(): AppConfig | null {
+  try {
+    const arg = process.argv.find((a) => a.startsWith('--pi-initial-config='));
+    if (!arg) return null;
+    return JSON.parse(decodeURIComponent(arg.slice('--pi-initial-config='.length))) as AppConfig;
+  } catch {
+    return null;
+  }
+}
+const initialConfig = readInitialConfig();
+
 contextBridge.exposeInMainWorld('pi', {
   listSessions: (): Promise<SessionGroup[]> => ipcRenderer.invoke('session:list'),
   openSession: (req: OpenRequest): Promise<SessionInfo> => ipcRenderer.invoke('session:open', req),
@@ -31,6 +44,7 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.send('window:set-bounds', bounds),
   onMaximizeChange: (cb: (maximized: boolean) => void) =>
     ipcRenderer.on('window:maximize-change', (_e, m: boolean) => cb(m)),
+  getInitialConfig: (): AppConfig | null => initialConfig,
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
   setConfig: (partial: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:set', partial),
 });

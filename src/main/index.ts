@@ -191,6 +191,9 @@ function createWindow() {
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      // 把初始 config 同步注入渲染进程（见 preload 的 getInitialConfig），
+      // 使其首屏即可拿到正确主题，避免异步读取导致的暗→亮闪烁。
+      additionalArguments: [`--pi-initial-config=${encodeURIComponent(JSON.stringify(cfg))}`],
     },
   });
   if (cfg.window.maximized) win.maximize();
