@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { TitleBar } from './components/TitleBar';
+import { SettingsPanel } from './components/SettingsPanel';
+import { WindowResizeZones } from './components/WindowResizeZones';
 import { pi } from './ipc';
 import type { SessionInfo, SessionStatus } from './types';
 
@@ -34,6 +37,7 @@ export default function App() {
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Same mapping held in a ref so the `onIndex` handler (which fires right after
   // `onRelink` in the same tick) can read the fresh link without stale closure state.
   const liveToDiskRef = useRef<Record<string, string>>({});
@@ -167,7 +171,9 @@ export default function App() {
   const activeStatus = activeKey ? statusMap[activeKey] : undefined;
 
   return (
-    <div className="app-shell">
+    <div className="app">
+      <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
+      <div className="app-shell">
       <Sidebar
         sessions={sessions}
         statusMap={statusMap}
@@ -216,6 +222,9 @@ export default function App() {
           onCancel={() => setConfirm(null)}
         />
       )}
+      <WindowResizeZones />
+      {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+    </div>
     </div>
   );
 }

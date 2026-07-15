@@ -1,7 +1,13 @@
 /* App shell */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
 .app-shell {
   display: flex;
-  height: 100%;        /* 与 #root 的 100% 口径一致，避免 100vh 取整/滚动条占位导致的多余滚动条 */
+  flex: 1;
+  min-height: 0;       /* 在 .app 的纵向 flex 中收缩，杜绝把外壳撑出滚动条 */
   overflow: hidden;    /* 兜底：外壳本身永不滚动；内部滚动交给 .session-list 与 .xterm-viewport */
   background: var(--bg-app);
   color: var(--text);
@@ -78,7 +84,7 @@
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  color: var(--text-faint);
+  color: var(--text-muted);
   font-size: var(--fs-xs);
   word-break: break-all;
   letter-spacing: var(--ls-label);
@@ -114,7 +120,7 @@
 .icon-btn:focus-visible { box-shadow: var(--focus-ring); }
 
 /* 置顶目录：常驻淡强调色左轨（复用"活动会话左轨"视觉语言）+ 标题变色 */
-.group.pinned { box-shadow: inset 2px 0 0 rgba(124, 156, 255, 0.40); }
+.group.pinned { box-shadow: inset 2px 0 0 var(--accent-soft); }
 .group.pinned .group-name { color: var(--accent); }
 
 /* Session list */
@@ -395,4 +401,106 @@
 .btn-danger:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* 自建标题条（无边框窗口）：整条为拖拽区，按钮 opt-out。颜色走 CSS 变量，随主题自动变。 */
+.titlebar {
+  display: flex;
+  align-items: center;
+  height: 34px;
+  flex: none;
+  padding: 0 var(--sp-2);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.titlebar-title {
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  letter-spacing: var(--ls-label);
+}
+.titlebar-spacer { flex: 1; }
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+.titlebar-btn {
+  width: 32px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: background-color var(--transition), color var(--transition);
+}
+.titlebar-btn:hover { background: var(--bg-hover); color: var(--text); }
+.titlebar-btn:focus-visible { box-shadow: var(--focus-ring); }
+.titlebar-btn-close:hover { background: var(--danger); color: #fff; }
+
+/* 无边框窗口的边缘缩放热区（替代系统原生缩放手柄） */
+.rz { position: fixed; z-index: 50; -webkit-app-region: no-drag; }
+.rz-top { top: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.rz-bottom { bottom: 0; left: 0; right: 0; height: 4px; cursor: ns-resize; }
+.rz-left { top: 0; bottom: 0; left: 0; width: 4px; cursor: ew-resize; }
+.rz-right { top: 0; bottom: 0; right: 0; width: 4px; cursor: ew-resize; }
+.rz-top-left { top: 0; left: 0; width: 6px; height: 6px; cursor: nwse-resize; }
+.rz-top-right { top: 0; right: 0; width: 6px; height: 6px; cursor: nesw-resize; }
+.rz-bottom-left { bottom: 0; left: 0; width: 6px; height: 6px; cursor: nesw-resize; }
+.rz-bottom-right { bottom: 0; right: 0; width: 6px; height: 6px; cursor: nwse-resize; }
+
+/* 设置面板（模态） */
+.settings-modal {
+  width: min(380px, calc(100vw - 32px));
+  padding: var(--sp-4);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-modal);
+}
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-3);
+}
+.settings-title { font-size: var(--fs-xl); font-weight: var(--fw-semibold); color: var(--text); }
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+}
+.settings-label { font-size: var(--fs-md); color: var(--text); }
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.seg {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) var(--sp-3);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition), color var(--transition);
+}
+.seg + .seg { border-left: 1px solid var(--border); }
+.seg:hover { background: var(--bg-hover); color: var(--text); }
+.seg.active { background: var(--bg-active); color: var(--accent); }
+.seg.active:hover { background: var(--bg-active); color: var(--accent-hover); }
+.settings-hint {
+  margin: var(--sp-4) 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
 }

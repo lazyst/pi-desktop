@@ -31,6 +31,13 @@ re-implementation.
 - **Switch without killing** — switching to another session keeps the previous
   one running in the background; its task continues and the green dot stays on.
   Switching back re-attaches the same, still-running process (instant, no restart).
+- **Light / dark theme** — ships GitHub-style dark and light themes; the gear
+  button on the title bar opens the Settings panel to switch, and the choice is
+  remembered in `localStorage` across restarts.
+- **Frameless window** — the native menu bar and OS title bar are removed in
+  favor of a custom title bar (app name + minimize / maximize / close) whose
+  colors follow the active theme. The native edge-resize lost by going frameless
+  is restored by a custom 8-direction resize region.
 - **Safe cleanup** — closing the app kills all running `pi` processes.
 - **Sandboxed renderer** — `nodeIntegration: false`, `contextIsolation: true`,
   `sandbox: true`. All process/PTY management lives in the main process; the
@@ -127,6 +134,11 @@ Renderer → Main:
 - `session:clearDirectory{ cwd }` — clear all sessions under a directory (kill + remove files)
 - `session:pickDirectory` — native folder picker
 - `session:debug` — pool diagnostics (process count / pids)
+- `window:minimize` — minimize the window
+- `window:toggle-maximize` — toggle maximize / restore
+- `window:close` — close the window
+- `window:get-bounds` — read window geometry (`{ x, y, width, height }`)
+- `window:set-bounds` — set window geometry (used by the custom resize region)
 
 Main → Renderer:
 
@@ -135,6 +147,7 @@ Main → Renderer:
 - `session:status{ key, status }` — `running` / `dead` (drives the green dot)
 - `session:exit{ key }` — process exited
 - `session:index{ groups }` — filesystem watch push (promotes new sessions)
+- `window:maximize-change{ maximized }` — maximize state changed (drives the title bar maximize/restore icon)
 
 ## Environment Variables
 
