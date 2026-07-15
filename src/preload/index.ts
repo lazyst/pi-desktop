@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus } from '../renderer/src/types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig } from '../renderer/src/types';
 
 contextBridge.exposeInMainWorld('pi', {
   listSessions: (): Promise<SessionGroup[]> => ipcRenderer.invoke('session:list'),
@@ -31,4 +31,6 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.send('window:set-bounds', bounds),
   onMaximizeChange: (cb: (maximized: boolean) => void) =>
     ipcRenderer.on('window:maximize-change', (_e, m: boolean) => cb(m)),
+  getConfig: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
+  setConfig: (partial: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:set', partial),
 });

@@ -6,6 +6,67 @@ import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
 
+// 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
+// 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
+import { defaultConfig, parseConfig, mergeConfig } from './config';
+import type { AppConfig } from '../renderer/src/types';
+
+const configPath = () => path.join(app.getPath('userData'), 'config.json');
+let configState: AppConfig | undefined;
+let configTimer: ReturnType<typeof setTimeout> | undefined;
+let configDirty = false;
+
+function loadConfig(): AppConfig {
+  try {
+    return parseConfig(fs.readFileSync(configPath(), 'utf-8'));
+  } catch {
+    return defaultConfig();
+  }
+}
+
+function ensureLoaded(): void {
+  if (configState === undefined) configState = loadConfig();
+}
+
+function writeConfigNow(): void {
+  if (!configState) return;
+  try {
+    fs.writeFileSync(configPath(), JSON.stringify(configState, null, 2));
+  } catch (err) {
+    console.error('[config] failed to write config.json:', err);
+  }
+}
+
+function getConfig(): AppConfig {
+  ensureLoaded();
+  return configState!;
+}
+
+function setConfig(partial: Partial<AppConfig>): void {
+  ensureLoaded();
+  configState = mergeConfig(configState!, partial);
+  configDirty = true;
+  if (configTimer) clearTimeout(configTimer);
+  // 防抖写盘：拖拽 / 缩放等高频变更下避免频繁 IO。
+  configTimer = setTimeout(() => {
+    configTimer = undefined;
+    configDirty = false;
+    writeConfigNow();
+  }, 100);
+}
+
+// 退出前强制落盘，避免 100ms 防抖窗口内的最近一次写入丢失。
+app.on('before-quit', () => {
+  if (configTimer) {
+    clearTimeout(configTimer);
+    configTimer = undefined;
+  }
+  if (configDirty) {
+    configDirty = false;
+    writeConfigNow();
+  }
+});
+
 const SESSIONS_DIR =
   process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
 
@@ -86,6 +147,13 @@ function createWindow() {
     },
   });
   const pool = createPool(win);
+
+  // 配置存储：渲染进程经 IPC 读写主进程 config.json（唯一真源，见 docs/adr/0001）。
+  ipcMain.handle('config:get', () => getConfig());
+  ipcMain.handle('config:set', (_e, partial: Partial<AppConfig>) => {
+    setConfig(partial);
+    if (!win.isDestroyed()) win.webContents.send('config:change', getConfig());
+  });
 
   // 弹出系统原生目录选择对话框（需求 1）。用户取消返回 null。
   ipcMain.handle('session:pickDirectory', async () => {

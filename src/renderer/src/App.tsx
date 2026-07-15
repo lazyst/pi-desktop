@@ -6,21 +6,15 @@ import { TitleBar } from './components/TitleBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
 import { pi } from './ipc';
-import type { SessionInfo, SessionStatus } from './types';
+import { initTheme } from './theme';
+import type { SessionInfo, SessionStatus, AppConfig } from './types';
 
 interface OpenSession extends SessionInfo { key: string; cwd: string; name: string; status: SessionStatus; }
 interface DiskSession { key: string; cwd: string; name: string; time?: string; }
 
-const PIN_KEY = 'pi-desktop:pinned-dirs';
-
-function readPinned(): string[] {
-  try {
-    const raw = localStorage.getItem(PIN_KEY);
-    const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
+function readPinned(cfg: AppConfig): string[] {
+  const arr = cfg.pinnedDirs;
+  return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
 }
 
 function toDisk(groups: { cwd: string; sessions: Array<{ key: string; name: string; time: string }> }[]): DiskSession[] {
@@ -33,7 +27,7 @@ export default function App() {
   const [statusMap, setStatusMap] = useState<Record<string, SessionStatus>>({});
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
-  const [pinned, setPinned] = useState<string[]>(() => readPinned());
+  const [pinned, setPinned] = useState<string[]>([]);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
@@ -74,6 +68,9 @@ export default function App() {
       liveToDiskRef.current = { ...liveToDiskRef.current, [from]: to };
       setLiveToDisk(liveToDiskRef.current);
     });
+    // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
+    pi.getConfig().then((cfg) => setPinned(readPinned(cfg))).catch(() => setPinned([]));
+    initTheme().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
   }, []);
 
@@ -105,7 +102,8 @@ export default function App() {
   const handleTogglePin = (cwd: string) => {
     setPinned((prev) => {
       const next = prev.includes(cwd) ? prev.filter((c) => c !== cwd) : [...prev, cwd];
-      try { localStorage.setItem(PIN_KEY, JSON.stringify(next)); } catch { /* ignore quota */ }
+      // config 经异步 IPC 持久化；用 .catch 吸收拒绝（try/catch 抓不到 Promise 拒绝）。
+      pi.setConfig({ pinnedDirs: next }).catch(() => {});
       return next;
     });
   };

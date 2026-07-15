@@ -2,6 +2,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import App from '../App';
+import { defaultConfig } from '../../../main/config';
+
+const CONFIG = defaultConfig();
 
 describe('App', () => {
   it('passes only disk sessions to the sidebar (no live merge)', async () => {
@@ -11,7 +14,7 @@ describe('App', () => {
       terminate: vi.fn(),
       input: vi.fn(), resize: vi.fn(),
       onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(),
+      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
     };
     (window as any).pi = api;
     render(<App />);
@@ -31,7 +34,7 @@ describe('App', () => {
       deleteMany: vi.fn(), clearDirectory: vi.fn(),
       input: vi.fn(), resize: vi.fn(),
       onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(),
+      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
     };
     (window as any).pi = api;
     render(<App />);
@@ -66,7 +69,7 @@ describe('App', () => {
       deleteMany: vi.fn(), clearDirectory: vi.fn(),
       input: vi.fn(), resize: vi.fn(),
       onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(),
+      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
     };
     (window as any).pi = api;
     render(<App />);

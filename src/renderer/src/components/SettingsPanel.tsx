@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { getTheme, setTheme, type Theme } from '../theme';
+import { getTheme, setTheme } from '../theme';
+import type { Theme } from '../types';
 
 interface Props {
   onClose: () => void;
