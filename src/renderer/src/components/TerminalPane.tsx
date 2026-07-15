@@ -13,6 +13,10 @@ import { getTheme, onThemeChange, TERM_THEMES } from '../theme';
 import { IconArrowDown } from './icons';
 import '@xterm/xterm/css/xterm.css';
 
+// 诊断开关：VITE_TERM_DEBUG=1 pnpm dev 时，打印每次 flush 合并了几块 pty 输出，
+// 用于确认 pi-tui 差分渲染的块分布、微调合并窗口（COALESCE_MS / MAX_WAIT_MS）。
+const TERM_DEBUG = (import.meta as any).env?.VITE_TERM_DEBUG === '1';
+
 // Mirrors --font-mono in tokens.css. xterm reads a literal font-family string,
 // not a CSS variable, so we repeat the stack here (kept in sync with tokens.css).
 const FONT_MONO = "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace";
@@ -29,7 +33,13 @@ export function TerminalPane({ sessionKey, active }: Props) {
   const resizeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streaming = useRef(false);
   // 渲染器仅尝试加载一次：成功则后续复用；失败则回退到内建 DOM 渲染器，不再重试。
-  const rendererTriedRef = useRef(false);
+  // WebGL 上下文丢失自愈：允许有限次重试，让瞬时 GPU 重置/驱动恢复后自动回到 GPU 渲染器，
+  // 而非永久掉回 DOM（否则流式会重新闪烁）。MAX 上限避免 GPU 真坏时无限重试。
+  const MAX_WEBGL_RETRIES = 3;
+  const webglEnabledRef = useRef(false);   // 本实例是否已启用 WebGL（避免 StrictMode 双调用重复 loadAddon）
+  const webglAttemptsRef = useRef(0);      // 已尝试次数（含上下文丢失后的重试）
+  const webglRetryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enableWebglRef = useRef<() => void>(() => {});
 
   // 流式期间冻结终端尺寸：只在尺寸真正变化（≥1）时才 resize，并去抖。
   // 否则每帧的 resize 会让 pi-tui 重新折行、编辑器高频跳动。
@@ -60,16 +70,24 @@ export function TerminalPane({ sessionKey, active }: Props) {
   // 丢弃 addon，xterm 自动回退内建 DOM 渲染器，避免黑屏/卡死（对应 VS Code 的 onContextLoss 回退）。
   const enableWebgl = useCallback(() => {
     const term = termRef.current;
-    if (!term || rendererTriedRef.current) return;
-    rendererTriedRef.current = true;
+    if (!term) return;
+    if (webglEnabledRef.current) return; // 本实例已启用，避免 StrictMode 双调用/重复 loadAddon
+    if (webglAttemptsRef.current >= MAX_WEBGL_RETRIES) return;
+    webglAttemptsRef.current += 1;
     try {
       const addon = new WebglAddon();
       addon.onContextLoss(() => {
-        // 上下文丢失（GPU 进程崩溃/驱动重置）会掉回 DOM 渲染器；若此后流式仍闪烁即源于此。
-        console.warn('[terminal] WebGL 上下文丢失，已回退 DOM 渲染器（若此后流式闪烁即源于此）');
+        // 上下文丢失（GPU 进程崩溃/驱动重置）会掉回 DOM 渲染器；冷却后自动重试启用 WebGL，
+        // 让瞬时故障自愈，而非永久停留在 DOM（否则流式会重新闪烁）。
+        webglEnabledRef.current = false; // 允许冷却后重试再次 loadAddon
+        console.warn('[terminal] WebGL 上下文丢失，回退 DOM 渲染器（冷却后将自动重试启用）');
         try { addon.dispose(); } catch { /* 回退 DOM 渲染器 */ }
+        if (webglAttemptsRef.current < MAX_WEBGL_RETRIES) {
+          webglRetryTimer.current = setTimeout(() => enableWebglRef.current(), 1000);
+        }
       });
       term.loadAddon(addon);
+      webglEnabledRef.current = true;
       doResize(true);
       // 明确确认 GPU 渲染器已生效（打开 DevTools Console 即可看到，便于核实无闪烁修复）。
       console.info('[terminal] WebGL 渲染器已启用（流式高频重绘无闪烁）。');
@@ -83,6 +101,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
       );
     }
   }, [doResize]);
+  enableWebglRef.current = enableWebgl;
 
   const handleContextMenu = useCallback((e: MouseEvent) => {
     e.preventDefault();
@@ -144,11 +163,17 @@ export function TerminalPane({ sessionKey, active }: Props) {
     // term.write；连续流最多 MAX_WAIT_MS 强制刷新一次，避免无限缓冲。（对齐 VS Code 的整帧写入语义。）
     const COALESCE_MS = 16;
     const MAX_WAIT_MS = 50;
+    let lastDebugLog = 0;
     const flush = () => {
       if (flushTimer != null) { clearTimeout(flushTimer); flushTimer = null; }
       if (disposed || pending.length === 0) { pending.length = 0; return; }
+      const chunks = pending.length;
       const data = pending.join('');
       pending.length = 0;
+      if (TERM_DEBUG && chunks > 1) {
+        const t = Date.now();
+        if (t - lastDebugLog >= 1000) { lastDebugLog = t; console.debug(`[terminal:debug] 合并 ${chunks} 块 pty 输出为一次 term.write`); }
+      }
       try { term.write(data); } catch { /* 终端已销毁等边界 */ }
     };
     const onData = (key: string, data: string) => {
@@ -171,6 +196,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
     return () => {
       disposed = true;
       if (flushTimer != null) clearTimeout(flushTimer);
+      if (webglRetryTimer.current != null) clearTimeout(webglRetryTimer.current);
       if (typeof offData === 'function') offData();
       try { term.dispose(); } catch { /* 已销毁 */ }
       openedRef.current = false;
