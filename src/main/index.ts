@@ -77,6 +77,7 @@ function createPool(win: BrowserWindow) {
 function createWindow() {
   const win = new BrowserWindow({
     width: 1100, height: 720,
+    frame: false, // 无边框：原生菜单与标题条随之消失（任务 2），标题条改由渲染进程自建（任务 3）
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -155,6 +156,20 @@ function createWindow() {
   ipcMain.handle('session:debug', () => pool.debugInfo());
   ipcMain.on('session:input', (_e, m: { key: string; data: string }) => pool.write(m.key, m.data));
   ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));
+
+  // 无边框窗口的窗口控制（自建标题条调用）
+  ipcMain.on('window:minimize', () => { if (!win.isDestroyed()) win.minimize(); });
+  ipcMain.on('window:toggle-maximize', () => {
+    if (win.isDestroyed()) return;
+    if (win.isMaximized()) win.unmaximize(); else win.maximize();
+  });
+  ipcMain.on('window:close', () => { if (!win.isDestroyed()) win.close(); });
+  ipcMain.handle('window:get-bounds', () => win.getBounds());
+  ipcMain.on('window:set-bounds', (_e, b: { x: number; y: number; width: number; height: number }) => {
+    if (!win.isDestroyed()) win.setBounds(b);
+  });
+  win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', true); });
+  win.on('unmaximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', false); });
 
   win.on('closed', () => pool.killAll());
   app.on('before-quit', () => { /* pool is per-window; killAll already on window 'closed' */ });

@@ -39,4 +39,14 @@ _Avoid_: 清空（清空是"删除整组"的特例）
 ## 关键不变量
 
 **磁盘 key 必须反查 live key**：
-`SessionPool` 内任何"删除/终止"操作，若拿到的是磁盘 key，都必须先经 `alias` 解析出 live 进程 key，再对 live key 杀进程并 `onExit(liveKey)`，否则进程变孤儿、以 `live-<uuid>` 为 key 的终端面板关不掉。
+`SessionPool` 内任何“删除/终止”操作，若拿到的是磁盘 key，都必须先经 `alias` 解析出 live 进程 key，再对 live key 杀进程并 `onExit(liveKey)`，否则进程变孤儿、以 `live-<uuid>` 为 key 的终端面板关不掉。
+
+## 外观与偏好
+
+**主题（Theme）**：
+应用外观的明暗方案，取值 `dark` | `light`。全站经一组 CSS 变量（`tokens.css`）上色，`<html>` 上的 `data-theme` 属性决定当前套用哪一组；切换主题只改变量取值、组件代码不变。
+_Avoid_: 皮肤、配色方案
+
+**设置面板（Settings Panel）**：
+应用级设置的模态面板，由标题条上的设置按钮打开；当前承载主题切换，预留扩展更多设置项。
+_Avoid_: 偏好、选项

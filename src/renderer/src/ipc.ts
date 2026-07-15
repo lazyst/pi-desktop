@@ -16,6 +16,13 @@ export interface PiApi {
   onExit(cb: (key: string) => void): void;
   onRelink(cb: (from: string, to: string) => void): void;
   onIndex(cb: (groups: SessionGroup[]) => void): void;
+  // 无边框窗口的窗口控制（对应自建标题条）
+  minimizeWindow(): void;
+  toggleMaximizeWindow(): void;
+  closeWindow(): void;
+  getWindowBounds(): Promise<{ x: number; y: number; width: number; height: number }>;
+  setWindowBounds(bounds: { x: number; y: number; width: number; height: number }): void;
+  onMaximizeChange(cb: (maximized: boolean) => void): void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at

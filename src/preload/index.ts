@@ -22,4 +22,13 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('session:relink', (_e, m: { from: string; to: string }) => cb(m.from, m.to)),
   onIndex: (cb: (groups: SessionGroup[]) => void) =>
     ipcRenderer.on('session:index', (_e, groups: SessionGroup[]) => cb(groups)),
+  minimizeWindow: () => ipcRenderer.send('window:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.send('window:toggle-maximize'),
+  closeWindow: () => ipcRenderer.send('window:close'),
+  getWindowBounds: (): Promise<{ x: number; y: number; width: number; height: number }> =>
+    ipcRenderer.invoke('window:get-bounds'),
+  setWindowBounds: (bounds: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.send('window:set-bounds', bounds),
+  onMaximizeChange: (cb: (maximized: boolean) => void) =>
+    ipcRenderer.on('window:maximize-change', (_e, m: boolean) => cb(m)),
 });
