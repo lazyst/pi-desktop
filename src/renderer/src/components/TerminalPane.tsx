@@ -13,12 +13,6 @@ import { getTheme, onThemeChange, TERM_THEMES } from '../theme';
 import { IconArrowDown } from './icons';
 import '@xterm/xterm/css/xterm.css';
 
-// 诊断开关：dev 模式（pnpm dev）下自动开启，生产构建自动关闭；
-// 也可用 VITE_TERM_DEBUG=1 显式开启（含生产构建）。开启后流式期间每秒打印一次
-// 本次 flush 合并了几块 pty 输出，用于确认 pi-tui 差分渲染的块分布、微调合并窗口。
-// 注：不依赖自定义 VITE_* 从 shell 注入渲染进程（electron-vite 下不可靠），改用 Vite 必注入的 DEV。
-const TERM_DEBUG = (import.meta as any).env?.DEV === true || (import.meta as any).env?.VITE_TERM_DEBUG === '1';
-
 // Mirrors --font-mono in tokens.css. xterm reads a literal font-family string,
 // not a CSS variable, so we repeat the stack here (kept in sync with tokens.css).
 const FONT_MONO = "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace";
@@ -165,20 +159,11 @@ export function TerminalPane({ sessionKey, active }: Props) {
     // term.write；连续流最多 MAX_WAIT_MS 强制刷新一次，避免无限缓冲。（对齐 VS Code 的整帧写入语义。）
     const COALESCE_MS = 16;
     const MAX_WAIT_MS = 50;
-    let lastDebugLog = 0;
     const flush = () => {
       if (flushTimer != null) { clearTimeout(flushTimer); flushTimer = null; }
       if (disposed || pending.length === 0) { pending.length = 0; return; }
-      const chunks = pending.length;
       const data = pending.join('');
       pending.length = 0;
-      if (TERM_DEBUG) {
-        const t = Date.now();
-        if (t - lastDebugLog >= 1000) {
-          lastDebugLog = t;
-          console.debug(`[terminal:debug] 本次 flush 合并 ${chunks} 块 pty 输出${chunks > 1 ? '' : '（单块，无需合并）'}`);
-        }
-      }
       try { term.write(data); } catch { /* 终端已销毁等边界 */ }
     };
     const onData = (key: string, data: string) => {
