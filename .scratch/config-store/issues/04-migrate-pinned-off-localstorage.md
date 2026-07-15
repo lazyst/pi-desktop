@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: config-store/02
 
 # 置顶目录迁移到 config（脱离 localStorage）
@@ -14,3 +14,7 @@ Blocked by: config-store/02
 - 不再读写 `localStorage` 的 pinned 键。
 
 依赖：config-store/02 提供 IPC。
+
+## Comments
+
+- 已实现并提交：\`5a757ad\`（App.tsx 置顶目录脱离 localStorage 走 config IPC）。

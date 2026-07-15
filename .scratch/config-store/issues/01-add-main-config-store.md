@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 
 # 主进程配置存储（config.json）
 
@@ -12,3 +12,7 @@ Status: ready-for-agent
 验收：
 - 进程退出后再次启动能读到上次写入的字段。
 - 损坏的 config.json 不导致启动失败。
+
+## Comments
+
+- 已实现并提交：\`5a757ad\`（含 docs/adr/0001、AppConfig 类型与 config:get/set IPC）。

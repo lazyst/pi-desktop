@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: resolved
 Blocked by: config-store/02
 
 # 主题迁移到 config（脱离 localStorage）
@@ -15,3 +15,7 @@ Blocked by: config-store/02
 - 主题单测通过，不再依赖 `localStorage`。
 
 依赖：config-store/02 提供 IPC。
+
+## Comments
+
+- 已实现并提交：\`5a757ad\`（theme.ts 脱离 localStorage 走 config IPC，单测已迁）。
