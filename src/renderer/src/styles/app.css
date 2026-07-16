@@ -224,13 +224,23 @@
 .header-error { margin-left: auto; font-size: var(--fs-xs); color: var(--danger); }
 
 /* Terminal area + host */
-.terminal-area { flex: 1; position: relative; min-height: 0; }
+/* 留白放在 .terminal-area（xterm 外层），.terminal-host 保持零 padding、尺寸纯粹，
+   作为 xterm 的直接父容器让 FitAddon 的测量与渲染严格闭合（消除 padding 介入尺寸链导致的错位抖动）。
+   contain: strict 把 xterm 内部 canvas 滚动/重绘隔离为独立合成层，避免其重排向外扩散，
+   稳定贴底自动跟随时的滚动表现（与 VS Code 集成终端对照的容器层稳定性优化）。 */
+.terminal-area {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  padding: var(--sp-2) 0 var(--sp-2) var(--sp-2);
+  overflow: hidden;
+}
 .terminal-host {
   position: absolute;
   inset: 0;
-  padding: var(--sp-2) 0 var(--sp-2) var(--sp-2); /* 上/下/左留白，右内边距归零让滚动条贴窗口右缘 */
   background: var(--bg-app);
   display: none;
+  contain: strict;
 }
 .terminal-host.active { display: block; }
 
