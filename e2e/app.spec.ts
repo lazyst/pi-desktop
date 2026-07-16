@@ -45,8 +45,10 @@ test('open disk session → continuity across switch → hover terminate → clo
   await expect(page.locator('.session-item', { hasText: 'session-A' })).toBeVisible({ timeout: 15000 });
 
   await page.locator('.session-item', { hasText: 'session-A' }).click();
-  await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('fake-pi ready', { timeout: 15000 });
-  const before = Number((await page.locator('.terminal-host.active .xterm-rows').innerText()).match(/tick (\d+)/)?.[1] ?? '0');
+  // xterm 6.0.0 的 WebGL 渲染器把文本画在 <canvas> 上、不创建 .xterm-rows DOM 层，
+  // 故改用 host 的 data-output 镜像（见 XtermTerminal.appendMirror）断言真实输出。
+  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
+  const before = Number((await page.locator('.terminal-host.active').getAttribute('data-output'))?.match(/tick (\d+)/)?.[1] ?? '0');
   expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
   // 记录 session-A 首个进程 pid，用于验证“切走再切回”是否复用同一进程。
   const aPid = (await page.evaluate(() => (window as any).pi.debug())).pids[0];
@@ -55,7 +57,7 @@ test('open disk session → continuity across switch → hover terminate → clo
   expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(2);
   await page.waitForTimeout(3000);
   await page.locator('.session-item', { hasText: 'session-A' }).click();
-  await expect.poll(async () => Number((await page.locator('.terminal-host.active .xterm-rows').innerText()).match(/tick (\d+)/)?.[1] ?? '0'), { timeout: 10000 }).toBeGreaterThan(before);
+  await expect.poll(async () => Number((await page.locator('.terminal-host.active').getAttribute('data-output'))?.match(/tick (\d+)/)?.[1] ?? '0'), { timeout: 10000 }).toBeGreaterThan(before);
 
   // 切回同一会话必须复用原进程（而非新起一个）：原 A 进程 pid 必须仍在被追踪的进程集中。
   // 修复前会再 spawn 一个 pi 并覆盖池记录，使原进程被孤儿化、不再被追踪 → 该断言失败。
@@ -83,7 +85,7 @@ test('new session from a directory promotes into the sidebar after first message
 
   // hover 目录 → 点新建会话图标（需求 2）
   await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
-  await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('fake-pi ready', { timeout: 15000 });
+  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
 
   // 发送首条消息 → fake-pi 写盘 → 晋升进侧边栏
   await page.locator('.terminal-host.active').click();
@@ -106,7 +108,7 @@ test('promoted session reuses the live process (no duplicate) and is highlighted
 
   // hover 目录 → 点新建会话图标（需求 2）。这会创建一个 live 会话（key live-<uuid>）。
   await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
-  await expect(page.locator('.terminal-host.active .xterm-rows')).toContainText('fake-pi ready', { timeout: 15000 });
+  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
   // 新建会话在写盘前，终端标题显示占位名 “new-session”
   await expect(page.locator('.header-title')).toContainText('new-session');
 
@@ -145,8 +147,10 @@ test('pinning a directory persists across reload', async () => {
   await page.locator('.group', { hasText: proj }).locator('[data-action="pin"]').click();
   await expect(page.locator('.group.pinned', { hasText: proj })).toBeVisible({ timeout: 5000 });
 
-  const stored = await page.evaluate(() => localStorage.getItem('pi-desktop:pinned-dirs'));
-  expect(stored).toContain(proj.replace(/\\/g, '\\\\'));
+  // pin 持久化在主进程 config.json（见 docs/adr/0001），经 pi.getConfig() 验证已写入。
+  // 注：不要用 localStorage 断言——pin 不走 localStorage，且 Electron 的 localStorage 跨运行残留会污染。
+  const stored = await page.evaluate(() => (window as any).pi.getConfig());
+  expect((stored.pinnedDirs as string[]).includes(proj)).toBe(true);
 
   await page.reload();
   await page.waitForLoadState('domcontentloaded');
@@ -164,30 +168,30 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
 
   await expect(page.locator('.session-item', { hasText: 'jump-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'jump-seeded' }).click();
-  // 先把焦点移到终端，让后续键入真正进入 pty（否则焦点停在会话项上，
-  // 每行末尾的回车会误触发 Sidebar 的 onKeyDown→重新打开会话）。
-  await page.locator('.terminal-host.active').click();
+  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
+  // 焦点移到 xterm 的输入 textarea（而非 host 容器），确保键盘输入真正进入 pty，
+  // 不会因焦点停在未失焦的会话项上、被 Sidebar 的 onKeyDown 误当作“重新打开会话”。
+  const host = page.locator('.terminal-host.active');
+  await host.locator('.xterm-helper-textarea').click();
   // Flood the terminal so it overflows the viewport (FAB only shows when scrolled up).
   for (let i = 0; i < 60; i++) {
     await page.keyboard.type(`fill ${i}\n`);
   }
+  // 60 行确已进入终端（经 data-output 镜像断言，WebGL 渲染器下无 .xterm-rows DOM 层）。
+  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fill 59/, { timeout: 10000 });
   const vp = page.locator('.terminal-host.active .xterm-viewport');
-  // Ensure the viewport actually overflows (the 60 typed lines are flushed into the scroll area).
-  await page.waitForFunction(() => {
-    const el = document.querySelector('.terminal-host.active .xterm-viewport') as HTMLElement | null;
-    return !!el && el.scrollHeight > el.clientHeight + 10;
-  }, undefined, { timeout: 10000 });
-  // Scroll up with a REAL wheel so it travels through xterm's own wheel handler and updates its
-  // internal viewportY. xterm re-syncs scrollTop from ydisp on every buffer change (the fake pty
-  // keeps ticking), so retry until the scroll actually sticks (scrollTop stays well above bottom) —
-  // this removes the race between the wheel's async scroll event and xterm's syncScrollArea().
+  // 注意：xterm 6.0.0 的 WebGL 渲染器下 .xterm-viewport 的 scrollHeight 不随缓冲区增长
+  // （文本在 <canvas> 上，原生 scrollTop 恒为 0）。置底按钮改由 xterm buffer API
+  // (viewportY < baseY) 驱动（见 XtermTerminal.bindScroll），故这里不再等物理溢出。
+  // Scroll up with a REAL wheel so it travels through xterm's own wheel handler, which moves
+  // the internal viewportY (ydisp) and fires term.onScroll → drives the jump button. Retry a
+  // few times because the fake pty keeps ticking and re-syncs the viewport to the bottom.
   await vp.hover({ force: true });
   let scrolledUp = false;
   for (let i = 0; i < 30 && !scrolledUp; i++) {
     await page.mouse.wheel(0, -1000);
-    await page.waitForTimeout(50);
-    const m = await vp.evaluate((el) => ({ top: el.scrollTop, bottom: el.scrollHeight - el.clientHeight }));
-    if (m.top <= m.bottom - 30) scrolledUp = true;
+    await page.waitForTimeout(80);
+    scrolledUp = await page.locator('.jump-bottom.visible').count().then((c) => c > 0);
   }
   expect(scrolledUp).toBe(true);
   await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
@@ -206,14 +210,10 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
   });
   expect(noOverlap).toBe(true);
 
-  // Requirement 4 (runtime): once scrolled up, incoming data (the fake pty keeps ticking)
-  // must NOT snap the viewport back to the bottom — otherwise the scrollbar would feel
-  // "undraggable" because drag-up is immediately undone. Verify stability over several ticks.
+  // Requirement 4 (runtime): once scrolled up, the jump button stays visible (the buffer is NOT
+  // force-snapped to the bottom by incoming data — xterm's native auto-follow only applies when
+  // already at the bottom). Verify stability over a few fake-pty ticks.
   await page.waitForTimeout(2500);
-  const heldUp = await vp.evaluate(
-    (el) => el.scrollTop <= el.scrollHeight - el.clientHeight - 30,
-  );
-  expect(heldUp).toBe(true);
   await expect(page.locator('.jump-bottom.visible')).toBeVisible({ timeout: 5000 });
 
   await page.locator('.jump-bottom.visible').click();

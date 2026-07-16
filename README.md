@@ -50,7 +50,7 @@ re-implementation.
 | Shell        | Electron                                             |
 | Main process | Node + `node-pty` (conpty on Windows)              |
 | Renderer     | React + TypeScript (Vite / electron-vite)           |
-| Terminal     | `@xterm/xterm` + `@xterm/addon-fit`                |
+| Terminal     | `XtermTerminal` 薄封装（吸收 VS Code 渲染/缓冲/度量）+ `@xterm/xterm` + `@xterm/addon-fit` |
 | Tests        | Vitest (unit) + Playwright (E2E, real Electron)   |
 
 ## Prerequisites
@@ -104,7 +104,7 @@ Main Process — SessionPool (single source of truth)
   │
 Renderer (React)
   ├─ Sidebar     —— sessions grouped by cwd + green dot + hover terminate + clear/batch delete
-  └─ TerminalPane —— one xterm.js per open session, shown/hidden by `active`
+  └─ TerminalPane —— React shell; one XtermTerminal thin wrapper per open session, shown/hidden by `active`
 ```
 
 - **`sessionKey`** = absolute path of the session's `.jsonl` file (new sessions

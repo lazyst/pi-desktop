@@ -241,6 +241,14 @@
   background: var(--bg-app);
   display: none;
   contain: strict;
+  /* 对齐 VS Code 集成终端的度量闭合：宿主高度占满、box-sizing 让滚动条/边框不挤动
+     可绘制区域，cell 度量（由 JS 锁定）才能与 FitAddon 测量严格一致（见 docs/adr/0002）。 */
+  height: 100%;
+}
+.terminal-host .xterm,
+.terminal-host .xterm-viewport,
+.terminal-host .xterm-screen {
+  box-sizing: border-box;
 }
 .terminal-host.active { display: block; }
 
