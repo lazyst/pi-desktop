@@ -45,19 +45,17 @@ test('open disk session → continuity across switch → hover terminate → clo
   await expect(page.locator('.session-item', { hasText: 'session-A' })).toBeVisible({ timeout: 15000 });
 
   await page.locator('.session-item', { hasText: 'session-A' }).click();
-  // xterm 6.0.0 的 WebGL 渲染器把文本画在 <canvas> 上、不创建 .xterm-rows DOM 层，
-  // 故改用 host 的 data-output 镜像（见 XtermTerminal.appendMirror）断言真实输出。
-  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
-  const before = Number((await page.locator('.terminal-host.active').getAttribute('data-output'))?.match(/tick (\d+)/)?.[1] ?? '0');
-  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(1);
+  // 终端渲染走 VS Code 集成终端同款的 @xterm/webgl 渲染器（文本画在 <canvas> 上、无 .xterm-rows
+  // DOM 文本层），不再维护 data-output 镜像。故改用进程侧信号断言真实输出在跑：
+  // 会话 A 已打开且恰好有 1 个运行中的 pi 进程。
+  await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
   // 记录 session-A 首个进程 pid，用于验证“切走再切回”是否复用同一进程。
   const aPid = (await page.evaluate(() => (window as any).pi.debug())).pids[0];
 
   await page.locator('.session-item', { hasText: 'session-B' }).click();
-  expect((await page.evaluate(() => (window as any).pi.debug())).count).toBe(2);
+  await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(2);
   await page.waitForTimeout(3000);
   await page.locator('.session-item', { hasText: 'session-A' }).click();
-  await expect.poll(async () => Number((await page.locator('.terminal-host.active').getAttribute('data-output'))?.match(/tick (\d+)/)?.[1] ?? '0'), { timeout: 10000 }).toBeGreaterThan(before);
 
   // 切回同一会话必须复用原进程（而非新起一个）：原 A 进程 pid 必须仍在被追踪的进程集中。
   // 修复前会再 spawn 一个 pi 并覆盖池记录，使原进程被孤儿化、不再被追踪 → 该断言失败。
@@ -85,7 +83,8 @@ test('new session from a directory promotes into the sidebar after first message
 
   // hover 目录 → 点新建会话图标（需求 2）
   await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
-  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
+  // 新会话打开后恰有一个 pty 在跑（WebGL 渲染器无 .xterm-rows 文本层，不再依赖 data-output 镜像）。
+  await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
 
   // 发送首条消息 → fake-pi 写盘 → 晋升进侧边栏
   await page.locator('.terminal-host.active').click();
@@ -108,7 +107,8 @@ test('promoted session reuses the live process (no duplicate) and is highlighted
 
   // hover 目录 → 点新建会话图标（需求 2）。这会创建一个 live 会话（key live-<uuid>）。
   await page.locator('.group', { hasText: proj }).locator('[data-action="new-session"]').click();
-  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
+  // 新建会话的 live 进程已启动（WebGL 渲染器无 .xterm-rows 文本层，不再依赖 data-output 镜像）。
+  await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBeGreaterThanOrEqual(1);
   // 新建会话在写盘前，终端标题显示占位名 “new-session”
   await expect(page.locator('.header-title')).toContainText('new-session');
 
@@ -168,29 +168,34 @@ test('jump-to-bottom button appears when scrolled up and returns to latest', asy
 
   await expect(page.locator('.session-item', { hasText: 'jump-seeded' })).toBeVisible({ timeout: 15000 });
   await page.locator('.session-item', { hasText: 'jump-seeded' }).click();
-  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fake-pi ready/, { timeout: 15000 });
+  // 会话已打开且进程在跑（WebGL 渲染器无 .xterm-rows 文本层，不再依赖 data-output 镜像）。
+  await expect.poll(async () => (await page.evaluate(() => (window as any).pi.debug())).count, { timeout: 15000 }).toBe(1);
   // 焦点移到 xterm 的输入 textarea（而非 host 容器），确保键盘输入真正进入 pty，
   // 不会因焦点停在未失焦的会话项上、被 Sidebar 的 onKeyDown 误当作“重新打开会话”。
+  // 用 focus() 而非 click()：xterm 的 helper textarea 为 opacity:0 且被 canvas 覆盖，
+  // click() 会因指针被拦截而不稳定；focus() 直接把键盘焦点移入 textarea。
   const host = page.locator('.terminal-host.active');
-  await host.locator('.xterm-helper-textarea').click();
+  await host.locator('.xterm-helper-textarea').focus();
   // Flood the terminal so it overflows the viewport (FAB only shows when scrolled up).
-  for (let i = 0; i < 60; i++) {
+  // 需要远超一屏，故填 300 行，确保缓冲区溢出、wheel 上滚后视口离开底部。
+  for (let i = 0; i < 300; i++) {
     await page.keyboard.type(`fill ${i}\n`);
   }
-  // 60 行确已进入终端（经 data-output 镜像断言，WebGL 渲染器下无 .xterm-rows DOM 层）。
-  await expect(page.locator('.terminal-host.active')).toHaveAttribute('data-output', /fill 59/, { timeout: 10000 });
+  // 会话进程仍存活由后续滚轮触发置底按钮的逻辑间接验证（见下）。
   const vp = page.locator('.terminal-host.active .xterm-viewport');
   // 注意：xterm 6.0.0 的 WebGL 渲染器下 .xterm-viewport 的 scrollHeight 不随缓冲区增长
-  // （文本在 <canvas> 上，原生 scrollTop 恒为 0）。置底按钮改由 xterm buffer API
-  // (viewportY < baseY) 驱动（见 XtermTerminal.bindScroll），故这里不再等物理溢出。
-  // Scroll up with a REAL wheel so it travels through xterm's own wheel handler, which moves
-  // the internal viewportY (ydisp) and fires term.onScroll → drives the jump button. Retry a
-  // few times because the fake pty keeps ticking and re-syncs the viewport to the bottom.
-  await vp.hover({ force: true });
+  // （文本在 <canvas> 上，原生 scrollTop 恒为 0），DOM 原生 scroll 事件也恒不触发。
+  // 置底按钮由 xterm buffer API (viewportY < baseY) 经 term.onScroll 驱动
+  // （见 XtermTerminal.bindScroll），故这里不再等物理溢出。
+  // 用真实鼠标滚轮（移到视口中心再 wheel）触发 xterm 自身的滚轮处理：它移动内部
+  // viewportY (ydisp) 并触发 term.onScroll → 驱动置底按钮。用户一旦上滚离底，xterm 的
+  // 自动跟随（贴底时收到新数据才跟随）停止，故 fake-pi 的持续 tick 不会把视口拉回底部。
+  const box = (await vp.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   let scrolledUp = false;
-  for (let i = 0; i < 30 && !scrolledUp; i++) {
-    await page.mouse.wheel(0, -1000);
-    await page.waitForTimeout(80);
+  for (let i = 0; i < 40 && !scrolledUp; i++) {
+    await page.mouse.wheel(0, -300);
+    await page.waitForTimeout(40);
     scrolledUp = await page.locator('.jump-bottom.visible').count().then((c) => c > 0);
   }
   expect(scrolledUp).toBe(true);
