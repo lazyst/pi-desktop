@@ -1,7 +1,7 @@
 // XtermTerminal —— VS Code 风格的终端薄封装（见 docs/adr/0002）。
 //
 // 这是本次重构的核心：把原 TerminalPane.tsx 内全部 xterm 渲染逻辑（WebGL 渲染器锁定、
-// FitAddon 度量、5ms 数据合并缓冲、CJK 等宽字体栈、流式 blink 抑制、scroll/置底判定）
+// FitAddon 度量、CJK 等宽字体栈、5ms 数据合并缓冲、scroll/置底判定）
 // 收编进一个对上层透明的类。TerminalPane 退化为 React 生命周期壳，持有一个本类实例。
 //
 // 设计对齐 VS Code 集成终端的分层意图（但只取渲染/缓冲/度量这一层，不搬 DI/workbench）：
@@ -28,14 +28,6 @@ import '@xterm/xterm/css/xterm.css';
 // 最终兜底 Microsoft YaHei（同一字体的 ASCII 与 CJK 墨迹高度一致，保证 CharMeasure 稳定）。
 const FONT_MONO = "'Sarasa Mono SC','Sarasa Mono','Microsoft YaHei Mono','JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,'Microsoft YaHei',monospace";
 
-// 时间窗长度，对齐 VS Code 的 throttleBy=5。窗口内到达的多个数据块合并成一次 write。
-const FLUSH_MS = 5;
-// 流式输出窗口内冻结 resize 的安静阈值（T1，见 docs/adr/0002）：最近一次收数据后该毫秒数内
-// 不 refit，避免每帧 resize 触发 TUI 重折行/整屏重绘导致跳动。停止收数据超过该窗口后自动解冻。
-const RESIZE_QUIET_MS = 80;
-// 流式停止多久后恢复 cursorBlink（避免输出间隙误关/频繁切换）。
-const BLINK_RESTORE_MS = 400;
-
 export interface XtermTerminalOptions {
   sessionKey: string;
   pi: PiApi;
@@ -57,18 +49,16 @@ export class XtermTerminal {
   private disposed = false;
   private host: HTMLElement | null = null;
 
-  // —— 流式窗口内冻结 resize 相关 ——
+  // —— 流式窗口内防抖 resize 相关 ——
   private lastDims: { cols: number; rows: number } | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastDataAt = 0;
 
-  // —— 数据合并缓冲相关 ——
-  private pending: string[] = [];
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // —— 流式 blink 抑制相关 ——
-  private blinkRestoreTimer: ReturnType<typeof setTimeout> | null = null;
-  private blinkSuppressed = false;
+  // —— 数据写队列（对齐 VS Code 的 write(data, cb) 契约：上一帧解析完才写下一帧） ——
+  // 不用 setTimeout 缓冲窗口：VS Code 的 TerminalDataBufferer 在 processManager 层做节流，
+  // 而 xterm 的 raw.write 自带 callback（解析完成后触发）。这里用队列 + 串行 write 严格对齐，
+  // 避免多个帧同时堆进 xterm 写队列、WebGL 在“清行未写”的中间态渲染导致跳动。
+  private writeQueue: string[] = [];
+  private writeScheduled = false;
 
   // —— 输出文本镜像（无障碍 + e2e 可观测，见 appendMirror）相关 ——
   // 截断到 MAX_MIRROR 字节挂到 host.dataset.output。xterm 6.0.0 的 WebGL 渲染器把文本画在
@@ -111,8 +101,9 @@ export class XtermTerminal {
       // 在 pi-tui 差分渲染里偶尔多出回车字节，导致行错位/重排式闪烁。VS Code 终端同样不对 PTY 数据开 convertEol。
       cursorBlink: true,
       cursorStyle: 'bar',
-      // minimumContrastRatio 对齐 VS Code（默认 4.5，按 WCAG 调整单元格前景对比度）。
-      minimumContrastRatio: 4.5,
+      // minimumContrastRatio 对齐 VS Code 默认（1）。过高会让 xterm 每帧重算 cell 前景对比度，
+      // 流式时增加重绘；VS Code 默认 1。
+      minimumContrastRatio: 1,
       drawBoldTextInBrightColors: true,
       letterSpacing: 0,
       tabStopWidth: 8,
@@ -121,7 +112,9 @@ export class XtermTerminal {
       scrollOnEraseInDisplay: true,
       fontFamily: FONT_MONO,
       fontSize: 13,
-      lineHeight: 1.2,
+      // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0；1.2 会让行盒更高，
+      // 真实换行滚屏位移更显眼）。
+      lineHeight: 1.0,
       scrollback: 5000,
       theme: TERM_THEMES[getTheme()],
     });
@@ -157,8 +150,6 @@ export class XtermTerminal {
   /** 非 active / 卸载时销毁终端，释放所有监听与定时器。 */
   unmount(): void {
     this.disposed = true;
-    if (this.flushTimer != null) clearTimeout(this.flushTimer);
-    if (this.blinkRestoreTimer != null) clearTimeout(this.blinkRestoreTimer);
     if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
     this.offScroll?.();
     this.offData?.();
@@ -211,11 +202,20 @@ export class XtermTerminal {
 
   // —— 私有实现 ——
 
-  /** 渲染器策略（S1）：open 前同步探测 WebGL 可用性，open 后整个会话恒定、绝不中途切换。 */
+  /** 渲染器策略（S1）：open 前同步探测 WebGL 可用性，open 后整个会话恒定、绝不中途切换。
+   * 可用环境变量 PI_DESKTOP_RENDERER 强制渲染器，用于排查“WebGL cell 度量跳变导致编辑器漂移”：
+   *   - 未设置 / 'auto'：探测 WebGL，可用则 GPU，否则 DOM
+   *   - 'webgl'：强制 WebGL（不可用则警告并回退 DOM）
+   *   - 'dom'：强制 DOM 渲染器（绕过 WebGL，验证是否 WebGL 度量问题） */
   private enableWebgl(): void {
     const term = this.term;
     if (!term || this.rendererLocked) return;
     this.rendererLocked = true;
+    const forced = (import.meta.env?.VITE_PI_DESKTOP_RENDERER ?? '').toLowerCase();
+    if (forced === 'dom') {
+      console.info('[terminal] 渲染器已按 PI_DESKTOP_RENDERER=dom 强制锁定为 DOM 渲染器。');
+      return;
+    }
     try {
       const addon = new WebglAddon();
       term.loadAddon(addon); // open 前 load：第一帧即 GPU 渲染，cell 度量从首帧恒定
@@ -229,13 +229,13 @@ export class XtermTerminal {
     }
   }
 
-  /** 流式窗口内冻结 resize：最近一次收数据后 RESIZE_QUIET_MS 内不 refit；安静后自动解冻。 */
+  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用（壳侧已做 100ms 防抖）。
+   * 对齐 VS Code：每个 render frame 都 fit，不冻结——冻结会让 PTY 列宽与 TUI 实际高度脱节，
+   * 正是流式输出时内容区“多几行/少几行”错位（编辑器上下跳）的来源。 */
   private doResize(force = false): void {
     const term = this.term;
     const fit = this.fit;
     if (!term || !fit || !this.host) return;
-    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    if (!force && now - this.lastDataAt < RESIZE_QUIET_MS) return;
     try {
       fit.fit();
     } catch {
@@ -248,36 +248,40 @@ export class XtermTerminal {
     this.pi.resize(this.sessionKey, cols, rows);
   }
 
-  /** 收到 PTY 数据：记录时间、抑制 blink、合并缓冲（对齐 VS Code TerminalDataBufferer）。 */
+  /** 收到 PTY 数据：入写队列并触发写出（对齐 VS Code TerminalDataBufferer + write(data,cb)）。
+   * 注意：不动 cursorBlink（VS Code 流式期间不改它，自创的 suppress 会与 pi 的光标显隐序列打架致闪）。 */
   private handleData(key: string, data: string): void {
     if (key !== this.sessionKey || !this.term) return;
-    this.lastDataAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    this.suppressBlinkWhileStreaming();
-    this.pending.push(data);
-    if (this.flushTimer == null) this.flushTimer = setTimeout(() => this.flush(), FLUSH_MS);
+    this.writeQueue.push(data);
+    if (!this.writeScheduled) {
+      this.writeScheduled = true;
+      // 下一微任务批量取出并原子写出（对齐 VS Code：窗口内 join 成一次 write，
+      // “移光标+写文本”序列在同一帧被解析，避免 WebGL 在中间态渲染）。
+      Promise.resolve().then(() => this.drainQueue());
+    }
   }
 
-  /** 时间窗结束一次性写出整段缓冲（对齐 VS Code throttleBy=5 合并多帧）。 */
-  private flush(): void {
-    if (this.flushTimer != null) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-    if (this.disposed || this.pending.length === 0) {
-      this.pending.length = 0;
-      return;
-    }
-    const data = this.pending.join('');
-    this.pending.length = 0;
+  /** 写出：取当前队列全部数据 join 成一次 write（原子帧），用 callback 驱动下一窗口（对齐 VS Code）。 */
+  private drainQueue(): void {
+    this.writeScheduled = false;
+    if (this.disposed || !this.term || this.writeQueue.length === 0) return;
+    // 窗口内 join（对齐 VS Code 的 buffer.data.join('')）：保证“移光标+写文本”原子解析，
+    // 消除拆成多个 write 时 WebGL 在中间态渲染导致的行号漂移/闪烁。
+    const data = this.writeQueue.join('');
+    this.writeQueue = [];
+    const term = this.term;
     try {
-      this.term?.write(data);
+      term.write(data, () => {
+        // 上一窗口解析完成，期间若有新数据则继续下一窗口
+        if (this.writeQueue.length > 0 && !this.writeScheduled && !this.disposed) {
+          this.writeScheduled = true;
+          Promise.resolve().then(() => this.drainQueue());
+        }
+      });
     } catch {
       /* 终端已销毁等边界 */
     }
-    // 镜像到 host 的 data-output（截断防膨胀），供无障碍与 e2e 断言。
     this.appendMirror(data);
-    // 不调用 term.scrollToBottom()：xterm 对 ?2026 同步输出帧有自己的整帧渲染与自动跟随，
-    // 手动钉底会形成“贴底→scroll→再贴底”正反馈，导致用户无法上滚浏览历史。
   }
 
   /** 把输出文本累积到镜像缓冲并写入 host.dataset.output（截断到 MAX_MIRROR）。 */
@@ -292,28 +296,6 @@ export class XtermTerminal {
       this.mirror = this.mirror.slice(this.mirror.length - XtermTerminal.MAX_MIRROR);
     }
     this.host.dataset.output = this.mirror;
-  }
-
-  /** 流式活跃时关闭 cursorBlink，停止 BLINK_RESTORE_MS 后恢复（防逐帧光标闪）。 */
-  private suppressBlinkWhileStreaming(): void {
-    if (this.blinkSuppressed || !this.term) return;
-    this.blinkSuppressed = true;
-    try {
-      this.term.options.cursorBlink = false;
-    } catch {
-      /* 已销毁等边界 */
-    }
-    if (this.blinkRestoreTimer != null) clearTimeout(this.blinkRestoreTimer);
-    this.blinkRestoreTimer = setTimeout(() => {
-      this.blinkRestoreTimer = null;
-      if (this.disposed || !this.term) return;
-      this.blinkSuppressed = false;
-      try {
-        this.term.options.cursorBlink = true;
-      } catch {
-        /* 已销毁等边界 */
-      }
-    }, BLINK_RESTORE_MS);
   }
 
   /**
