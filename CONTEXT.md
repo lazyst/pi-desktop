@@ -84,9 +84,17 @@ xterm 把字符画到屏幕的后端，本应用只有 WebGL(GPU) 与内建 DOM 
 _Avoid_: 画布后端、绘制器
 
 **度量锁定（Metrics Lock）**：
-会话 open 前用含 CJK 的等宽字体锁定字体网格，open 后只让单一渲染器以锁定单元度量渲染，禁止字体回退导致的墨迹高度漂移与渲染器切换。
+会话 open 前同步探测 WebGL 并在 loadAddon 后锁定渲染器，open 后只让单一渲染器以锁定单元度量渲染，禁止中途切换（切换会令单元度量跳变、引发跳动）。CJK / 宽字符度量交给 `Unicode11Addon` 由 xterm 原生处理，不再用含 CJK 的字体栈硬塞（见 docs/adr/0003）。
 _Avoid_: 字体固定、尺寸锁
 
+**剪贴板（Clipboard）**：
+终端内复制/粘贴统一由官方 `@xterm/addon-clipboard` 接管（对齐 VS Code 的 ClipboardAddon 装配），在 Electron 沙箱 / 非安全上下文下表现更稳。
+_Avoid_: 自管 navigator.clipboard、自定义选区写回
+
+**写聚合（Write Coalescing）**：
+PTY 到达的数据块在固定 5ms 时间窗内聚合，窗口结束一次性 `term.write`，消除流式高频重绘的中间帧闪烁；xterm 原生处理 `?2026` 同步输出序列、自行合并未闭合帧，故不再做同步帧切分（见 docs/adr/0003）。
+_Avoid_: 同步帧切分、半帧判定、串行写队列
+
 **流式窗口（Streaming Window）**：
-PTY 持续吐数据的时间段（用"距上次收数据 < 阈值"判定，与具体程序无关）。窗口内冻结 resize、禁止渲染器切换，以保证布局与度量稳定；窗口结束（安静）后才用锁定度量精准 refit。
+PTY 持续吐数据的时间段（用"距上次收数据 < 阈值"判定，与具体程序无关）。数据经 5ms 时间窗聚合写入（见上文"写聚合"），不冻结 resize——冻结会让 PTY 列宽与 TUI 实际高度脱节，正是流式输出时内容区错位（编辑器上下跳）的来源；窗口结束（安静）后才用 fit 精准 refit。
 _Avoid_: 输出中、刷新期

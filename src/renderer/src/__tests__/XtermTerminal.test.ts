@@ -4,24 +4,44 @@ import { Terminal } from '@xterm/xterm';
 import { XtermTerminal } from '../components/XtermTerminal';
 import type { PiApi } from '../ipc';
 
-// 用可控的 mock 替换 WebGL addon，验证渲染器加载/回退，不触发真实 GPU（jsdom 无 WebGL 上下文）。
-const hoist = vi.hoisted(() => ({ webglThrow: false, activateCalls: 0 }));
+// 用可控的 mock 替换 addons，验证加载/回退，不触发真实 GPU / 剪贴板 / unicode 解析。
+const hoist = vi.hoisted(() => ({
+  webglThrow: false,
+  webglActivateCalls: 0,
+  clipboardActivateCalls: 0,
+  unicodeActivateCalls: 0,
+}));
 vi.mock('@xterm/addon-webgl', () => {
   class WebglAddon {
     disposed = false;
-    contextLossHandler: (() => void) | null = null;
     activate() {
-      hoist.activateCalls++;
+      hoist.webglActivateCalls++;
       if (hoist.webglThrow) throw new Error('WebGL unavailable');
     }
-    onContextLoss(cb: () => void) {
-      this.contextLossHandler = cb;
-    }
+    onContextLoss() {}
     dispose() {
       this.disposed = true;
     }
   }
   return { WebglAddon };
+});
+vi.mock('@xterm/addon-clipboard', () => {
+  class ClipboardAddon {
+    activate() {
+      hoist.clipboardActivateCalls++;
+    }
+    dispose() {}
+  }
+  return { ClipboardAddon };
+});
+vi.mock('@xterm/addon-unicode11', () => {
+  class Unicode11Addon {
+    activate() {
+      hoist.unicodeActivateCalls++;
+    }
+    dispose() {}
+  }
+  return { Unicode11Addon };
 });
 
 function makeApi() {
@@ -45,10 +65,12 @@ function mountHost(): HTMLElement {
   return host;
 }
 
-describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () => {
+describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 / 0003）', () => {
   beforeEach(() => {
     hoist.webglThrow = false;
-    hoist.activateCalls = 0;
+    hoist.webglActivateCalls = 0;
+    hoist.clipboardActivateCalls = 0;
+    hoist.unicodeActivateCalls = 0;
   });
   afterEach(() => {
     document.body.innerHTML = '';
@@ -60,7 +82,7 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     const api = makeApi();
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
-    expect(hoist.activateCalls).toBeGreaterThanOrEqual(1);
+    expect(hoist.webglActivateCalls).toBeGreaterThanOrEqual(1);
     t.unmount();
   });
 
@@ -69,7 +91,23 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     const api = makeApi();
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     expect(() => t.mount(mountHost())).not.toThrow();
-    expect(hoist.activateCalls).toBeGreaterThanOrEqual(1);
+    expect(hoist.webglActivateCalls).toBeGreaterThanOrEqual(1);
+    t.unmount();
+  });
+
+  it('loads the ClipboardAddon (对齐 VS Code 的 ClipboardAddon 装配)', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    expect(hoist.clipboardActivateCalls).toBeGreaterThanOrEqual(1);
+    t.unmount();
+  });
+
+  it('loads the Unicode11Addon for CJK / wide-char metrics (对齐 VS Code _updateUnicodeVersion)', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    expect(hoist.unicodeActivateCalls).toBeGreaterThanOrEqual(1);
     t.unmount();
   });
 
@@ -77,76 +115,67 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     const api = makeApi();
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
-    // term.onData 注册在 mount 内；直接验证 pi.input 被订阅链间接调用：模拟一次输入回调。
-    // 因 onData 闭包在类内，改为验证 onData 订阅被建立（api.onData 被调用）。
     expect(api.onData).toHaveBeenCalled();
     t.unmount();
   });
 
-  it('coalesces pty chunks in the same frame into a single term.write (5ms 缓冲，对齐 TerminalDataBufferer)', async () => {
+  // 对齐 VS Code TerminalDataBufferer：5ms 时间窗聚合到达的数据块，窗口结束一次性 term.write。
+  // 不再按同步帧切分——xterm 原生处理 ?2026 序列，整段缓冲原样写出。
+  it('aggregates rapid onData chunks in a 5ms window and writes once (对齐 TerminalDataBufferer)', async () => {
     const api = makeApi();
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-      setTimeout(() => cb(0), 0);
-      return 1;
+    const writes: string[] = [];
+    const write = vi
+      .spyOn(Terminal.prototype, 'write')
+      .mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
+        writes.push(data as string);
+        cb?.();
+      });
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    // 同一 tick 内到达的多块数据应被聚合为一次 write
+    onData('k', 'chunk-1');
+    onData('k', 'chunk-2');
+    onData('k', 'chunk-3');
+    await vi.waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toBe('chunk-1chunk-2chunk-3');
+    write.mockRestore();
+    t.unmount();
+  });
+
+  // 超过 5ms 时间窗的两次到达应分别 write（对齐时间窗边界语义）。
+  it('flushes separate windows independently across the 5ms boundary', async () => {
+    const api = makeApi();
+    const writes: string[] = [];
+    vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
+      writes.push(data as string);
+      cb?.();
     });
-    const write = vi.spyOn(Terminal.prototype, 'write').mockImplementation(() => {});
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
-    const onData = api.onData.mock.calls[0][0] as (k: string, d: string) => void;
-    // 模拟 pi-tui「清屏 → 重绘」落在同一帧
-    onData('k', '\x1b[2J');
-    onData('k', 'hello world');
-    await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
-    expect(write.mock.calls[0][0]).toBe('\x1b[2Jhello world');
-    write.mockRestore();
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    onData('k', 'frame-a');
+    await new Promise((r) => setTimeout(r, 20));
+    onData('k', 'frame-b');
+    await vi.waitFor(() => expect(writes).toEqual(['frame-a', 'frame-b']));
     t.unmount();
   });
 
-  it('suppresses cursorBlink while streaming (prevents per-frame cursor flicker)', () => {
-    vi.useFakeTimers();
+  // 回归（同步帧不再切分）：含 ?2026 序列的整段数据应作为一次 write 原样写出，不被切分/丢弃。
+  it('writes a full synchronized-output chunk verbatim in a single write', async () => {
     const api = makeApi();
-    // xterm 的 write 是实例方法，其实现内 `this` 即 term 实例，可读出实时 cursorBlink。
-    let blinkAtWrite = true;
-    const write = vi
-      .spyOn(Terminal.prototype, 'write')
-      .mockImplementation(function (this: any) {
-        blinkAtWrite = this.options.cursorBlink;
-      });
+    const writes: string[] = [];
+    vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
+      writes.push(data as string);
+      cb?.();
+    });
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
-    const onData = api.onData.mock.calls[0][0] as (k: string, d: string) => void;
-    onData('k', 'stream');
-    // 流式窗口内 flush（5ms）触发 write，此时 cursorBlink 应被抑制为 false
-    vi.advanceTimersByTime(5);
-    expect(blinkAtWrite).toBe(false);
-    vi.useRealTimers();
-    write.mockRestore();
-    t.unmount();
-  });
-
-  // 恢复为 true 的行为由 BLINK_RESTORE_MS 定时器驱动，且恢复本身不触发 write，
-  // 无法在单测里通过 write 观测；交由 e2e/手动冒烟覆盖（见 docs/adr/0002）。
-  // 此处仅确认：静默/再次流式时抑制链路存活、不抛错。
-  it('keeps the suppress link alive across multiple stream bursts', () => {
-    vi.useFakeTimers();
-    const api = makeApi();
-    let blinkAtWrite = true;
-    const write = vi
-      .spyOn(Terminal.prototype, 'write')
-      .mockImplementation(function (this: any) {
-        blinkAtWrite = this.options.cursorBlink;
-      });
-    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
-    t.mount(mountHost());
-    const onData = api.onData.mock.calls[0][0] as (k: string, d: string) => void;
-    onData('k', 'a');
-    vi.advanceTimersByTime(5);
-    expect(blinkAtWrite).toBe(false);
-    onData('k', 'b');
-    vi.advanceTimersByTime(5);
-    expect(blinkAtWrite).toBe(false);
-    vi.useRealTimers();
-    write.mockRestore();
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    const chunk = '\x1b[?2026h\x1b[2Jhello world\x1b[?2026l';
+    onData('k', chunk);
+    await vi.waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toBe(chunk);
     t.unmount();
   });
 
@@ -159,8 +188,6 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     t.mount(host);
     // 初始贴底：onShowJump 至少被调用一次且为 false
     expect(setShow).toHaveBeenCalledWith(false);
-    // 与原 TerminalPane 测试一致：优先驱动真实 viewport；jsdom 下用 host 兜底。
-    // 关键：监听器绑在 vp ?? host 上，故需对同一个 target 改几何并派发 scroll。
     const vp = document.querySelector('.xterm-viewport') as HTMLElement | null;
     const target = vp ?? host;
     Object.defineProperty(target, 'scrollHeight', { value: 1000, configurable: true });
@@ -171,7 +198,7 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     t.unmount();
   });
 
-  it('copies selection on right-click and pastes when empty (handleContextMenu)', async () => {
+  it('copies selection on right-click and pastes (via addon-clipboard) when empty (handleContextMenu)', async () => {
     const api = makeApi();
     const hasSelection = vi.spyOn(Terminal.prototype, 'hasSelection').mockReturnValue(true);
     const getSelection = vi.spyOn(Terminal.prototype, 'getSelection').mockReturnValue('hello');
@@ -198,11 +225,25 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     const api = makeApi();
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     const host = mountHost();
-    // 给 host 一个非零尺寸，让 FitAddon 能算出 cols/rows
     Object.defineProperty(host, 'clientWidth', { value: 800, configurable: true });
     Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true });
     t.mount(host);
     expect(api.resize).toHaveBeenCalled();
     t.unmount();
+  });
+
+  it('clears the pending write timer on unmount (no late write after dispose)', async () => {
+    const api = makeApi();
+    const write = vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, _d: string | Uint8Array, cb?: () => void) {
+      cb?.();
+    });
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    onData('k', 'late');
+    t.unmount(); // 立即卸载，未到 5ms 时间窗
+    await new Promise((r) => setTimeout(r, 20));
+    expect(write).not.toHaveBeenCalled(); // 卸载后应清空待写缓冲、不触发迟到 write
+    write.mockRestore();
   });
 });

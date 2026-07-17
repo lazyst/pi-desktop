@@ -50,7 +50,7 @@ re-implementation.
 | Shell        | Electron                                             |
 | Main process | Node + `node-pty` (conpty on Windows)              |
 | Renderer     | React + TypeScript (Vite / electron-vite)           |
-| Terminal     | `XtermTerminal` 薄封装（吸收 VS Code 渲染/缓冲/度量）+ `@xterm/xterm` + `@xterm/addon-fit` |
+| Terminal     | `XtermTerminal`（完全采用 VS Code 集成终端同款组件与装配：`@xterm/xterm`@6 + `@xterm/addon-webgl` + `@xterm/addon-fit` + `@xterm/addon-clipboard` + `@xterm/addon-unicode11`）+ `node-pty` PTY 链路 |
 | Tests        | Vitest (unit) + Playwright (E2E, real Electron)   |
 
 ## Prerequisites
@@ -116,7 +116,8 @@ Renderer (React)
 - **Switch away** — the terminal pane is hidden (CSS `display`) but still
   receives PTY data, so the buffer is preserved and the task continues.
 - **Input** — `Terminal.onData` → `session:input` → `pty.write`.
-- **Output** — `pty.on('data')` → `session:data` → `Terminal.write`.
+- **Output** — `pty.on('data')` → `session:data` → `XtermTerminal` 写入。PTY 数据经固定 5ms 时间窗聚合（对齐 VS Code `TerminalDataBufferer`）后一次性 `term.write`，消除流式高频重绘的中间帧闪烁；xterm 原生处理 `?2026` 同步输出序列，无需自研帧切分。
+- **Terminal layer** — `XtermTerminal` 完全采用 VS Code 集成终端同款装配：`@xterm/xterm`@6 稳定版 + `addon-webgl`（open 前锁定渲染器、会话内恒定）+ `addon-fit` + `addon-clipboard`（接管复制/粘贴）+ `addon-unicode11`（CJK / 宽字符度量）。详见 `docs/adr/0003-terminal-vscode-integrated-components.md`。
 - **Resize** — `FitAddon` computes `cols`/`rows`, then both
   `Terminal.resize()` and `pty.resize()` are called so the `pi` TUI reflows.
 
