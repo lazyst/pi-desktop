@@ -83,30 +83,33 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     t.unmount();
   });
 
-  it('coalesces pty chunks in the same frame into a single term.write (5ms 缓冲，对齐 TerminalDataBufferer)', async () => {
+  it('joins chunks within a microtask window into a single atomic write, driven by write callback (对齐 VS Code TerminalDataBufferer + write(data,cb))', async () => {
     const api = makeApi();
-    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
-      setTimeout(() => cb(0), 0);
-      return 1;
-    });
-    const write = vi.spyOn(Terminal.prototype, 'write').mockImplementation(() => {});
+    // 对齐真实 xterm：write(data, cb) 在解析完成后触发 cb，驱动下一窗口写出。
+    const write = vi
+      .spyOn(Terminal.prototype, 'write')
+      .mockImplementation(function (this: unknown, _data: string, cb?: () => void) {
+        cb?.();
+      });
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const onData = api.onData.mock.calls[0][0] as (k: string, d: string) => void;
-    // 模拟 pi-tui「清屏 → 重绘」落在同一帧
+    // 模拟 pi-tui「移光标 → 写文本」连续到达（同一微任务窗口）
     onData('k', '\x1b[2J');
     onData('k', 'hello world');
+    // 微任务 drain 后窗口内 join 成一次原子 write（“移光标+写文本”同帧解析，避免 WebGL 中间态渲染）
     await vi.waitFor(() => expect(write).toHaveBeenCalledTimes(1));
     expect(write.mock.calls[0][0]).toBe('\x1b[2Jhello world');
     write.mockRestore();
     t.unmount();
   });
 
-  it('suppresses cursorBlink while streaming (prevents per-frame cursor flicker)', () => {
-    vi.useFakeTimers();
+  // 对齐 VS Code：cursorBlink 在构造时设定后恒定，流式期间不去动它（自创的 suppress 逻辑
+  // 会与 pi 的 \u001b[?25h/l 光标显隐序列打架，导致最新行一闪一闪）。此测试确保流式不改变 cursorBlink。
+  it('keeps cursorBlink constant during streaming (VS Code 不流式改 blink，避免光标闪烁)', async () => {
     const api = makeApi();
     // xterm 的 write 是实例方法，其实现内 `this` 即 term 实例，可读出实时 cursorBlink。
-    let blinkAtWrite = true;
+    let blinkAtWrite = false;
     const write = vi
       .spyOn(Terminal.prototype, 'write')
       .mockImplementation(function (this: any) {
@@ -116,21 +119,15 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     t.mount(mountHost());
     const onData = api.onData.mock.calls[0][0] as (k: string, d: string) => void;
     onData('k', 'stream');
-    // 流式窗口内 flush（5ms）触发 write，此时 cursorBlink 应被抑制为 false
-    vi.advanceTimersByTime(5);
-    expect(blinkAtWrite).toBe(false);
-    vi.useRealTimers();
+    // 微任务 drain 触发 write，cursorBlink 应保持构造时的 true（不被抑制为 false）
+    await vi.waitFor(() => expect(blinkAtWrite).toBe(true));
     write.mockRestore();
     t.unmount();
   });
 
-  // 恢复为 true 的行为由 BLINK_RESTORE_MS 定时器驱动，且恢复本身不触发 write，
-  // 无法在单测里通过 write 观测；交由 e2e/手动冒烟覆盖（见 docs/adr/0002）。
-  // 此处仅确认：静默/再次流式时抑制链路存活、不抛错。
-  it('keeps the suppress link alive across multiple stream bursts', () => {
-    vi.useFakeTimers();
+  it('keeps cursorBlink constant across multiple stream bursts', async () => {
     const api = makeApi();
-    let blinkAtWrite = true;
+    let blinkAtWrite = false;
     const write = vi
       .spyOn(Terminal.prototype, 'write')
       .mockImplementation(function (this: any) {
@@ -140,12 +137,9 @@ describe('XtermTerminal（VS Code 风格薄封装，见 docs/adr/0002）', () =>
     t.mount(mountHost());
     const onData = api.onData.mock.calls[0][0] as (k: string, d: string) => void;
     onData('k', 'a');
-    vi.advanceTimersByTime(5);
-    expect(blinkAtWrite).toBe(false);
+    await vi.waitFor(() => expect(blinkAtWrite).toBe(true));
     onData('k', 'b');
-    vi.advanceTimersByTime(5);
-    expect(blinkAtWrite).toBe(false);
-    vi.useRealTimers();
+    await vi.waitFor(() => expect(blinkAtWrite).toBe(true));
     write.mockRestore();
     t.unmount();
   });

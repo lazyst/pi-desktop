@@ -170,11 +170,15 @@ function createPool(win: BrowserWindow) {
   // 像 VS Code / 其他终端模拟器一样，向 pty 显式声明终端类型与真彩色支持。
   // 否则从 GUI 启动的 Electron 主进程不携带 TERM，pi-tui 会降级运行：不隐藏硬件光标
   // （光标在 pi-tui 自建光标之上闪烁）→ 残留闪烁；布局模式不同 → 内容遮挡底部编辑器。
+  // 关键：TERM_PROGRAM 必须声明为 vscode——pi-tui 依据 TERM_PROGRAM==='vscode'（及
+  // VSCODE_* 环境标记）启用稳定的差分渲染模式（打字机式输出、无逐帧闪烁/滚屏跳动）。
+  // 声明为 'pi-desktop' 会让 pi-tui 走降级渲染路径，出现最新行闪烁 + 编辑器上下跳。
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'pi-desktop',
+    TERM_PROGRAM: 'vscode',
+    TERM_PROGRAM_VERSION: '1.128.1',
   };
   // Ensure `node` (used by the pi.cmd shim) is on the child PATH even when the app
   // was launched without the user's shell PATH.
