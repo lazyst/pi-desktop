@@ -31,7 +31,7 @@
 //
 // 对外契约（B2-a 契约保形）：本类只通过构造传入的 pi 接口收发数据，不触碰主进程 / preload /
 // IPC 信道名。PTY 链路零接触（见 docs/adr/0002）。
-import { Terminal } from '@xterm/xterm';
+import { Terminal, type IMarker, type IDecoration, type IDecorationOptions } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
@@ -95,6 +95,13 @@ export class XtermTerminal {
   private rendererLocked = false; // 本实例是否已锁定渲染器（open 前探测、open 后不再变）
   private disposed = false;
   private host: HTMLElement | null = null;
+  // 当前装载的 WebGL addon 实例引用（open 前锁定、会话内恒定；上下文丢失时置回退）。
+  private webgl: WebglAddon | null = null;
+  // WebGL 上下文是否丢失（丢失后整会话降级 DOM，待下一次 resize/可见触发重建尝试）。
+  private webglContextLost = false;
+  // 装饰层：命令/gutter/overview-ruler 覆盖层（对齐 VS Code DecorationAddon 的差分 overlay 基座）。
+  // key 为 marker.id，value 为该行注册出的 IDecoration。命令状态变化只更新 overlay，不进 VT 流。
+  private decorations = new Map<number, IDecoration>();
 
   // —— 数据写缓冲（对齐 VS Code TerminalDataBufferer 的 5ms 时间窗聚合）——
   private writeBuffer = '';
@@ -108,7 +115,11 @@ export class XtermTerminal {
   private lastWriteAt = 0;
   // 独立字段：resize 防抖 timer，绝不能复用 writeTimer（否则 ResizeObserver 会清掉
   // 正在聚合的写操作，导致 PTY 输出永远不写入 xterm —— 见 scheduleResize）。
-  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  // 类型用 number | 任意：浏览器下 setTimeout/requestIdleCallback 返回 number，node 类型下为 Timeout。
+  private resizeTimer: ReturnType<typeof setTimeout> | number | null = null;
+  // 平滑滚动是否仅物理滚轮启用（对齐 VS Code MouseWheelClassifier）：触控板滚动禁用平滑，
+  // 否则轻滚触发平滑动画拖影。默认按 wheel 事件动态判定。
+  private smoothScrollPhysicalOnly = true;
 
   // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
   // 每次 term.write 递增写序号；xterm 解析回调递增解析序号。flush() 轮询确认两者追平，
@@ -174,6 +185,9 @@ export class XtermTerminal {
     if (this._flushTimer != null) clearTimeout(this._flushTimer);
     this._flushTimer = null;
     this.writeBuffer = '';
+    this.webglContextLost = false;
+    this.webgl = null;
+    this.decorations.clear();
     this.offData?.();
     this.offStatus?.();
     this.offTheme?.();
@@ -222,6 +236,49 @@ export class XtermTerminal {
   resetSameFrame(): void {
     if (!this.term || this.disposed) return;
     this.term.write('\x1bc');
+  }
+
+  /** 强制重绘：清空 WebGL 纹理图集并触发一次完整重绘（对齐 VS Code forceRedraw/clearTextureAtlas）。
+   * 主题切换 / 字体变更后调用，避免 WebGL 下纹理残留导致旧配色/旧字形闪留。无 WebGL 时静默跳过。 */
+  forceRedraw(): void {
+    if (!this.term || this.disposed || this.webglContextLost) return;
+    try {
+      this.webgl?.clearTextureAtlas();
+    } catch {
+      /* DOM 渲染器或无纹理图集时忽略 */
+    }
+  }
+
+  /** 数据重放（对齐 VS Code basePty.handleReplay + onProcessReplay）：把一段历史/增量数据
+   * 按与普通输出相同的路径写入终端（5ms 聚合 + 切片 + 锁底），用于会话恢复/重连时的差分重放，
+   * 而非全量重写。当前项目单进程短会话场景较少触发，但 API 已就位，供主进程 replay 钩子使用。 */
+  replayData(data: string): void {
+    if (this.disposed || !this.term) return;
+    this.handleData(this.sessionKey, data);
+  }
+
+  /** 注册一行覆盖层装饰（对齐 VS Code DecorationAddon.registerCommandDecoration 的差分 overlay 基座）。
+   * 装饰由 marker 锚定到 buffer 行，渲染为 DOM 覆盖层，命令状态变化只更新 overlay 而不进 VT 流。
+   * @param marker 锚定到某 buffer 行的标记
+   * @param opts 装饰呈现选项（背景/前景色、overview ruler、宽高、anchor）
+   * @returns 已注册的 IDecoration，或 undefined（无 term / marker 失效）。可保存用于后续 dispose。 */
+  registerLineDecoration(marker: IMarker, opts: IDecorationOptions): IDecoration | undefined {
+    if (!this.term || this.disposed) return undefined;
+    try {
+      const deco = this.term.registerDecoration(opts);
+      if (deco) this.decorations.set(marker.id, deco);
+      return deco;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 清除全部行覆盖层装饰（对齐 VS Code DecorationAddon.clearDecorations）。命令状态重置/会话清屏时调用。 */
+  clearDecorations(): void {
+    for (const d of this.decorations.values()) {
+      try { d.dispose(); } catch { /* 已释放 */ }
+    }
+    this.decorations.clear();
   }
 
   /** 跳到底部：把视口滚动到最新输出（对齐 VS Code 终端视口贴底）。同时通知壳隐藏浮钮。
@@ -274,9 +331,20 @@ export class XtermTerminal {
   }
 
   /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走防抖 refit。
-   * 防抖时长对齐 VS Code TerminalResizeDebouncer 的 DebounceResizeXDelay(100ms)。 */
+   * 防抖时长对齐 VS Code TerminalResizeDebouncer 的 DebounceResizeXDelay(100ms)。
+   * 当终端不可见（keep-alive 隐藏）时，对齐 VS Code 的 runWhenWindowIdle：把 refit 推迟到
+   * 浏览器 idle 再执行，避免后台隐藏面板抢占主线程做整屏重排（WebGL handleResize 很贵）。 */
   scheduleResize(): void {
     if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
+    // 不可见：推迟到 idle 执行（对齐 VS Code runWhenWindowIdle）。requestIdleCallback 在
+    // 部分环境缺失，降级到 setTimeout(0)。可见时仍走原 100ms 防抖，跟手优先。
+    if (!this.active) {
+      const ric: typeof window.requestIdleCallback | undefined = (window as any).requestIdleCallback;
+      this.resizeTimer = ric
+        ? ric(() => this.doResize(false), { timeout: 200 })
+        : setTimeout(() => this.doResize(false), 0);
+      return;
+    }
     this.resizeTimer = setTimeout(() => this.doResize(false), RESIZE_DEBOUNCE_MS);
   }
 
@@ -393,6 +461,8 @@ export class XtermTerminal {
     });
     this.offTheme = onThemeChange((t) => {
       if (this.term) this.term.options.theme = TERM_THEMES[t];
+      // 主题切换清纹理图集，避免 WebGL 下旧配色/旧字形纹理残留闪留（对齐 VS Code forceRedraw）。
+      this.forceRedraw();
     });
 
     // Unicode11Addon：宽字符 / CJK 度量由 xterm 原生处理（对齐 VS Code _updateUnicodeVersion），
@@ -421,6 +491,8 @@ export class XtermTerminal {
     } catch {
       /* jsdom/headless: ignore open failures */
     }
+    // 物理滚轮/触控板分类器：仅物理滚轮启用平滑滚动（对齐 VS Code MouseWheelClassifier）。
+    this.bindWheelClassifier();
     this.doResize(true);
   }
 
@@ -428,7 +500,11 @@ export class XtermTerminal {
    * 可用环境变量 PI_DESKTOP_RENDERER 强制渲染器，用于排查“WebGL cell 度量跳变导致编辑器漂移”：
    *   - 未设置 / 'auto'：探测 WebGL，可用则 GPU，否则 DOM
    *   - 'webgl'：强制 WebGL（不可用则警告并回退 DOM）
-   *   - 'dom'：强制 DOM 渲染器（绕过 WebGL，验证是否 WebGL 度量问题） */
+   *   - 'dom'：强制 DOM 渲染器（绕过 WebGL，验证是否 WebGL 度量问题）
+   *
+   * 对齐 VS Code _enableWebglRenderer：注册 onContextLoss，GPU 上下文丢失时不闪退、整会话降级
+   * DOM 渲染器（rendererLocked 仍恒定，不切回 WebGL 以免度量再跳变），并在后续 resize/可见时用
+   * requestRefreshDimensions 触发一次重新测量（此处由 doResize(true) 承担）。 */
   private enableWebgl(): void {
     const term = this.term;
     if (!term || this.rendererLocked) return;
@@ -440,7 +516,18 @@ export class XtermTerminal {
     }
     try {
       const addon = new WebglAddon();
+      // 上下文丢失恢复（对齐 VS Code _webglAddon.onContextLoss）：整会话降级 DOM，不重建 WebGL，
+      // 避免「丢失→重建→度量跳变」的闪烁链。下次 resize/可见时 doResize(true) 重新校准尺寸。
+      addon.onContextLoss(() => {
+        this.webglContextLost = true;
+        this.webgl?.dispose();
+        this.webgl = null;
+        console.warn('[terminal] WebGL 上下文丢失，整会话降级为 DOM 渲染器（不重建 WebGL）。');
+        // 上下文丢失后 cell 度量由 WebGL 变 DOM，强制一次整屏重测，避免尺寸错位。
+        if (this.active && this.host && !this.disposed) this.doResize(true);
+      });
       term.loadAddon(addon); // open 前 load：第一帧即 GPU 渲染，cell 度量从首帧恒定
+      this.webgl = addon;
       console.info('[terminal] WebGL 渲染器已锁定（open 前启用，会话内不切换）。');
     } catch (e) {
       console.warn(
@@ -449,6 +536,24 @@ export class XtermTerminal {
         e,
       );
     }
+  }
+
+  /** 物理滚轮 vs 触控板判定（精简自 VS Code MouseWheelClassifier）。
+   * 物理滚轮 deltaX 恒为 0 且 deltaY 为离散整数倍（±刻度）；触控板两轴皆有连续小数。
+   * 仅当物理滚轮时启用 smoothScrollDuration，触控板滚动禁用平滑（否则轻滚拖影）。
+   * 判定结果经此动态写入 term.options.smoothScrollDuration（基础时长 125ms 对齐 VS Code）。 */
+  private bindWheelClassifier(): void {
+    const term = this.term;
+    if (!term) return;
+    const el = (term as any).element as HTMLElement | undefined;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (this.disposed || !this.term) return;
+      const isPhysical = e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 1;
+      const enabled = this.smoothScrollPhysicalOnly && isPhysical;
+      this.term.options.smoothScrollDuration = enabled ? 125 : 0;
+    };
+    el.addEventListener('wheel', onWheel, { passive: true });
   }
 
   /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用（壳侧已做防抖）。
@@ -521,6 +626,11 @@ export class XtermTerminal {
    * xterm 原生支持 ?2026 同步输出序列（DEC 同步输出），会自行合并未闭合的同步帧再呈现，
    * 故不再需要此前自研的同步帧切分 / hasOpenSyncFrame / 兜底 setTimeout 逻辑。
    *
+   * 在 5ms 窗口 flush 后、切片前，额外按 shell integration 的 OSC 633 序列（命令开始/结束）做
+   * 语义切分（对齐 VS Code TerminalInstance._onProcessData 的 segmented 写入）：命令边界被切成
+   * 独立段，各段按 F2 顺序 write，使命令级输出可被差分解析（供 Decoration/命令检测层使用）。
+   * 该切分不破坏 ?2026 同步帧——xterm 仍会合并未闭合的同步帧，仅是在命令边界多一次 write。
+   *
    * 写后锁底：每批 term.write 后，若写前视口已贴底则立即 scrollToBottom()。消除「新行先写入
    * scrollback、xterm 原生贴底跟随要等下一渲染帧才滚下」的时间窗——高速输出时该时间窗表现为
    * 「内容溢出→再跟随」的持续抖动（见用户反馈的跳动现象）。仅当写前已贴底时锁底，避免把用
@@ -539,8 +649,33 @@ export class XtermTerminal {
       // 写前是否在底部：整批来自同一窗口，贴底状态连续，仅首批前算一次。
       const atBottomBefore =
         (term as any).buffer?.active?.viewportY >= (term as any).buffer?.active?.baseY - 1;
-      this.flushBatched(term, buf, atBottomBefore);
+      // 5ms 窗口聚合后，按 shell integration 边界切分（命令开始/结束 OSC 633 序列），
+      // 每段独立走 flushBatched 切片写入（对齐 VS Code _onProcessData 的 segmented 写入语义）。
+      const segments = this.segmentByShellIntegration(buf);
+      for (const seg of segments) {
+        this.flushBatched(term, seg, atBottomBefore);
+      }
     }, WRITE_DEBOUNCE_MS);
+  }
+
+  /** 按 shell integration 的 OSC 633 序列切分输入为语义段（对齐 VS Code _onProcessData）。
+   * 匹配 \x1b]633;C / \x1b]633;D / \x1b]633;D;n 等命令开始/结束标记，在标记边界把数据切成多段，
+   * 使命令级输出可被差分写入。无 OSC 633 序列时原样返回单段（零开销）。 */
+  private segmentByShellIntegration(data: string): string[] {
+    const re = /\x1b\]633;(?:C|D(?:;\d+)?)\x07/g;
+    const segments: string[] = [];
+    let last = 0;
+    let m: RegExpExecArray | null;
+    // 兼容 RegExp 全局匹配的 lastIndex 状态：手动重置。
+    re.lastIndex = 0;
+    while ((m = re.exec(data)) !== null) {
+      // 段1：标记前的数据；段2：标记本身。两者都保留，顺序写入。
+      if (m.index > last) segments.push(data.slice(last, m.index));
+      segments.push(m[0]);
+      last = m.index + m[0].length;
+    }
+    if (last < data.length) segments.push(data.slice(last));
+    return segments.length ? segments : [data];
   }
 
   /** 把窗口累积数据按 WRITE_MAX_LINES 切片，串行逐批 term.write（批间 requestAnimationFrame
@@ -576,6 +711,9 @@ export class XtermTerminal {
         term.write(chunk, () => {
           // xterm 解析完本批：把解析序号推到本次写序号（多批在队列中时取最大已解析）。
           this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+          // 背压回传（对齐 VS Code _writeProcessData 回调里的 acknowledgeDataEvent(data.length)）：
+          // 通知主进程已消费本批字节，使其对 PTY 做流控，避免高速输出淹没前端缓冲。
+          this.pi.acknowledgeDataEvent?.(this.sessionKey, chunk.length);
         });
       } catch {
         /* 终端已销毁等边界 */
