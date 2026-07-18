@@ -423,6 +423,8 @@ export class XtermTerminal {
    *   - Ctrl/Cmd+V：智能粘贴（图片优先，回退文本）
    *   - Ctrl/Cmd+Shift+C：复制选区
    *   - Ctrl/Cmd+A：全选
+   *   - Shift+Enter：软换行（仅写入 \n 续行，不提交执行；必须在无 Ctrl/Cmd
+   *     修饰时命中，故逻辑位于 Ctrl/Cmd 组合键守卫之前）。
    * 注意：bind 在 host 的 keydown 会“晚于”xterm 在 textarea 层的默认处理，导致真实 Ctrl+V
    * 已被 xterm 转成 \x16 输入（见 e2e 复现），故必须用 attachCustomKeyEventHandler。
    */
@@ -433,8 +435,22 @@ export class XtermTerminal {
     const handler = (e: KeyboardEvent): boolean => {
       if (e.type !== 'keydown') return true;
       const mod = e.ctrlKey || e.metaKey; // Ctrl（Win/Linux）或 Cmd（mac）
-      if (!mod) return true;
       const key = e.key.toLowerCase();
+      // Shift+Enter：软换行（仅续行、不提交）。必须“无 Ctrl/Cmd 修饰”才命中，
+      // 否则会与各类带修饰的 Enter 组合（如终端某些绑定的 Ctrl+Enter）冲突。
+      // 注意：此分支必须在 `if (!mod) return true` 之前，因为 Shift+Enter 不带
+      // Ctrl/Cmd，否则会被提前放行而失效。
+      // 关键：不能 term.write('\n')——term.write 写入的是 PTY 输出方向（stdout），
+      // 运行在 PTY 里的程序（如 pi 编辑器）收不到，只会视觉换行。必须走输入通道
+      // pi.input（→ 主进程 pty.write，PTY 输入方向/stdin），与正常按键经 term.onData
+      // → pi.input 完全一致。写 \n（LF）而非默认 Enter 的 \r（CR）：readline/bash/zsh
+      // 把 LF 当续行收集、CR 才提交，从而在不执行命令的前提下插入换行。
+      if (e.key === 'Enter' && e.shiftKey && !mod && !e.altKey) {
+        e.preventDefault();
+        this.pi.input(this.sessionKey, '\n');
+        return false; // 阻止 xterm 把 Enter 当 \r 经 onData 再次送出
+      }
+      if (!mod) return true;
       // Ctrl/Cmd+V：粘贴（图片优先，回退文本）
       if (key === 'v' && !e.shiftKey && !e.altKey) {
         e.preventDefault();

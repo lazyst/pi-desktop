@@ -614,6 +614,30 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
       t.unmount();
     });
 
+    it('Shift+Enter 拦截器返回 false 并经 pi.input 写入 \n 软换行（不提交执行）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      const ret = handler(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true }));
+      expect(ret).toBe(false); // 拦截，阻止 xterm 把 Enter 当 \r 提交
+      // 必须经输入通道（PTY stdin 方向），而非 term.write（PTY stdout 方向），
+      // 否则运行在 PTY 里的程序（如 pi 编辑器）收不到按键、仅视觉换行。
+      expect(api.input).toHaveBeenCalledWith('k', '\n'); // 软换行（续行，不执行）
+      t.unmount();
+    });
+
+    it('带 Ctrl 的 Ctrl+Enter 不被当作 Shift+Enter 软换行（放行给程序）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      const ret = handler(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, ctrlKey: true }));
+      expect(ret).toBe(true); // 放行（带修饰的组合交回 xterm 默认处理）
+      expect(api.input).not.toHaveBeenCalled();
+      t.unmount();
+    });
+
     it('unmount() 清理快捷键幂等标记', () => {
       const api = makeApi();
       const t = new XtermTerminal({ sessionKey: 'k', pi: api });
