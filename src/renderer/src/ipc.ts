@@ -37,6 +37,15 @@ export interface PiApi {
   getInitialConfig(): AppConfig | null; // 窗口创建时经 additionalArguments 同步注入，首屏零闪烁
   getConfig(): Promise<AppConfig>;
   setConfig(partial: Partial<AppConfig>): Promise<void>;
+  // ── 文件管理器 / 预览（A + B）──
+  fsListDir(root: string, dir: string): Promise<Array<{ name: string; isDir: boolean; size: number; mtime: number }>>;
+  fsReadFile(root: string, path: string, maxBytes?: number): Promise<{ content: string; language: string; size: number; isBinary: boolean; isImage: boolean; isPdf: boolean; dataUrl?: string }>;
+  fsWriteFile(root: string, path: string, content: string): Promise<void>;
+  fsStat(root: string, path: string): Promise<{ size: number; mtime: number; isDir: boolean }>;
+  // ── Git 只读查看（D）──
+  gitStatus(cwd: string): Promise<{ isGit: boolean; branch: string | null; dirty: boolean; ahead: number; behind: number; porcelain: string }>;
+  gitLog(cwd: string, limit?: number): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;
+  gitDiff(cwd: string, ref?: string): Promise<string>;
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone(): void;
 }

@@ -760,3 +760,214 @@
   color: var(--danger);
   background: rgba(248, 81, 73, 0.12);
 }
+
+/* ============================================================================
+   文件管理器 / 预览 / Git 面板（A + B + D）
+   视觉语言复用 Sidebar 的 --bg-panel / --border / --accent 变量体系。
+   ============================================================================ */
+
+/* ── 文件面板（侧边栏右侧独立栏）── */
+.file-panel {
+  width: 260px;
+  flex: none;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  color: var(--text);
+}
+.file-panel-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-2) var(--sp-1);
+  border-bottom: 1px solid var(--border);
+}
+.file-panel-tabs { display: flex; gap: 2px; flex: 1; min-width: 0; }
+.fp-tab {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition), color var(--transition);
+}
+.fp-tab:hover { background: var(--bg-hover); color: var(--text); }
+.fp-tab.active { background: var(--bg-active); color: var(--accent); border-color: var(--border-strong); }
+.fp-root-select {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  max-width: 110px;
+  background: var(--bg-app);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.fp-root-select:focus { outline: none; border-color: var(--border-strong); box-shadow: var(--focus-ring); }
+.file-panel-body { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-1) 0; }
+.file-panel-empty { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.6; }
+
+/* ── 文件树 ── */
+.file-tree { font-size: var(--fs-sm); }
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+  height: 24px;
+  cursor: pointer;
+  border-radius: 4px;
+  user-select: none;
+}
+.file-row:hover { background: var(--bg-hover); }
+.file-name {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.file-empty, .file-error { padding: var(--sp-3) var(--sp-3); font-size: 11px; color: var(--text-dim); }
+.file-error { color: #f87171; }
+
+/* ── Git 视图 ── */
+.git-view { font-size: var(--fs-sm); padding: var(--sp-2); display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.git-empty { padding: var(--sp-3); font-size: 11px; color: var(--text-dim); }
+.git-branch-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2) var(--sp-2); flex-wrap: wrap; }
+.git-branch { font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-ahead-behind { display: inline-flex; gap: 4px; }
+.git-ahead { color: var(--success); font-size: var(--fs-xs); }
+.git-behind { color: var(--text-muted); font-size: var(--fs-xs); }
+.git-dirty { color: #f0a020; font-size: var(--fs-xs); }
+.git-section-title {
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  letter-spacing: var(--ls-label);
+  padding: var(--sp-1) var(--sp-2);
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-1);
+}
+.git-log { overflow-y: auto; max-height: 30vh; flex: none; }
+.git-log-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.git-log-item:hover { background: var(--bg-hover); }
+.git-log-item.active { background: var(--bg-active); border-left-color: var(--accent); }
+.git-log-msg { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-log-meta { font-size: var(--fs-xs); color: var(--text-faint); }
+.git-diff { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+/* ── 双栏 diff 渲染 ── */
+.diff-scroll { overflow: auto; flex: 1; min-height: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--bg-app); }
+.diff-file + .diff-file { border-top: 1px solid var(--border); }
+.diff-file-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.diff-header-cell {
+  padding: 5px 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diff-header-left { border-right: 1px solid var(--border); }
+.diff-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.diff-cell { display: flex; min-width: 0; border-right: 1px solid var(--border); }
+.diff-cell-right { border-right: none; }
+.diff-lineno {
+  width: 42px;
+  padding: 0 6px;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.diff-marker { width: 18px; padding: 0 5px; color: var(--text-dim); user-select: none; flex-shrink: 0; }
+.diff-text { flex: 1; min-width: 0; padding: 0 10px 0 0; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-hunk-cell {
+  background: rgba(96, 165, 250, 0.12);
+  color: var(--accent);
+  padding: 0 10px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-line { display: flex; background: var(--bg-app); }
+.diff-line .diff-lineno { background: var(--bg-panel); }
+.diff-line .diff-text { white-space: pre-wrap; overflow-wrap: anywhere; flex: 1; padding: 0 10px; }
+
+/* ── 预览抽屉 ── */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 1500;
+}
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 45%;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  z-index: 1501;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -8px 0 30px rgba(0, 0, 0, 0.45);
+}
+.drawer-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  transition: background-color var(--transition);
+}
+.drawer-resizer:hover { background: var(--accent-soft); }
+.drawer-resizer:active { background: var(--accent); }
+.drawer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--accent);
+  background: var(--bg-panel);
+  flex: none;
+}
+.drawer-title { font-weight: var(--fw-semibold); font-size: var(--fs-lg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-meta { font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+.drawer-dirty { color: #f0a020; font-size: var(--fs-md); }
+.drawer-error { font-size: var(--fs-xs); color: #f87171; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-spacer { flex: 1; }
+.drawer-save:disabled { opacity: 0.45; cursor: default; }
+.drawer-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.code-preview { flex: 1; min-height: 0; overflow: hidden; }
+.code-preview .cm-editor { height: 100%; }
+.image-preview, .pdf-preview { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; background: var(--bg-app); }
+.image-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.pdf-webview { width: 100%; height: 100%; border: none; background: #fff; }
+.preview-empty, .preview-error { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); }
+.preview-error { color: #f87171; }

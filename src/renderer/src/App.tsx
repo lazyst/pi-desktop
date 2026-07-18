@@ -5,6 +5,9 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { TitleBar } from './components/TitleBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
+import { FilePanel } from './components/FilePanel';
+import { FileDrawer, type DrawerFile } from './components/FileDrawer';
+import * as nodePath from 'node:path';
 import { pi } from './ipc';
 import { initTheme } from './theme';
 import { defaultConfig } from '../../main/config';
@@ -36,8 +39,8 @@ export default function App() {
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Same mapping held in a ref so the `onIndex` handler (which fires right after
-  // `onRelink` in the same tick) can read the fresh link without stale closure state.
+  // 文件预览抽屉：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
+  // Same mapping held in a ref so the `onRelink` handler (which fires right after
   const liveToDiskRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -157,7 +160,14 @@ export default function App() {
     });
   };
 
-  // 侧边栏拖拽实时改宽后由 Sidebar 调用，回写 config 并同步本地 state。
+  // 点击文件树中的文件 → 打开右侧预览抽屉（单文件）。
+  const [drawerFile, setDrawerFile] = useState<DrawerFile | null>(null);
+  const handleOpenFile = (relPath: string, _fileName: string, root: string) => {
+    // 用 Node 的 path 拼出本地绝对路径（仅 PDF webview 需要），仍以 root 做边界约束。
+    const absPath = root ? nodePath.resolve(root, relPath) : relPath;
+    setDrawerFile({ root, path: relPath, absPath });
+  };
+
   const handleSidebarResize = (w: number) => {
     setSidebarWidth(w);
     pi.setConfig({ sidebarWidth: w }).catch(() => {});
@@ -222,6 +232,7 @@ export default function App() {
 
   const active = open.find((s) => s.key === activeKey);
   const activeStatus = activeKey ? statusMap[activeKey] : undefined;
+  const activeCwd = active?.cwd ?? null;
 
   return (
     <div className="app">
@@ -249,6 +260,11 @@ export default function App() {
         onBatchDelete={handleBatchDelete}
         sidebarWidth={sidebarWidth}
         onSidebarResize={handleSidebarResize}
+      />
+      <FilePanel
+        addedDirs={addedDirs}
+        activeCwd={activeCwd}
+        onOpenFile={handleOpenFile}
       />
       <main className="main">
         <div className="header">
@@ -281,6 +297,7 @@ export default function App() {
       )}
       <WindowResizeZones />
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
+      <FileDrawer file={drawerFile} onClose={() => setDrawerFile(null)} />
     </div>
     </div>
   );
