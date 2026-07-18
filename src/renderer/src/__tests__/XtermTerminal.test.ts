@@ -179,25 +179,6 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  it('notifies jump-to-bottom visibility via onShowJump when scrolled up', () => {
-    const api = makeApi();
-    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
-    const setShow = vi.fn();
-    t.onShowJump(setShow);
-    const host = mountHost();
-    t.mount(host);
-    // 初始贴底：onShowJump 至少被调用一次且为 false
-    expect(setShow).toHaveBeenCalledWith(false);
-    const vp = document.querySelector('.xterm-viewport') as HTMLElement | null;
-    const target = vp ?? host;
-    Object.defineProperty(target, 'scrollHeight', { value: 1000, configurable: true });
-    Object.defineProperty(target, 'clientHeight', { value: 400, configurable: true });
-    Object.defineProperty(target, 'scrollTop', { value: 0, configurable: true });
-    target.dispatchEvent(new Event('scroll'));
-    expect(setShow).toHaveBeenLastCalledWith(true);
-    t.unmount();
-  });
-
   it('copies selection on right-click and pastes (via addon-clipboard) when empty (handleContextMenu)', async () => {
     const api = makeApi();
     const hasSelection = vi.spyOn(Terminal.prototype, 'hasSelection').mockReturnValue(true);

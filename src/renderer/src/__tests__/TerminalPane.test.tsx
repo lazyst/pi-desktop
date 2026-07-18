@@ -34,23 +34,6 @@ describe('TerminalPane (React 壳)', () => {
     expect(host.className).toContain('active');
   });
 
-  it('does not show jump-bottom button when inactive', () => {
-    const api = makeApi();
-    (window as any).pi = api;
-    const { container } = render(<TerminalPane sessionKey="k" active={false} />);
-    expect(container.querySelector('.jump-bottom')).toBeNull();
-  });
-
-  it('shows jump-bottom button when active and wires click to scrollToBottom', () => {
-    const api = makeApi();
-    (window as any).pi = api;
-    const { container } = render(<TerminalPane sessionKey="k" active={true} />);
-    const btn = container.querySelector('.jump-bottom') as HTMLButtonElement;
-    expect(btn).toBeTruthy();
-    // 点击不应抛错（壳转发到 XtermTerminal.scrollToBottom，已 mock WebGL）。
-    expect(() => fireEvent.click(btn)).not.toThrow();
-  });
-
   it('does not throw on right-click (forwards to XtermTerminal.handleContextMenu)', () => {
     const api = makeApi();
     (window as any).pi = api;

@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, useCallback, type MouseEvent } from 'react';
+import { useEffect, useRef, useCallback, type MouseEvent } from 'react';
 import { pi } from '../ipc';
-import { IconArrowDown } from './icons';
 import { XtermTerminal } from './XtermTerminal';
 
 interface Props {
@@ -15,7 +14,6 @@ interface Props {
 export function TerminalPane({ sessionKey, active }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<XtermTerminal>();
-  const [showJump, setShowJump] = useState(false);
 
   const handleContextMenu = useCallback((e: MouseEvent) => {
     termRef.current?.handleContextMenu(e);
@@ -25,7 +23,6 @@ export function TerminalPane({ sessionKey, active }: Props) {
   useEffect(() => {
     if (!active || !hostRef.current) return;
     const term = new XtermTerminal({ sessionKey, pi });
-    term.onShowJump(setShowJump);
     termRef.current = term;
     term.mount(hostRef.current);
     return () => {
@@ -51,16 +48,6 @@ export function TerminalPane({ sessionKey, active }: Props) {
         className={active ? 'terminal-host active' : 'terminal-host'}
         onContextMenu={handleContextMenu}
       />
-      {active && (
-        <button
-          className={`jump-bottom${showJump ? ' visible' : ''}`}
-          title="滚动到最新"
-          aria-label="滚动到最新"
-          onClick={() => termRef.current?.scrollToBottom()}
-        >
-          <IconArrowDown />
-        </button>
-      )}
     </>
   );
 }

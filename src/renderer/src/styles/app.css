@@ -238,9 +238,14 @@
 .terminal-host {
   position: absolute;
   inset: 0;
+  bottom: 0; /* 终端锚定底部：配合写后 scrollToBottom 锁底，杜绝布局层向下溢出抖动 */
   background: var(--bg-app);
   display: none;
   contain: strict;
+  /* 显式裁剪溢出：防止 xterm 内部滚动条占位/过滚动条在流式输出时反复出现-消失，
+     微动 host 宽度 → 触发 ResizeObserver → fit.fit() 改列宽 → TUI 整屏重排跳动。
+     （与 .terminal-area 的 overflow:hidden 形成双层兜底。） */
+  overflow: hidden;
   /* 对齐 VS Code 集成终端的度量闭合：宿主高度占满、box-sizing 让滚动条/边框不挤动
      可绘制区域，cell 度量（由 JS 锁定）才能与 FitAddon 测量严格一致（见 docs/adr/0002）。 */
   height: 100%;
@@ -312,39 +317,14 @@
 }
 .modal-ok:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
 
-/* 置底按钮（需求 5）：仅活动且未贴底的会话显示。固定在终端区右下角，
-   右移以避开原生竖向滚动条——滚动条 10px 宽、现贴窗口右缘（host 右内边距已归零）。
-   故按钮右缘 = 10px(滚动条) + 20px(间隙)，进一步内移、远离右下角，且仍不遮挡滚动条、不影响上下拖动。 */
-.jump-bottom {
-  position: absolute;
-  right: calc(10px + var(--sp-5)); /* 10px 滚动条 + 20px 间隙，进一步内移 */
-  bottom: calc(var(--sp-5) + var(--sp-2)); /* 在 20px 基础上再上移 8px */
-  z-index: 6;
-  width: 36px; height: 36px;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--accent);
-  border-radius: var(--r-lg);
-  background: var(--bg-active); /* 原 hover 高亮背景挪到常态 */
-  color: var(--accent);
-  cursor: pointer;
-  box-shadow: var(--shadow-modal);
-  transition: background-color var(--transition), transform var(--transition), opacity var(--transition);
-}
-.jump-bottom.visible { display: inline-flex; animation: jumpIn 160ms ease; }
-.jump-bottom:hover { background: var(--bg-elevated); } /* 原常态背景挪到 hover */
-.jump-bottom:focus-visible { box-shadow: var(--focus-ring); }
-@keyframes jumpIn {
-  from { transform: translateY(8px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
-}
-
 /* xterm 6.0.0 采用 VS Code 风格覆盖滚动条（.xterm-scrollable-element > .scrollbar），
    其滑块配色由 xterm 据 ITheme 的 scrollbarSlider* 字段注入、已与主题对齐。
    此处隐藏原生滚动条，避免与覆盖滚动条出现双条。仍保留滚动能力（scrollTop 有效）。 */
 .xterm-viewport {
   scrollbar-width: none; /* Firefox：隐藏原生滚动条 */
+  /* 全屏 TUI 应用：禁用原生纵向滚动条占位，避免流式输出时滚动条出现/消失微动视口宽度
+     → 触发 ResizeObserver → fit.fit() 重排跳动。 */
+  overflow-y: hidden;
 }
 .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
