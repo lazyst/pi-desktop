@@ -6,6 +6,8 @@ import * as crypto from 'node:crypto';
 import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
+import { listDir, readFile, writeFile, statFile, FsSecurityError } from './fsBridge';
+import { gitStatus, gitLog, gitDiff } from './gitBridge';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
 // terminal.integrated.gpuAcceleration 机制）。现代 Electron/Chromium 在无硬件 GPU 时
@@ -355,6 +357,27 @@ function createWindow() {
   ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));
   // 背压回传：渲染端每消费 N 字节即上报，主进程更新该会话的消费进度（对齐 VS Code acknowledgeDataEvent）。
   ipcMain.on('session:ack', (_e, m: { key: string; bytes: number }) => pool.acknowledgeDataEvent(m.key, m.bytes));
+
+  // ── 文件管理器（A + B 预览）只读/写 IPC ──
+  // 所有 fs 通道统一在主进程做路径安全校验：请求的 root + relPath 必须落在
+  // config.addedDirs（allowedRoots）之内，防止越界读写用户目录（见 docs/plan-file-manager-preview-git.md）。
+  const allowedRoots = (): string[] => {
+    const dirs = getConfig().addedDirs;
+    return Array.isArray(dirs) ? dirs.filter((d) => typeof d === 'string') : [];
+  };
+  ipcMain.handle('fs:listDir', (_e, req: { root: string; dir: string }) =>
+    listDir(req.root, req.dir, allowedRoots()));
+  ipcMain.handle('fs:readFile', (_e, req: { root: string; path: string; maxBytes?: number }) =>
+    readFile(req.root, req.path, allowedRoots(), req.maxBytes));
+  ipcMain.handle('fs:writeFile', (_e, req: { root: string; path: string; content: string }) =>
+    writeFile(req.root, req.path, req.content, allowedRoots()));
+  ipcMain.handle('fs:stat', (_e, req: { root: string; path: string }) =>
+    statFile(req.root, req.path, allowedRoots()));
+
+  // ── Git 只读查看（D）── 非 git 目录优雅降级（见 gitBridge，永不抛错）。
+  ipcMain.handle('git:status', (_e, req: { cwd: string }) => gitStatus(req.cwd));
+  ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
+  ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
 
   // 无边框窗口的窗口控制（自建标题条调用）
   ipcMain.on('window:minimize', () => { if (!win.isDestroyed()) win.minimize(); });

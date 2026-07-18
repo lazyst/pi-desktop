@@ -84,6 +84,18 @@ contextBridge.exposeInMainWorld('pi', {
   getInitialConfig: (): AppConfig | null => initialConfig,
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
   setConfig: (partial: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:set', partial),
+  // ── 文件管理器 / 预览（A + B）──
+  fsListDir: (root: string, dir: string): Promise<any[]> => ipcRenderer.invoke('fs:listDir', { root, dir }),
+  fsReadFile: (root: string, filePath: string, maxBytes?: number): Promise<any> =>
+    ipcRenderer.invoke('fs:readFile', { root, path: filePath, maxBytes }),
+  fsWriteFile: (root: string, filePath: string, content: string): Promise<void> =>
+    ipcRenderer.invoke('fs:writeFile', { root, path: filePath, content }),
+  fsStat: (root: string, filePath: string): Promise<any> =>
+    ipcRenderer.invoke('fs:stat', { root, path: filePath }),
+  // ── Git 只读查看（D）──
+  gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
+  gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),
+  gitDiff: (cwd: string, ref?: string): Promise<string> => ipcRenderer.invoke('git:diff', { cwd, ref }),
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone: () => ipcRenderer.send('splash:done'),
 });

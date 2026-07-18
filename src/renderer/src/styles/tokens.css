@@ -36,6 +36,8 @@
   --text: #c9d1d9;
   --text-muted: #8b949e;
   --text-faint: #6e7681;
+  /* --text-dim 别名：供移植自 web 版的图标组件（FileIcons）复用，与 --text-muted 同色 */
+  --text-dim: #8b949e;
 
   /* Accent + semantic */
   --accent: #7c9cff;
@@ -133,6 +135,7 @@ body {
   --text: #1f2328;
   --text-muted: #656d76;
   --text-faint: #6e7781;
+  --text-dim: #656d76;
 
   /* Accent + semantic */
   --accent: #3b5bdb;
