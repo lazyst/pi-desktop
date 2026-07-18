@@ -1,10 +1,50 @@
 # Progress Log
 
-## 总体状态（2026-07-18 收尾）：全部完成
-- 防闪烁 6 个 Phase：全部完成（见下）。
-- 预存 e2e 4 项失败：已排查并修复（类1 调试期漏跑 copy-assets；类2 jump-to-bottom 功能从未实现，已补齐）。
-- 最终验证：tsc 零报错；vitest 94 项全过；playwright 6 项全过。
-- 注：规划钩子反复提示的「0/6 phases done」为会话恢复的陈旧读数，与实际代码/测试/进度文件三者均不符。
+## 总体状态（2026-07-19 收尾）：全部完成
+- 防闪烁 6 个 Phase（0002/0003/0004）：全部完成。
+- 终端流式输出与差分渲染全面对齐 VS Code（0006）：全部完成（见下）。
+- **紧急修复**：点击会话启动 pi 进程时主进程崩溃 `ReferenceError: pool is not defined`（背压
+  回传闭包自引用 + const TDZ），已修复。
+- 最终验证：tsc 零报错；vitest 100 项全过；electron-vite build 三段全过；e2e 无主进程崩溃。
+
+## Session 2026-07-19（补）— 修复主进程崩溃 `pool is not defined`
+
+- 现象：点击左侧会话启动 pi 进程时弹 `A JavaScript error occurred in the main process` →
+  `Uncaught Exception: ReferenceError: pool is not defined`（崩溃级，主进程退出）。
+- 根因：`main/index.ts` 的 `createPool(win)` 在 `SessionPool` 构造的 `opts` 里写了自引用闭包
+  `acknowledgeDataEvent: (key, bytes) => pool.acknowledgeDataEvent(key, bytes)`。该闭包捕获的是
+  `createWindow` 作用域的 `const pool`，而 `pool` 经 `const pool = createPool(win)` 赋值——即
+  `createPool` 同步执行期 `pool` 处于 TDZ；且闭包自引用会无限递归。渲染端每批 write 后回传
+  `acknowledgeDataEvent` → IPC `session:ack` → 该闭包首次进入即 `pool` 未绑定抛错。
+- 修复：删除该自引用闭包。`SessionPool.acknowledgeDataEvent` 已内部完成 `ackedBytes` 记账，
+  `opts.acknowledgeDataEvent` 钩子改为可选扩展点（当前不传，由 `?.` 安全跳过）。回传入口统一走
+  `ipcMain.on('session:ack', (_e, m) => pool.acknowledgeDataEvent(m.key, m.bytes))`，此处 `pool`
+  已赋值、无 TDZ。
+- 验证：tsc OK；build OK；e2e `test-results/` 中无 `pool is not defined` / `Uncaught Exception`
+  / 主进程崩溃对话框（4 项 e2e 失败为改动前预存的 promote/jump-to-bottom 相关，与本次无关，
+  见 ADR 0004 记录）。
+
+## Session 2026-07-19 — 终端全面对齐 VS Code 流式/差分渲染（ADR 0006）
+
+逐行对比 `vscode-src/.../contrib/terminal/` 与本项目终端层，补齐以下 8 项缺失机制：
+
+1. **WebGL 上下文丢失恢复**（对齐 `_enableWebglRenderer.onContextLoss`）：
+   `enableWebgl()` 注册 `onContextLoss` → 整会话降级 DOM + `doResize(true)` 重测；保存 `this.webgl` 引用。
+2. **强制重绘 / 清纹理图集**（对齐 `forceRedraw`）：新增 `forceRedraw()` = `clearTextureAtlas()`；
+   主题切换回调里调用，消除 WebGL 换主题纹理残留。
+3. **Shell Integration 流分割**（对齐 `_onProcessData`）：新增 `segmentByShellIntegration()`，
+   按 OSC 633 切段写入，命令边界成独立写入单元。
+4. **背压回传**（对齐 `acknowledgeDataEvent`）：write 回调调 `pi.acknowledgeDataEvent(key, len)`；
+   链路打通 ipc.ts → preload `session:ack` → main `ipcMain.on` → `SessionPool.acknowledgeDataEvent` 记账。
+5. **条件平滑滚动**（对齐 `MouseWheelClassifier`）：`bindWheelClassifier()` 仅物理滚轮启用平滑。
+6. **不可见 idle 延迟 resize**（对齐 `runWhenWindowIdle`）：`scheduleResize()` 非 active 时走
+   `requestIdleCallback`（降级 setTimeout(0)）。
+7. **Decoration 覆盖层基座**（对齐 `DecorationAddon`）：`registerLineDecoration(marker, opts)`
+   + `clearDecorations()`，命令状态可脱离 VT 流做差分 overlay。
+8. **数据重放**（对齐 `handleReplay`）：`replayData(data)` API 就位。
+
+- 验证：tsc 零报错；vitest 100 项全过（新增 6 项用例）；electron-vite build 通过。
+- 约束保持：单文件薄封装、契约保形、零接触 PTY 链路（0002/0003/0004）。
 
 ## Session 2026-07-18
 

@@ -16,6 +16,10 @@ export interface PiApi {
   onExit(cb: (key: string) => void): () => void;
   onRelink(cb: (from: string, to: string) => void): () => void;
   onIndex(cb: (groups: SessionGroup[]) => void): () => void;
+  // 背压回传（对齐 VS Code _writeProcessData 回调里的 acknowledgeDataEvent）：
+  // 渲染端每消费 N 字节即通知主进程，使其对 PTY 做流控，避免高速输出淹没前端缓冲。
+  // 可选：旧/测试实现可能不存在该字段，XtermTerminal 调用前会判空。
+  acknowledgeDataEvent?(key: string, bytes: number): void;
   // 无边框窗口的窗口控制（对应自建标题条）
   minimizeWindow(): void;
   toggleMaximizeWindow(): void;

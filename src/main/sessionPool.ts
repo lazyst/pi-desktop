@@ -33,6 +33,10 @@ export interface SessionPoolOptions {
   // renderer that `from` and `to` are the same process so it can keep the same
   // terminal pane and highlight the on-disk entry.
   onRelink?: (from: string, to: string) => void;
+  // 背压回传（对齐 VS Code ptyService 的 acknowledgeDataEvent）：渲染端每消费 N 字节即调用，
+  // 主进程据消费进度对 PTY 做流控决策（当前 node-pty 模型下内核 PTY 缓冲已天然流控，
+  // 此处记账并暴露钩子，供后续按需限制高频输出/诊断，接口语义与 VS Code 一致）。
+  acknowledgeDataEvent?: (key: string, bytes: number) => void;
 }
 
 interface Entry { pty: IPtyLike; info: SessionInfo; linked: boolean; diskKey?: string; existingDiskKeys?: Set<string>; }
@@ -50,6 +54,8 @@ export class SessionPool {
   private alias = new Map<string, string>();
   // 每会话聚合缓冲（key 为 emit key：live key 或 disk key）。
   private dataBuffers = new Map<string, DataBuffer>();
+  // 每会话累计已下发字节数（经 acknowledgeDataEvent 回传的渲染端消费进度，仅记账）。
+  private ackedBytes = new Map<string, number>();
   constructor(private ptyFactory: PtyFactory, private opts: SessionPoolOptions) {}
 
   /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。 */
@@ -115,6 +121,16 @@ export class SessionPool {
     const b = this.dataBuffers.get(key);
     if (b?.timer) clearTimeout(b.timer);
     this.dataBuffers.delete(key);
+  }
+  /** 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端消费进度记账。
+   * 不改写 PTY 行为（node-pty 内核缓冲已天然流控），仅累计字节数并透传给 opts 钩子，
+   * 供诊断/后续流控。disk key 与 live key 共享同一进程，故同时更新别名映射。 */
+  acknowledgeDataEvent(key: string, bytes: number): void {
+    const live = this.liveKeyFor(key);
+    const k = this.entries.has(live) ? live : key;
+    const next = (this.ackedBytes.get(k) ?? 0) + Math.max(0, bytes | 0);
+    this.ackedBytes.set(k, next);
+    this.opts.acknowledgeDataEvent?.(k, next);
   }
   write(key: string, data: string) { this.entries.get(key)?.pty.write(data); }
   resize(key: string, cols: number, rows: number) {
@@ -183,7 +199,8 @@ export class SessionPool {
     this.entries.delete(key);
     // 清掉该 key 的待发聚合缓冲，避免 kill 后迟到数据发往已销毁的渲染实例。
     this.clearDataBuffer(key);
-    if (e.diskKey) this.clearDataBuffer(e.diskKey);
+    this.ackedBytes.delete(key);
+    if (e.diskKey) { this.clearDataBuffer(e.diskKey); this.ackedBytes.delete(e.diskKey); }
     // Update status AND notify the UI that the session ended. We call onExit
     // explicitly (not only via the pty 'exit' event) so the renderer updates
     // reliably even if the killed process does not emit a clean 'exit'. The

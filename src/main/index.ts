@@ -197,6 +197,12 @@ function createPool(win: BrowserWindow) {
     onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
     onExit: (key) => { if (!win.isDestroyed()) win.webContents.send('session:exit', { key }); },
     onRelink: (from, to) => { if (!win.isDestroyed()) win.webContents.send('session:relink', { from, to }); },
+    // 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端每消费 N 字节即经 IPC 上报，
+    // 由 SessionPool.acknowledgeDataEvent 记账（见下方 ipcMain.on('session:ack')）。
+    // 注意：此处**不能**写成 `() => pool.acknowledgeDataEvent(...)` —— 那会自引用无限递归，
+    // 且 pool 在本闭包创建时（createPool 同步执行期）还处于 const TDZ，点击会话触发 IPC
+    // 时会抛 `ReferenceError: pool is not defined`。SessionPool 内部已自记账，故钩子省略，
+    // 回传入口统一走 ipcMain.on('session:ack') → pool.acknowledgeDataEvent。
   });
 }
 
@@ -323,6 +329,8 @@ function createWindow() {
   ipcMain.handle('session:debug', () => pool.debugInfo());
   ipcMain.on('session:input', (_e, m: { key: string; data: string }) => pool.write(m.key, m.data));
   ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));
+  // 背压回传：渲染端每消费 N 字节即上报，主进程更新该会话的消费进度（对齐 VS Code acknowledgeDataEvent）。
+  ipcMain.on('session:ack', (_e, m: { key: string; bytes: number }) => pool.acknowledgeDataEvent(m.key, m.bytes));
 
   // 无边框窗口的窗口控制（自建标题条调用）
   ipcMain.on('window:minimize', () => { if (!win.isDestroyed()) win.minimize(); });

@@ -50,6 +50,10 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('session:index', handler);
     return () => ipcRenderer.removeListener('session:index', handler);
   },
+  // 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端每消费 N 字节即通知主进程，
+  // 主进程据此对 PTY 做流控/消费进度记账。
+  acknowledgeDataEvent: (key: string, bytes: number) =>
+    ipcRenderer.send('session:ack', { key, bytes }),
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.send('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),

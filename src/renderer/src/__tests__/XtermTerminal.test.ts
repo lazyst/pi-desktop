@@ -8,17 +8,26 @@ import type { PiApi } from '../ipc';
 const hoist = vi.hoisted(() => ({
   webglThrow: false,
   webglActivateCalls: 0,
+  webglContextLossHandler: null as (() => void) | null,
+  webglClearAtlasCalls: 0,
   clipboardActivateCalls: 0,
   unicodeActivateCalls: 0,
+  registerDecorationCalls: 0,
 }));
 vi.mock('@xterm/addon-webgl', () => {
   class WebglAddon {
     disposed = false;
+    // 捕获 onContextLoss 回调，供测试手动触发上下文丢失（对齐 VS Code _enableWebglRenderer）。
+    onContextLoss(cb: () => void) {
+      hoist.webglContextLossHandler = cb;
+    }
+    clearTextureAtlas() {
+      hoist.webglClearAtlasCalls++;
+    }
     activate() {
       hoist.webglActivateCalls++;
       if (hoist.webglThrow) throw new Error('WebGL unavailable');
     }
-    onContextLoss() {}
     dispose() {
       this.disposed = true;
     }
@@ -51,6 +60,8 @@ function makeApi() {
     terminate: vi.fn(),
     input: vi.fn(),
     resize: vi.fn(),
+    // 背压回传（对齐 VS Code acknowledgeDataEvent）：记录渲染端消费的字节数。
+    acknowledgeDataEvent: vi.fn(),
     onData: vi.fn(() => () => {}),
     onStatus: vi.fn(() => () => {}),
     onExit: vi.fn(),
@@ -299,6 +310,118 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.mount(mountHost());
     t.scrollToBottom();
     expect(scrollMock).toHaveBeenCalled();
+    t.unmount();
+  });
+
+  // WebGL 上下文丢失恢复（对齐 VS Code _webglAddon.onContextLoss）：GPU 上下文丢失后整会话
+  // 降级 DOM 渲染器，不重建 WebGL、不崩溃，并触发一次尺寸重测。
+  it('degrades to DOM renderer on WebGL context loss without throwing', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    expect(hoist.webglActivateCalls).toBeGreaterThanOrEqual(1);
+    // 触发上下文丢失（模拟驱动崩溃 / 资源回收）。
+    expect(typeof hoist.webglContextLossHandler).toBe('function');
+    expect(() => hoist.webglContextLossHandler!()).not.toThrow();
+    // 上下文丢失后实例仍可用：后续写入不应抛错。
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    expect(() => onData('k', 'after-loss')).not.toThrow();
+    t.unmount();
+  });
+
+  // forceRedraw()：清纹理图集（对齐 VS Code forceRedraw/clearTextureAtlas），换主题不残留旧纹理。
+  it('forceRedraw() clears the WebGL texture atlas', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    hoist.webglClearAtlasCalls = 0;
+    t.forceRedraw();
+    expect(hoist.webglClearAtlasCalls).toBeGreaterThanOrEqual(1);
+    t.unmount();
+  });
+
+  // Shell Integration 流分割（对齐 VS Code _onProcessData）：含 OSC 633 序列的数据应被切成
+  // 多段、各段独立 write，命令边界不丢。无 OSC 633 时原样单次 write。
+  it('segments data by OSC 633 shell-integration sequences before writing', async () => {
+    const api = makeApi();
+    const writes: string[] = [];
+    vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
+      writes.push(data as string);
+      cb?.();
+    });
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    const chunk = 'output-before\x1b]633;C\x07middle\x1b]633;D\x07after';
+    onData('k', chunk);
+    await vi.waitFor(() => expect(writes.length).toBeGreaterThanOrEqual(3));
+    // 三段按顺序写入、拼接还原为原始数据，且命令边界标记完整保留。
+    expect(writes.join('')).toBe(chunk);
+    expect(writes.some((w) => w.includes('\x1b]633;C\x07'))).toBe(true);
+    expect(writes.some((w) => w.includes('\x1b]633;D\x07'))).toBe(true);
+    t.unmount();
+  });
+
+  // 背压回传（对齐 VS Code acknowledgeDataEvent）：每批 write 解析完成后通知主进程消费字节数。
+  it('acknowledges consumed bytes via pi.acknowledgeDataEvent after each write', async () => {
+    const api = makeApi();
+    vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, _d: string | Uint8Array, cb?: () => void) {
+      cb?.(); // 立即解析完成
+    });
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    onData('k', 'hello world');
+    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalled());
+    // 回传 key 与本次消费字节数（'hello world'.length === 11）。
+    expect((api.acknowledgeDataEvent as any).mock.calls[0]).toEqual(['k', 11]);
+    t.unmount();
+  });
+
+  // Decoration 覆盖层（对齐 VS Code DecorationAddon 差分 overlay 基座）：registerLineDecoration
+  // 经 xterm.registerDecoration 锚定 marker；clearDecorations 释放全部装饰。
+  it('registerLineDecoration / clearDecorations manage the overlay decorations', () => {
+    const api = makeApi();
+    // marker 是 IMarker 形态的最小桩：xterm.registerDecoration 需要 marker.id。
+    const fakeMarker = { id: 42, dispose: vi.fn() } as any;
+    const fakeDeco = { marker: fakeMarker, dispose: vi.fn(), onRender: vi.fn(), element: undefined, isDisposed: false } as any;
+    const registerSpy = vi
+      .spyOn(Terminal.prototype, 'registerDecoration')
+      .mockReturnValue(fakeDeco);
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    const deco = t.registerLineDecoration(fakeMarker, { marker: fakeMarker });
+    expect(registerSpy).toHaveBeenCalled();
+    expect(deco).toBe(fakeDeco);
+    expect((t as any).decorations.size).toBe(1);
+    t.clearDecorations();
+    expect((t as any).decorations.size).toBe(0);
+    expect(fakeDeco.dispose).toHaveBeenCalled();
+    registerSpy.mockRestore();
+    t.unmount();
+  });
+
+  // 不可见终端的 idle 延迟 resize（对齐 VS Code runWhenWindowIdle）：非 active 时 scheduleResize
+  // 不立即执行、推迟到 idle 后再 doResize；可见时仍走原 100ms 防抖。
+  it('defers resize to idle when not active (runWhenWindowIdle semantics)', async () => {
+    const api = makeApi();
+    const resizeMock = vi.spyOn(XtermTerminal.prototype as any, 'doResize').mockImplementation(() => {});
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    const host = mountHost();
+    Object.defineProperty(host, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true });
+    t.mount(host);
+    // mount 内部已调过 doResize(true)（首帧对齐尺寸），清零后再测 idle 延迟语义。
+    resizeMock.mockClear();
+    // 模拟隐藏（keep-alive 非 active）。
+    (t as any).active = false;
+    t.scheduleResize();
+    // 立即不应执行（idle 延迟）。
+    expect(resizeMock).not.toHaveBeenCalled();
+    // 让出事件循环后 idle 回调触发 doResize。
+    await new Promise((r) => setTimeout(r, 30));
+    expect(resizeMock).toHaveBeenCalled();
+    resizeMock.mockRestore();
     t.unmount();
   });
 });
