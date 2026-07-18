@@ -35,6 +35,8 @@ export default function App() {
   const [addedDirs, setAddedDirs] = useState<string[]>([]);
   // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
+  // 文件管理器面板宽度（持久化于 config.filePanelWidth）。
+  const [filePanelWidth, setFilePanelWidth] = useState<number>(defaultConfig().filePanelWidth);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
@@ -76,7 +78,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
     // 启动动画：首屏（App 挂载）即视为就绪（见 docs/adr/0003 决策⑤a）。
@@ -173,6 +175,12 @@ export default function App() {
     pi.setConfig({ sidebarWidth: w }).catch(() => {});
   };
 
+  // 文件管理器面板拖拽右缘实时改宽后回写 config 并同步本地 state。
+  const handleFilePanelResize = (w: number) => {
+    setFilePanelWidth(w);
+    pi.setConfig({ filePanelWidth: w }).catch(() => {});
+  };
+
   // 待确认的危险操作：单条删除 / 清空目录 / 批量删除，统一用一份确认弹窗。
   type PendingDelete =
     | { kind: 'session'; key: string; name: string }
@@ -265,6 +273,8 @@ export default function App() {
         addedDirs={addedDirs}
         activeCwd={activeCwd}
         onOpenFile={handleOpenFile}
+        width={filePanelWidth}
+        onResize={handleFilePanelResize}
       />
       <main className="main">
         <div className="header">

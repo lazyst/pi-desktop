@@ -22,7 +22,7 @@ beforeEach(() => {
 
 describe('FilePanel', () => {
   it('renders files tab by default and lists directory entries', async () => {
-    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} />);
+    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />);
     // header tabs present
     expect(screen.getByText('📁 文件')).toBeInTheDocument();
     expect(screen.getByText('🌿 Git')).toBeInTheDocument();
@@ -32,13 +32,13 @@ describe('FilePanel', () => {
   });
 
   it('shows an empty-state prompt when there are no directories', () => {
-    render(<FilePanel addedDirs={[]} activeCwd={null} onOpenFile={vi.fn()} />);
+    render(<FilePanel addedDirs={[]} activeCwd={null} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />);
     expect(screen.getByText(/先用/)).toBeInTheDocument();
     expect(screen.queryByText('README.md')).toBeNull();
   });
 
   it('switches to the Git tab and shows the branch', async () => {
-    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} />);
+    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />);
     fireEvent.click(screen.getByText('🌿 Git'));
     expect(await screen.findByText(/main/)).toBeInTheDocument();
     expect((window as any).pi.gitStatus).toHaveBeenCalledWith('C:\\work');
@@ -46,17 +46,17 @@ describe('FilePanel', () => {
 
   it('follows the active session cwd into the root dropdown', async () => {
     const { rerender } = render(
-      <FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} />,
+      <FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />,
     );
     // change active cwd → root auto-updates (no manual override yet)
-    rerender(<FilePanel addedDirs={['C:\\work', 'C:\\other']} activeCwd={'C:\\other'} onOpenFile={vi.fn()} />);
+    rerender(<FilePanel addedDirs={['C:\\work', 'C:\\other']} activeCwd={'C:\\other'} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />);
     const select = screen.getByTitle('根目录') as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe('C:\\other'));
   });
 
   it('clicking a file calls onOpenFile with relPath, name, root', async () => {
     const onOpenFile = vi.fn();
-    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={onOpenFile} />);
+    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={onOpenFile} width={260} onResize={vi.fn()} />);
     fireEvent.click(await screen.findByText('README.md'));
     expect(onOpenFile).toHaveBeenCalledWith('README.md', 'README.md', 'C:\\work');
   });
