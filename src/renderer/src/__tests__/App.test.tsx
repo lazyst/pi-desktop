@@ -88,4 +88,25 @@ describe('App', () => {
     fireEvent.click(dialog.querySelector('.btn-danger')!);
     expect(api.clearDirectory).toHaveBeenCalledWith(cwd);
   });
+
+  it('dismisses the splash overlay and notifies the main process on mount', async () => {
+    // 模拟 index.html 中的启动动画 overlay（见 docs/adr/0003）。
+    document.body.innerHTML = '<div id="splash"><div class="splash-logo">π</div><div class="splash-dot"></div></div><div id="root"></div>';
+    const api = {
+      listSessions: vi.fn().mockResolvedValue([]),
+      openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
+      deleteMany: vi.fn(), clearDirectory: vi.fn(),
+      input: vi.fn(), resize: vi.fn(),
+      onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
+      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
+      splashDone: vi.fn(),
+    };
+    (window as any).pi = api;
+    render(<App />);
+    // App 挂载（useEffect + rAF）后应触发 splashDone 并给 #splash 加隐藏类。
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.splashDone).toHaveBeenCalled();
+    const splash = document.getElementById('splash');
+    expect(splash?.classList.contains('splash--hidden')).toBe(true);
+  });
 });

@@ -210,8 +210,11 @@ function createPool(win: BrowserWindow) {
 function createWindow() {
   const cfg = getConfig();
   // 还原上次窗口几何（最大化状态单独存标志，bounds 永远是非最大化尺寸）。
+  // show:false —— 启动动画（splash）由 renderer 首屏就绪后经 splash:done IPC 触发
+  // show()，避免在「无边框窗口 + 内容异步加载」下先闪白框再显示内容（见 docs/adr/0003）。
   const win = new BrowserWindow({
     ...initialBoundsOptions(cfg.window.bounds),
+    show: false,
     frame: false, // 无边框：原生菜单与标题条随之消失（任务 2），标题条改由渲染进程自建（任务 3）
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -388,6 +391,20 @@ function createWindow() {
     quitting = true;
     pool.killAll();
   });
+
+  // 启动动画（splash）：窗口以 show:false 创建，避免无边框窗口先闪白框。
+  // renderer 首屏（App 挂载）后发 splash:done → 切淡出并 show()。
+  // 仅「真冷启动」走此路径；托盘恢复走 showWindow()（win.show()），不经过此处。
+  // 兜底：若渲染进程未在 3s 内通知（异常/未挂载），强制显示，避免窗口永远不可见。
+  let splashDismissed = false;
+  const dismissSplash = () => {
+    if (splashDismissed) return;
+    splashDismissed = true;
+    if (!win.isDestroyed()) win.show();
+  };
+  ipcMain.on('splash:done', () => dismissSplash());
+  const splashFallback = setTimeout(dismissSplash, 3000);
+  win.on('closed', () => clearTimeout(splashFallback));
 
   // 常驻托盘在窗口就绪后创建（见 issue 01）。
   createTray(win);
