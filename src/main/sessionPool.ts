@@ -37,12 +37,40 @@ export interface SessionPoolOptions {
 
 interface Entry { pty: IPtyLike; info: SessionInfo; linked: boolean; diskKey?: string; existingDiskKeys?: Set<string>; }
 
+// 主进程端数据缓冲（对齐 VS Code ptyService 的 TerminalDataBufferer）：每会话 5ms 时间窗
+// 聚合 pty 小块输出，窗口结束一次性 emit，避免高频小块直达渲染端造成的中间帧闪烁。
+// 与渲染端 XtermTerminal 的 5ms 前端聚合构成「双段缓冲」，并统一了 IPC 投递节奏。
+const DATA_BUFFER_MS = 5;
+interface DataBuffer { chunks: string[]; timer: NodeJS.Timeout | null; }
+
 export class SessionPool {
   private entries = new Map<string, Entry>();
   // disk `.jsonl` path → live `live-<uuid>` key, set when a new session's file is
   // written (see reconcile). Lets openExisting reuse the running live process.
   private alias = new Map<string, string>();
+  // 每会话聚合缓冲（key 为 emit key：live key 或 disk key）。
+  private dataBuffers = new Map<string, DataBuffer>();
   constructor(private ptyFactory: PtyFactory, private opts: SessionPoolOptions) {}
+
+  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。 */
+  private emitData(key: string, data: string): void {
+    let buf = this.dataBuffers.get(key);
+    if (!buf) {
+      buf = { chunks: [], timer: null };
+      this.dataBuffers.set(key, buf);
+    }
+    buf.chunks.push(data);
+    if (buf.timer) return; // 窗口已开，等待 flush
+    buf.timer = setTimeout(() => {
+      const b = this.dataBuffers.get(key);
+      if (!b) return;
+      const joined = b.chunks.join('');
+      b.chunks = [];
+      b.timer = null;
+      this.dataBuffers.delete(key);
+      this.opts.onData(key, joined);
+    }, DATA_BUFFER_MS);
+  }
 
   openExisting(sessionFile: string): SessionInfo {
     const existing = this.entries.get(sessionFile);
@@ -72,8 +100,8 @@ export class SessionPool {
     // `live-<uuid>`; after the session file is written it is linked to the on-disk
     // `.jsonl` path (see reconcile), and `e.info.key` is read dynamically so both
     // the live key and the disk key receive status updates.
-    pty.on('data', (d: string) => this.opts.onData(e.info.key, d));
-    pty.on('exit', () => {
+    pty.on('data', (d: string) => this.emitData(e.info.key, d));
+    pty.on('exit', (code: number | null, signal: string | null) => {
       e.info.status = 'dead';
       this.opts.onStatus(e.info.key, 'dead');
       if (e.diskKey) this.opts.onStatus(e.diskKey, 'dead');
@@ -82,6 +110,11 @@ export class SessionPool {
     this.entries.set(mapKey, e);
     this.opts.onStatus(infoKey, 'running');
     return info;
+  }
+  private clearDataBuffer(key: string): void {
+    const b = this.dataBuffers.get(key);
+    if (b?.timer) clearTimeout(b.timer);
+    this.dataBuffers.delete(key);
   }
   write(key: string, data: string) { this.entries.get(key)?.pty.write(data); }
   resize(key: string, cols: number, rows: number) {
@@ -148,6 +181,9 @@ export class SessionPool {
     if (!e) return;
     e.pty.kill();
     this.entries.delete(key);
+    // 清掉该 key 的待发聚合缓冲，避免 kill 后迟到数据发往已销毁的渲染实例。
+    this.clearDataBuffer(key);
+    if (e.diskKey) this.clearDataBuffer(e.diskKey);
     // Update status AND notify the UI that the session ended. We call onExit
     // explicitly (not only via the pty 'exit' event) so the renderer updates
     // reliably even if the killed process does not emit a clean 'exit'. The
@@ -173,7 +209,6 @@ export class SessionPool {
     this.terminate(liveKey);
     // 该磁盘 key 此前若已“晋升”关联到某个 live 进程，清理此映射以免悬空。
     for (const [dk, lk] of this.alias) if (lk === liveKey) this.alias.delete(dk);
-    // 仅删除 sessionsDir 内的 .jsonl 文件，防止越权删除任意文件。
     if (!key.endsWith('.jsonl')) return;
     const dir = path.resolve(this.opts.sessionsDir);
     const target = path.resolve(key);

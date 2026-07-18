@@ -5,33 +5,27 @@ import type { ITheme } from '@xterm/xterm';
 const listeners = new Set<(t: Theme) => void>();
 
 // 终端（xterm 6.0.0：WebGL 渲染优先、内建 DOM 兜底，颜色只来自 theme 选项，不支持 CSS 变量覆盖）
-// 与 tokens.css 的 DOM 令牌共享同一套 GitHub 语义：背景=--bg-app、前景=--text、
-// 选区=accent 半透明；16 色 ANSI 用 GitHub 官方暗/亮调色板，使 CLI 输出与窗口
-// 同属一个视觉语言。与 tokens.css 的等值约束由 theme.test.ts 守护，防漂移。
-// 滚动条滑块配色（scrollbarSlider*）供 xterm 6.0.0 的 VS Code 风格覆盖滚动条使用，
-// 使其与主题一致。
-export const TERM_THEMES: Record<Theme, ITheme> = {
+// 与 tokens.css 的 DOM 令牌共享同一套 GitHub 语义：前景=--text、选区=accent 半透明；16 色 ANSI
+// 用 GitHub 官方暗/亮调色板，使 CLI 输出与窗口同属一个视觉语言。与 tokens.css 的等值约束由
+// theme.test.ts 守护，防漂移。滚动条滑块配色（scrollbarSlider*）供 xterm 6.0.0 的 VS Code 风格
+// 覆盖滚动条使用，使其与主题一致。
+//
+// 背景色（phase 4）：对齐 VS Code terminalInstance.getBackgroundColor 的「与容器像素一致」语义，
+// 终端背景不再写死 hex，而是运行时读取 --bg-app 的 computed 值，确保与 .terminal-host 的
+// 背景严格一致，消除主题切换/浅色模式下容器与终端背景错位露边的闪烁。
+const ANSI: Record<'dark' | 'light', Omit<ITheme, 'background' | 'foreground' | 'cursor' | 'cursorAccent'>> = {
   dark: {
-    background: '#0d1117',
-    foreground: '#c9d1d9',
-    cursor: '#c9d1d9',
-    cursorAccent: '#0d1117',
     selectionBackground: 'rgba(124, 156, 255, 0.30)',
     black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
     blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39c5cf', white: '#b1bac4',
     brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
     brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
     brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
-    // xterm 6.0.0 覆盖滚动条滑块（VS Code 风格）：默认淡、悬停加深、拖拽偏 accent
     scrollbarSliderBackground: 'rgba(201, 209, 217, 0.15)',
     scrollbarSliderHoverBackground: 'rgba(201, 209, 217, 0.40)',
     scrollbarSliderActiveBackground: 'rgba(124, 156, 255, 0.60)',
   },
   light: {
-    background: '#ffffff',
-    foreground: '#1f2328',
-    cursor: '#1f2328',
-    cursorAccent: '#ffffff',
     selectionBackground: 'rgba(59, 91, 219, 0.20)',
     black: '#484f58', red: '#cf222e', green: '#116329',
     yellow: '#9a6700', blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#b1bac4',
@@ -42,6 +36,38 @@ export const TERM_THEMES: Record<Theme, ITheme> = {
     scrollbarSliderHoverBackground: 'rgba(31, 35, 40, 0.38)',
     scrollbarSliderActiveBackground: 'rgba(59, 91, 219, 0.55)',
   },
+};
+
+/** 运行时读取容器语义背景色（--bg-app 的 computed 值）。
+ * 对齐 VS Code getBackgroundColor：终端背景与容器严格一致，不露黑边。
+ * 无 DOM（测试/SSR）时回退到各主题的静态等价色。 */
+function resolveBg(theme: Theme): string {
+  try {
+    const root = document.documentElement;
+    const v = getComputedStyle(root).getPropertyValue('--bg-app').trim();
+    if (v) return v;
+  } catch { /* 非浏览器环境（测试）回退 */ }
+  return theme === 'light' ? '#ffffff' : '#0d1117';
+}
+
+/** 构造 xterm 主题：背景取容器 --bg-app、前景/光标取容器 --text，其余 16 色 + 滚动条滑块
+ * 用 GitHub 官方调色板。背景跟随容器，从根上消除「终端背景 ≠ 容器背景」的露边闪。 */
+export function getTermTheme(theme: Theme): ITheme {
+  const bg = resolveBg(theme);
+  const fg = theme === 'light' ? '#1f2328' : '#c9d1d9';
+  return {
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    cursorAccent: bg,
+    ...ANSI[theme],
+  };
+}
+
+// 维护向后兼容：旧调用方用 TERM_THEMES[theme] 取主题。改为运行时计算（背景跟随容器）。
+export const TERM_THEMES: Record<Theme, ITheme> = {
+  dark: getTermTheme('dark'),
+  light: getTermTheme('light'),
 };
 
 // 同步读取主进程在窗口创建时经 additionalArguments 注入的初始 config（见 preload 的

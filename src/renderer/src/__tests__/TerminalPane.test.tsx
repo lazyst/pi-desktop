@@ -41,4 +41,20 @@ describe('TerminalPane (React 壳)', () => {
     const host = container.querySelector('.terminal-host') as HTMLElement;
     expect(() => fireEvent.contextMenu(host)).not.toThrow();
   });
+
+  // keep-alive（对齐 VS Code setVisible 不析构语义）：active 切到 false 再切回 true，
+  // 终端实例不应被销毁重建（即 term.open 不重复触发、实例存活）。
+  it('keeps the terminal instance alive across active toggles (no remount)', () => {
+    const api = makeApi();
+    (window as any).pi = api;
+    const { container, rerender } = render(<TerminalPane sessionKey="k" active={true} />);
+    const host = container.querySelector('.terminal-host') as HTMLElement;
+    expect(host.className).toContain('active');
+    // 切到非 active：不应抛错，实例保留（display:none 由 CSS 控制）。
+    rerender(<TerminalPane sessionKey="k" active={false} />);
+    expect(host.className).not.toContain('active');
+    // 切回 active：实例仍在、未重建（不抛错）。
+    expect(() => rerender(<TerminalPane sessionKey="k" active={true} />)).not.toThrow();
+    expect(host.className).toContain('active');
+  });
 });
