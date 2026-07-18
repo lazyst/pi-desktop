@@ -13,6 +13,10 @@ export interface PiApi {
   pickDirectory(): Promise<string | null>;
   // 图片粘贴落盘：渲染端把剪贴板里的图片读成 base64 传来，主进程写临时文件并返回绝对路径。
   saveImage(data: string, ext: string): Promise<string | null>;
+  // 拖拽文件落终端：把拖入的 File 解析为绝对路径（Electron 31+ 用 webUtils.getPathForFile
+  // 替代已弃用的 File.path；非 Electron 环境返回空串）。绝对路径是拖拽落终端的硬要求，
+  // 拿不到就不插入（绝不退化成相对/裸文件名）。
+  getPathForFile(file: File): string;
   onData(cb: (key: string, data: string) => void): () => void;
   onStatus(cb: (key: string, status: SessionStatus) => void): () => void;
   onExit(cb: (key: string) => void): () => void;

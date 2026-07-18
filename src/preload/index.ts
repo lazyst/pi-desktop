@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig } from '../renderer/src/types';
 
 // 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
@@ -25,6 +25,18 @@ contextBridge.exposeInMainWorld('pi', {
   resize: (key: string, cols: number, rows: number) => ipcRenderer.send('session:resize', { key, cols, rows }),
   debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('session:pickDirectory'),
+  // 拖拽文件落终端：把渲染端拖入的 File 解析为绝对路径。
+  // Electron 31+ 起 File.path 已弃用，官方改用 webUtils.getPathForFile（同步返回绝对路径）；
+  // 若该 API 因传入非原生拖拽 File 而失败，回退到 File.path（测试/旧环境注入的绝对路径）。
+  getPathForFile: (file: File): string => {
+    try {
+      const p = webUtils.getPathForFile(file);
+      if (p) return p;
+    } catch {
+      /* 非原生拖拽 File（如测试构造）：回退下面 */
+    }
+    return (file as any).path ?? '';
+  },
   // 图片粘贴落盘：渲染端把剪贴板里的图片读成 base64 传来，主进程写临时文件并返回绝对路径。
   saveImage: (data: string, ext: string): Promise<string | null> =>
     ipcRenderer.invoke('session:saveImage', { data, ext }),

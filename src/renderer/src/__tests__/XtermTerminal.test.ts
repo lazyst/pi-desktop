@@ -69,6 +69,8 @@ function makeApi() {
     onExit: vi.fn(),
     pickDirectory: vi.fn(),
     debug: vi.fn(),
+    // 拖拽文件解析绝对路径（测试里 File 带注入的 path 属性即返回绝对路径，否则空→跳过）。
+    getPathForFile: ((f: any) => (f && typeof f.path === 'string' ? f.path : '')) as any,
   } as unknown as PiApi;
 }
 
@@ -664,5 +666,134 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
       expect(arg).toBe('ls -la');
       expect(arg).not.toContain('[200~');
       t.unmount();
+    });
+  });
+
+  describe('拖拽文件到终端（转路径粘贴，对齐 VS Code 拖拽文件语义）', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    // 构造一个带 Electron 非标准 path 属性的 File（模拟从文件管理器拖入）。
+    function makeFile(name: string, path?: string, type = ''): File {
+      const f = new File(['x'], name, { type });
+      if (path !== undefined) Object.defineProperty(f, 'path', { value: path });
+      return f;
+    }
+
+    it('pasteDroppedFiles() 把单文件绝对路径直接粘贴', async () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      t.mount(mountHost());
+      await (t as any).pasteDroppedFiles([makeFile('a.txt', '/home/u/a.txt')]);
+      expect(paste).toHaveBeenCalledWith('/home/u/a.txt');
+      t.unmount();
+    });
+
+    it('pasteDroppedFiles() 多文件用空格拼接', async () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      t.mount(mountHost());
+      await (t as any).pasteDroppedFiles([makeFile('a.txt', '/p/a.txt'), makeFile('b.txt', '/p/b.txt')]);
+      expect(paste).toHaveBeenCalledWith('/p/a.txt /p/b.txt');
+      t.unmount();
+    });
+
+    it('pasteDroppedFiles() 路径含空格时双引号包裹（shell-safe）', async () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      t.mount(mountHost());
+      await (t as any).pasteDroppedFiles([makeFile('my file.txt', '/home/u/my file.txt')]);
+      expect(paste).toHaveBeenCalledWith('"/home/u/my file.txt"');
+      t.unmount();
+    });
+
+    it('pasteDroppedFiles() 图片也用原图绝对路径（不落临时文件）', async () => {
+      const api = makeApi();
+      const saveImage = vi.fn().mockResolvedValue('/tmp/fake.png');
+      (api as any).saveImage = saveImage;
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      t.mount(mountHost());
+      await (t as any).pasteDroppedFiles([makeFile('pic.png', '/home/u/pic.png', 'image/png')]);
+      expect(paste).toHaveBeenCalledWith('/home/u/pic.png');
+      expect(saveImage).not.toHaveBeenCalled(); // 拖入图片不走 saveImage（与 Ctrl+V 图片分支区分）
+      t.unmount();
+    });
+
+    it('pasteDroppedFiles() 拿不到绝对路径的文件被跳过（绝不插入裸文件名）', async () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      t.mount(mountHost());
+      // 不带 path 的 File：模拟 Electron 31+ 下 File.path 已移除、getPathForFile 也返回空。
+      await (t as any).pasteDroppedFiles([makeFile('unknown.txt')]);
+      expect(paste).not.toHaveBeenCalled(); // 绝不退化成 'unknown.txt' 裸文件名
+      t.unmount();
+    });
+
+    it('pasteDroppedFiles() 混合：有绝对路径的插入、无 path 的跳过', async () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      t.mount(mountHost());
+      await (t as any).pasteDroppedFiles([makeFile('a.txt', '/p/a.txt'), makeFile('b.txt')]);
+      expect(paste).toHaveBeenCalledWith('/p/a.txt'); // b.txt 无 path 被跳过
+      t.unmount();
+    });
+
+    it('bindDragAndDrop() dragover 含 Files 时 preventDefault 并设 dropEffect=copy', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      // jsdom 无 DataTransfer/DragEvent，用最小事件对象直接驱动内部 handler。
+      const dt: any = { types: ['Files'], dropEffect: '', dropEffectSetter: '' };
+      const ev: any = { preventDefault: () => { ev.defaultPrevented = true; }, dataTransfer: dt, defaultPrevented: false };
+      (t as any)._dragOverHandler(ev);
+      expect(ev.defaultPrevented).toBe(true);
+      expect(dt.dropEffect).toBe('copy');
+      t.unmount();
+    });
+
+    it('bindDragAndDrop() dragover 非文件类型不接管（放行 xterm 内部拖选）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const dt: any = { types: ['text/plain'], dropEffect: '' };
+      const ev: any = { preventDefault: () => { ev.defaultPrevented = true; }, dataTransfer: dt, defaultPrevented: false };
+      (t as any)._dragOverHandler(ev);
+      expect(ev.defaultPrevented).toBe(false);
+      t.unmount();
+    });
+
+    it('bindDragAndDrop() drop 含 Files 时把路径粘贴进终端', async () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const paste = vi.spyOn(t as any, 'pasteText').mockImplementation(() => {});
+      const dt: any = { types: ['Files'], files: [makeFile('a.txt', '/p/a.txt')] };
+      const ev: any = { preventDefault: () => { ev.defaultPrevented = true; }, dataTransfer: dt, defaultPrevented: false };
+      (t as any)._dropHandler(ev);
+      // 粘贴为异步（pasteDroppedFiles 是 async），等一拍
+      await new Promise((r) => setTimeout(r, 20));
+      expect(ev.defaultPrevented).toBe(true);
+      expect(paste).toHaveBeenCalledWith('/p/a.txt');
+      t.unmount();
+    });
+
+    it('unmount() 解绑 dragover / drop 监听', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      const host = mountHost();
+      t.mount(host);
+      expect((t as any)._dragOverHandler).toBeTypeOf('function');
+      expect((t as any)._dropHandler).toBeTypeOf('function');
+      const overSpy = vi.spyOn(host, 'removeEventListener');
+      t.unmount();
+      expect((t as any)._dragOverHandler).toBeNull();
+      expect((t as any)._dropHandler).toBeNull();
+      expect(overSpy).toHaveBeenCalledWith('dragover', expect.any(Function));
+      expect(overSpy).toHaveBeenCalledWith('drop', expect.any(Function));
     });
   });
