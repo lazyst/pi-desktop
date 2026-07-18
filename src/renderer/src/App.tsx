@@ -252,7 +252,7 @@ export default function App() {
       />
       <main className="main">
         <div className="header">
-          <span className="header-title">{active ? `${active.name} · ${active.cwd}` : '—'}</span>
+          <span className="header-title" title={active ? `${active.name} · ${active.cwd}` : undefined}>{active ? `${active.name} · ${active.cwd}` : '—'}</span>
           <span className={`header-status ${activeStatus === 'running' ? 'running' : ''}`}>
             {activeStatus === 'running' ? '● 运行中' : '空闲'}
           </span>

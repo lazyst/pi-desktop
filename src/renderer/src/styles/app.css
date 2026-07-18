@@ -239,10 +239,10 @@
   padding: 0 var(--sp-3);
   background: var(--bg-panel);
 }
-.header-title { font-weight: var(--fw-semibold); font-size: var(--fs-lg); }
-.header-status { font-size: var(--fs-xs); color: var(--text-muted); }
+.header-title { flex: 1 1 auto; font-weight: var(--fw-semibold); font-size: var(--fs-lg); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.header-status { flex: none; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
 .header-status.running { color: var(--success); }
-.header-error { margin-left: auto; font-size: var(--fs-xs); color: var(--danger); }
+.header-error { flex: none; margin-left: auto; font-size: var(--fs-xs); color: var(--danger); white-space: nowrap; }
 
 /* Terminal area + host */
 /* 留白放在 .terminal-area（xterm 外层），.terminal-host 保持零 padding、尺寸纯粹，

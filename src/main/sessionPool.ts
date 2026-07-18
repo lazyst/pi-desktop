@@ -90,7 +90,9 @@ export class SessionPool {
     const live = liveKey ? this.entries.get(liveKey) : undefined;
     if (live && live.info.status === 'running') return { ...live.info };
     const cwd = readSessionCwd(sessionFile) ?? decodeCwd(path.basename(path.dirname(sessionFile)));
-    const name = formatTimestamp(path.basename(sessionFile));
+    // 冷启动已有磁盘会话：用首条用户消息作为会话名（与 listFiles 一致），
+    // 解析失败再回退到文件名的时间戳，避免标题区只显示时间戳。
+    const name = readSessionName(sessionFile) ?? formatTimestamp(path.basename(sessionFile));
     return this.spawn(['--session', sessionFile], cwd, name, sessionFile, sessionFile);
   }
   openNew(cwd: string, name?: string, explicitKey?: string): SessionInfo {
