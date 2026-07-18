@@ -119,6 +119,11 @@ export class XtermTerminal {
   // 绑定在 host 上，卸载时解绑（见 unmount）。
   private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
+  // 拖拽文件落终端：dragover / drop 处理器（绑定在 host，卸载时解绑，见 unmount）。
+  // 拖入文件时把绝对路径转义拼接后粘贴（对齐 VS Code 拖拽文件语义）。
+  private _dragOverHandler: ((e: DragEvent) => void) | null = null;
+  private _dropHandler: ((e: DragEvent) => void) | null = null;
+
   // 最近一次计算出的 cols/rows，仅在真变时才通知 PTY（对齐 VS Code 整数比较、避免无谓 resize）。
   private _lastCols = 0;
   private _lastRows = 0;
@@ -180,6 +185,13 @@ export class XtermTerminal {
     // 键盘快捷键走 xterm attachCustomKeyEventHandler，term.dispose 时随实例清理；
     // 这里只清幂等标记，无需手动 removeEventListener（已不再绑 host）。
     this._keydownHandler = null;
+    // 拖拽监听绑在 host 上，需手动解绑（否则 host 复用/移除时泄漏）。
+    if (this.host && this._dragOverHandler && this._dropHandler) {
+      this.host.removeEventListener('dragover', this._dragOverHandler);
+      this.host.removeEventListener('drop', this._dropHandler as EventListener);
+    }
+    this._dragOverHandler = null;
+    this._dropHandler = null;
     try {
       this.term?.dispose();
     } catch {
@@ -270,6 +282,69 @@ export class XtermTerminal {
     if (!term || this.disposed || !text) return;
     const data = text.replace(/\r?\n/g, '\r');
     term.paste(data);
+  }
+
+  /**
+   * 绑定「拖文件到终端」交互（在 mount 时调用，绑定到 host DOM）。
+   *  - dragover 且 dataTransfer 含 Files：preventDefault + dropEffect='copy'（接管默认拖放，
+   *    避免浏览器把文件当导航/下载；非文件拖拽放行，保留终端内拖选）。
+   *  - drop 且含 Files：解析每个文件绝对路径（shell-safe 转义、空格拼接）后粘贴（复用 pasteText）。
+   * 对齐 VS Code 终端「拖拽文件到终端即插入路径」语义。卸载时由 unmount 解绑。
+   */
+  private bindDragAndDrop(host: HTMLElement): void {
+    if (this._dragOverHandler || this._dropHandler) return; // 幂等
+    const onDragOver = (e: DragEvent) => {
+      if (!e.dataTransfer) return;
+      // 仅当拖的是文件时才接管（types 含 'Files'）；文本/内部拖拽放行给 xterm。
+      if (Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+      e.preventDefault();
+      const files = Array.from(e.dataTransfer.files ?? []);
+      if (!files.length) return;
+      this.pasteDroppedFiles(files).catch(() => {});
+    };
+    this._dragOverHandler = onDragOver;
+    this._dropHandler = onDrop;
+    host.addEventListener('dragover', onDragOver);
+    host.addEventListener('drop', onDrop as EventListener);
+  }
+
+  /**
+   * 把拖入的文件列表转成可粘贴的路径串并粘贴（对齐 VS Code 拖拽文件语义）：
+   *  - 每个文件必须用【绝对路径】——经 pi.getPathForFile（Electron 31+ 官方 API，同步回绝对路径）
+   *    解析；兼容旧 Electron 的 File.path（若 getPathForFile 不可用）。
+   *  - 图片也直接用原图绝对路径（不经 saveImage 落临时文件，与 Ctrl+V 图片分支区分）；
+   *  - 拿不到绝对路径的文件直接跳过（绝不退化成相对/裸文件名，违背「都用绝对路径」的硬要求）；
+   *  - 路径含空格/特殊字符时用双引号包裹（shell-safe）；
+   *  - 多个文件用空格拼接，一次性粘贴。
+   */
+  private async pasteDroppedFiles(files: File[]): Promise<void> {
+    const parts: string[] = [];
+    for (const f of files) {
+      // 绝对路径来源（优先级：webUtils.getPathForFile > 旧版 File.path）。
+      let p: string | undefined;
+      try {
+        p = this.pi.getPathForFile?.(f);
+      } catch {
+        p = undefined;
+      }
+      if (!p && (f as any).path) p = (f as any).path as string;
+      if (typeof p === 'string' && p) parts.push(this._shellQuote(p));
+      // 拿不到绝对路径：跳过该文件（不插入裸文件名）。
+    }
+    const joined = parts.join(' ');
+    if (joined) this.pasteText(joined);
+  }
+
+  /** shell-safe 引用：路径含空格或 shell 元字符时用双引号包裹（引号本身转义）。
+   * 对齐 VS Code 拖拽文件时对路径的 shellQuoted 处理。 */
+  private _shellQuote(p: string): string {
+    return /\s|["'`$&|;<>()*?{}\\[\]]/.test(p) ? `"${p.replace(/"/g, '\\"')}"` : p;
   }
 
   /**
@@ -650,6 +725,9 @@ export class XtermTerminal {
 
     // 键盘快捷键：Ctrl/Cmd+V 粘贴、Ctrl/Cmd+Shift+C 复制、Ctrl/Cmd+A 全选（绑定到 host DOM）。
     this.bindKeyShortcuts(host);
+
+    // 拖拽文件到终端：拖入即插入绝对路径（对齐 VS Code 拖拽文件语义）。
+    this.bindDragAndDrop(host);
 
     this.doResize(true);
   }
