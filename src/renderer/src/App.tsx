@@ -11,7 +11,7 @@ import { defaultConfig } from '../../main/config';
 import type { SessionInfo, SessionStatus, AppConfig } from './types';
 
 interface OpenSession extends SessionInfo { key: string; cwd: string; name: string; status: SessionStatus; }
-interface DiskSession { key: string; cwd: string; name: string; time?: string; }
+interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
 
 function readPinned(cfg: AppConfig): string[] {
   const arr = cfg.pinnedDirs;
@@ -78,8 +78,15 @@ export default function App() {
     return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
   }, []);
 
-  // 侧边栏只渲染 disk 会话；live 会话只活在终端区，发消息写盘后才出现。
-  const sessions: DiskSession[] = disk;
+  // 侧边栏只渲染 disk 会话；live 会话默认只活在终端区，发消息写盘后才出现。
+  // 但用户希望“未晋升”的 live 会话也立刻显示在左侧栏（按 cwd 混进对应分组，
+  // 标 unsaved）。因此此处把尚未晋升的 live 会话也并入侧边栏数据源，
+  // 并排除已晋升（已在 liveToDisk 映射中）的 live，避免重复出现两条。
+  const promoted = liveToDisk;
+  const liveUnsaved: DiskSession[] = open
+    .filter((s) => !promoted[s.key])
+    .map((s) => ({ key: s.key, cwd: s.cwd, name: s.name, unsaved: true }));
+  const sessions: DiskSession[] = [...disk, ...liveUnsaved];
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
