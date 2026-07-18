@@ -28,13 +28,15 @@ describe('App', () => {
 
   it('batch delete: select sessions then confirm calls pi.deleteMany', async () => {
     const groups = [{ cwd: 'C:\\Users\\hcz\\project', sessions: [{ key: 'k1', name: 's1', time: 't' }, { key: 'k2', name: 's2', time: 't' }] }];
+    // 左侧栏只展示“添加目录”注册的目录下的会话，需把 cwd 纳入 addedDirs。
+    const cfgWithDir = { ...CONFIG, addedDirs: ['C:\\Users\\hcz\\project'] };
     const api = {
       listSessions: vi.fn().mockResolvedValue(groups),
       openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
       deleteMany: vi.fn(), clearDirectory: vi.fn(),
       input: vi.fn(), resize: vi.fn(),
       onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
+      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(cfgWithDir),
     };
     (window as any).pi = api;
     render(<App />);
@@ -63,13 +65,15 @@ describe('App', () => {
   it('clear directory: confirm calls pi.clearDirectory with the cwd', async () => {
     const cwd = 'C:\\Users\\hcz\\project';
     const groups = [{ cwd, sessions: [{ key: 'k1', name: 's1', time: 't' }] }];
+    // 左侧栏只展示“添加目录”注册的目录下的会话，需把 cwd 纳入 addedDirs。
+    const cfgWithDir = { ...CONFIG, addedDirs: [cwd] };
     const api = {
       listSessions: vi.fn().mockResolvedValue(groups),
       openSession: vi.fn(), terminate: vi.fn(), deleteSession: vi.fn(),
       deleteMany: vi.fn(), clearDirectory: vi.fn(),
       input: vi.fn(), resize: vi.fn(),
       onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onIndex: vi.fn(), onRelink: vi.fn(),
-      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(CONFIG),
+      pickDirectory: vi.fn(), debug: vi.fn(), getConfig: vi.fn().mockResolvedValue(cfgWithDir),
     };
     (window as any).pi = api;
     render(<App />);

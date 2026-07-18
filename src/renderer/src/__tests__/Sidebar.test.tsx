@@ -20,6 +20,7 @@ function renderSidebar(overrides: any = {}) {
   const onExitSelect = vi.fn();
   const onBatchDelete = vi.fn();
   const onToggleSelect = vi.fn();
+  const onRemoveDir = vi.fn();
   (window as any).pi = {
     listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
@@ -42,10 +43,27 @@ function renderSidebar(overrides: any = {}) {
       onEnterSelect={overrides.onEnterSelect ?? onEnterSelect}
       onExitSelect={overrides.onExitSelect ?? onExitSelect}
       onBatchDelete={overrides.onBatchDelete ?? onBatchDelete}
+      onRemoveDir={overrides.onRemoveDir ?? onRemoveDir}
+      addedDirs={overrides.addedDirs ?? []}
     />,
   );
-  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, ...utils };
+  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, onRemoveDir, ...utils };
 }
+
+it('group “移除目录” action calls onRemoveDir with that cwd', () => {
+  const { onRemoveDir } = renderSidebar();
+  fireEvent.click(screen.getByLabelText('移除目录 C:\\Users\\hcz\\project'));
+  expect(onRemoveDir).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
+});
+
+it('renders a group for an added directory even when it has no sessions', () => {
+  const { onOpen } = renderSidebar({ addedDirs: ['C:\\Users\\hcz\\empty-dir'] });
+  const title = screen.getByText(/C:\\Users\\hcz\\empty-dir/);
+  expect(title).toBeInTheDocument();
+  const newBtn = screen.getByLabelText('在 C:\\Users\\hcz\\empty-dir 新建会话');
+  fireEvent.click(newBtn);
+  expect(onOpen).toHaveBeenCalledWith({ cwd: 'C:\\Users\\hcz\\empty-dir' });
+});
 
 it('group “清空” action calls onClearDirectory with that cwd', () => {
   const { onClearDirectory } = renderSidebar();

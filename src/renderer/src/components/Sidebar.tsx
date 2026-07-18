@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, type MouseEvent } from 'react';
 import type { SessionStatus } from '../types';
-import { IconNewSession, IconPin, IconTrash } from './icons';
+import { IconNewSession, IconPin, IconTrash, IconRemoveDir } from './icons';
 import { ContextMenu } from './ContextMenu';
 import { clampSidebarWidth } from './sidebarGeometry';
 import { defaultConfig } from '../../../main/config';
@@ -14,6 +14,7 @@ interface Props {
   onOpen: (req: { key?: string; cwd?: string; name?: string }) => void;
   onTerminate: (key: string) => void;
   onPickDirectory: () => void;
+  onRemoveDir: (cwd: string) => void;
   onTogglePin: (cwd: string) => void;
   onDeleteSession: (key: string, name: string) => void;
   // 多选模式：整条侧边栏进入选择态，每条会话显示 checkbox，点击切换勾选。
@@ -31,11 +32,14 @@ interface Props {
   // （见 docs/adr/0001 决策④）。
   sidebarWidth?: number;
   onSidebarResize?: (w: number) => void;
+  // 用户“添加目录”显式注册的目录列表：即使该目录下暂无会话，也需在侧边栏
+  // 渲染出对应分组，保证“移除目录 / 新建会话 / 清空目录 / 置顶”等功能可用。
+  addedDirs?: string[];
 }
 
-export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, relink,
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
-  sidebarWidth, onSidebarResize }: Props) {
+  sidebarWidth, onSidebarResize, addedDirs }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -97,6 +101,12 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
     const pb = pinnedSet.has(b.cwd) ? pinned.indexOf(b.cwd) : Number.MAX_SAFE_INTEGER;
     return pa - pb;
   });
+  // 确保“添加目录”注册的每个目录都渲染出分组——即使该目录下暂无会话，
+  // 也需显示分组以使用“移除目录 / 新建会话 / 清空目录 / 置顶”等功能。
+  // 仅补充 sessions 中尚不存在的 cwd，避免重复分组。
+  for (const cwd of addedDirs ?? []) {
+    if (!cwdIndex.has(cwd)) groups.push({ cwd, items: [] });
+  }
 
   return (
     <>
@@ -146,6 +156,15 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     onClick={() => onOpen({ cwd: g.cwd })}
                   >
                     <IconNewSession />
+                  </button>
+                  <button
+                    className="icon-btn"
+                    title={`从侧边栏移除目录 ${g.cwd}（不会删除会话文件）`}
+                    aria-label={`移除目录 ${g.cwd}`}
+                    data-action="remove-directory"
+                    onClick={() => onRemoveDir(g.cwd)}
+                  >
+                    <IconRemoveDir />
                   </button>
                   <button
                     className="icon-btn"

@@ -47,4 +47,77 @@ describe('SettingsPanel', () => {
       expect(screen.getByText('最小化到托盘').getAttribute('aria-checked')).toBe('true'),
     );
   });
+
+  it('renders 常规 and 会话管理 navigation items', async () => {
+    const api = {
+      getConfig: vi.fn().mockResolvedValue(CONFIG),
+      setConfig: vi.fn().mockResolvedValue(undefined),
+      listSessions: vi.fn().mockResolvedValue([]),
+    };
+    (window as any).pi = api;
+    render(<SettingsPanel onClose={() => {}} />);
+    expect(screen.getByText('常规')).toBeInTheDocument();
+    expect(screen.getByText('会话管理')).toBeInTheDocument();
+  });
+
+  it('会话管理 opens and lists sessions grouped by cwd with delete actions', async () => {
+    const groups = [
+      { cwd: 'C:\\work\\a', sessions: [{ key: 'k1', name: 'alpha', time: '10:00' }] },
+      { cwd: 'C:\\work\\b', sessions: [{ key: 'k2', name: 'beta', time: '11:00' }] },
+    ];
+    const api = {
+      getConfig: vi.fn().mockResolvedValue(CONFIG),
+      setConfig: vi.fn().mockResolvedValue(undefined),
+      listSessions: vi.fn().mockResolvedValue(groups),
+      deleteSession: vi.fn().mockResolvedValue(undefined),
+    };
+    (window as any).pi = api;
+    render(<SettingsPanel onClose={() => {}} />);
+
+    fireEvent.click(screen.getByText('会话管理'));
+
+    // 分组标题与会话可见
+    expect(await screen.findByText('alpha')).toBeInTheDocument();
+    expect(screen.getByText('beta')).toBeInTheDocument();
+    expect(api.listSessions).toHaveBeenCalled();
+
+    // 单条删除：点击垃圾桶图标按钮后弹确认，确认调用 deleteSession
+    fireEvent.click(screen.getByText('alpha').closest('.session-item')!.querySelector('.session-delete')!);
+    const dialog = await screen.findByText('删除会话');
+    fireEvent.click(dialog.closest('.confirm-dialog')!.querySelector('.btn-danger')!);
+    await waitFor(() => expect(api.deleteSession).toHaveBeenCalledWith('k1'));
+  });
+
+  it('会话管理：目录默认折叠为 3 个并显示总数，可展开/收起', async () => {
+    const cwd = 'C:\\work\\many';
+    const sessions = Array.from({ length: 5 }, (_, i) => ({ key: `k${i}`, name: `sess-${i}`, time: '10:0' + i }));
+    const groups = [{ cwd, sessions }];
+    const api = {
+      getConfig: vi.fn().mockResolvedValue(CONFIG),
+      setConfig: vi.fn().mockResolvedValue(undefined),
+      listSessions: vi.fn().mockResolvedValue(groups),
+    };
+    (window as any).pi = api;
+    render(<SettingsPanel onClose={() => {}} />);
+
+    fireEvent.click(screen.getByText('会话管理'));
+
+    // 标题显示总数 （会话数：5）
+    const groupName = await screen.findByText(/C:\\work\\many/);
+    expect(groupName.textContent).toContain('（会话数：5）');
+
+    // 默认只显示前 3 个会话
+    expect(screen.getByText('sess-0')).toBeInTheDocument();
+    expect(screen.getByText('sess-1')).toBeInTheDocument();
+    expect(screen.getByText('sess-2')).toBeInTheDocument();
+    expect(screen.queryByText('sess-3')).toBeNull();
+
+    // 出现“展开 2 个”折叠开关
+    const expandBtn = screen.getByText('展开 2 个');
+    fireEvent.click(expandBtn);
+    // 展开后显示全部，并变为“收起”
+    expect(screen.getByText('sess-3')).toBeInTheDocument();
+    expect(screen.getByText('sess-4')).toBeInTheDocument();
+    expect(screen.getByText('收起')).toBeInTheDocument();
+  });
 });

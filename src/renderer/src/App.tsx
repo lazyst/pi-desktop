@@ -29,6 +29,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
   const [pinned, setPinned] = useState<string[]>([]);
+  const [addedDirs, setAddedDirs] = useState<string[]>([]);
   // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
@@ -72,7 +73,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
     return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
@@ -91,7 +92,13 @@ export default function App() {
   const liveUnsaved: DiskSession[] = open
     .filter((s) => isLiveKey(s.key) && !promoted[s.key])
     .map((s) => ({ key: s.key, cwd: s.cwd, name: s.name, unsaved: true }));
-  const sessions: DiskSession[] = [...disk, ...liveUnsaved];
+  // 左侧栏只展示用户“添加目录”显式注册的目录下的会话（含未升级的 live 会话）。
+  // 其余磁盘会话不再出现在左侧栏，只可在设置面板“会话管理”中查看与管理。
+  const addedSet = new Set(addedDirs);
+  const sessions: DiskSession[] = [
+    ...disk.filter((d) => addedSet.has(d.cwd)),
+    ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
+  ];
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
@@ -109,10 +116,25 @@ export default function App() {
     try {
       const dir = await pi.pickDirectory();
       if (!dir) return;
-      await handleOpen({ cwd: dir });
+      // “添加目录”：仅把目录注册进 addedDirs（持久化），左侧栏随即展示该目录下的会话；
+      // 不自动新建会话——若目录为空，左侧栏只显示该分组（无会话），由用户按需新建。
+      setAddedDirs((prev) => {
+        const next = prev.includes(dir) ? prev : [...prev, dir];
+        pi.setConfig({ addedDirs: next }).catch(() => {});
+        return next;
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
+  };
+
+  // 从侧边栏移除一个已添加目录：仅从 addedDirs 注销，不删除任何磁盘会话文件。
+  const handleRemoveDir = (cwd: string) => {
+    setAddedDirs((prev) => {
+      const next = prev.filter((c) => c !== cwd);
+      pi.setConfig({ addedDirs: next }).catch(() => {});
+      return next;
+    });
   };
 
   const handleTogglePin = (cwd: string) => {
@@ -202,6 +224,8 @@ export default function App() {
         onOpen={handleOpen}
         onTerminate={handleTerminate}
         onPickDirectory={handlePickDirectory}
+        onRemoveDir={handleRemoveDir}
+        addedDirs={addedDirs}
         onTogglePin={handleTogglePin}
         onDeleteSession={handleDeleteRequest}
         relink={liveToDisk}

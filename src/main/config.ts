@@ -5,6 +5,7 @@ export function defaultConfig(): AppConfig {
   return {
     theme: 'dark',
     pinnedDirs: [],
+    addedDirs: [],
     window: { maximized: false, bounds: { x: 0, y: 0, width: 1100, height: 720 } },
     sidebarWidth: 280,
     closeBehavior: 'minimize-to-tray',
