@@ -57,15 +57,73 @@ interface Props {
   root: string;
   path: string; // relative path within root
   onChange?: (content: string) => void;
+  /** 点击预览内相对链接时，在应用内切到目标文件（与文件树 onOpenFile 同语义）。
+   *  不传则相对链接退化为"系统默认程序打开"（经 pi.openExternal）。 */
+  onOpenFile?: (relPath: string, fileName: string, root: string) => void;
 }
 
-export function CodePreview({ root, path, onChange }: Props) {
+// 渲染 markdown 锚点：
+//  - 相对链接（./x.md、../y.md、x.md）→ 以当前文件所在目录为基准解析出目标
+//    relPath，在应用内切到该文件预览（onOpenFile）；未提供 onOpenFile 时退化为系统打开。
+//  - 绝对外链（http(s)/mailto）→ 经受控通道 pi.openExternal 用系统默认程序打开
+//    （will-navigate 兜底锁也会拦截，但此处显式拦截避免窗口闪烁/导航尝试）。
+//  - 其他（绝对 file://、奇怪协议）→ 一律经 pi.openExternal，绝不触发窗口导航。
+// 判定一个 href 是否为「绝对外部协议」（需走系统默认程序打开）。
+// 带协议scheme（http(s)/mailto/等）视为外部；file: 视为本地（不在此列，由 webview 隔离处理）。
+export function isExternalHref(href: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('file:');
+}
+
+// 以当前文件目录（相对 root）为基准，把 markdown 相对链接解析为相对 root 的目标路径。
+// 例：baseDir='docs'、href='./api.md' → 'docs/api.md'；href='../README.md' → 'docs/../README.md'。
+// 仅剥掉 ./ 前缀与多余分隔符；.. 回退不做字符串级 parent-walk，而是原样保留，
+// 交给主进程 fsBridge 用 nodePath.resolve + 越界校验做权威解析。
+export function resolveRelativeLink(baseDir: string, href: string): string {
+  const cleanBase = baseDir.replace(/[\\/]+$/, '');
+  const cleanHref = href.replace(/^[\\/]+/, '').replace(/^\.\//, '');
+  return cleanBase ? `${cleanBase}/${cleanHref}` : cleanHref;
+}
+
+function makeLinkRenderer(onOpenFile?: Props['onOpenFile'], baseDir = '', root = '') {
+  return function LinkRenderer(props: { href?: string; children?: React.ReactNode }) {
+    const { href, children, ...rest } = props as any;
+    const handleClick = (e: React.MouseEvent) => {
+      if (!href) return;
+      if (isExternalHref(href)) {
+        e.preventDefault();
+        void pi.openExternal(href);
+        return;
+      }
+      // 相对路径：以当前文件目录为基准解析出相对 root 的目标 relPath。
+      const target = baseDir ? `${baseDir.replace(/[\\/]+$/, '')}/${href.replace(/^[\\/]+/, '')}` : href;
+      const name = target.split(/[\\/]/).pop() ?? target;
+      e.preventDefault();
+      if (onOpenFile) onOpenFile(target, name, root);
+      else void pi.openExternal(href);
+    };
+    const external = isExternalHref(href);
+    return (
+      <a
+        href={href}
+        onClick={handleClick}
+        {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+        {...rest}
+      >
+        {children}
+      </a>
+    );
+  };
+}
+
+export function CodePreview({ root, path, onChange, onOpenFile }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const themeCompartment = useRef(new Compartment());
   const langCompartment = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // 当前文件的目录（相对 root），用于解析 markdown 相对链接的基准。
+  const baseDir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
 
   const [language, setLanguage] = useState('');
   const [content, setContent] = useState('');
@@ -192,6 +250,7 @@ export function CodePreview({ root, path, onChange }: Props) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema], [rehypeKatex, { throwOnError: false, strict: false }]]}
+            components={{ a: makeLinkRenderer(onOpenFile, baseDir, root) as any }}
           >
             {content}
           </ReactMarkdown>

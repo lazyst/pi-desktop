@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain, shell } from 'electron';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -240,7 +240,42 @@ function createWindow() {
       else win.webContents.openDevTools();
     }
   });
+
+  // ── 链接跳转纵深防御（见 grilling 会话结论）──
+  // 应用内渲染层未来可能渲染可点击外部链接（文档/设置/预览）。Electron 默认对
+  // <a target="_blank"> / window.open 在新版 Chromium 下仅静默 block，且 will-navigate
+  // 不拦截时恶意/意外链接可把整个 BrowserWindow 带离本地上下文。故在此做双重锁：
+  //  1) setWindowOpenHandler 一律 deny——应用内不需要弹新窗口。
+  //  2) will-navigate 只放行应用自身来源（生产 loadFile 的 file://、开发 Vite 的
+  //     http://localhost HMR）；其余 URL 一律拦截并甩给系统默认程序（shell.openExternal）。
+  // 注意：本项目未注册自定义 app:// 协议，生产以 file:// 加载，故放行集为 file:// + 本地 dev。
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e, url) => {
+    const allowed =
+      url.startsWith('file://') || // 生产 loadFile / 本地文件系统
+      /^https?:\/\/localhost(:\d+)?\//.test(url); // 开发 Vite dev server（HMR）
+    if (!allowed) {
+      e.preventDefault();
+      shell.openExternal(url).catch(() => {});
+    }
+  });
+
   const pool = createPool(win);
+
+  // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
+  // 主进程集中校验协议白名单（仅放行 http(s) 与 mailto:），其余一律拒绝——
+  // file:// 不走此通道，永远由 PdfPreview 的隔离 <webview> + fsBridge bounds-check 处理，
+  // 以免绕过路径越界保护。自用工具，不打扰确认，直接开。
+  ipcMain.handle('app:openExternal', (_e, url: string): boolean => {
+    if (typeof url !== 'string' || !url) return false;
+    let u: URL;
+    try { u = new URL(url); } catch { return false; }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
+      return false;
+    }
+    shell.openExternal(url).catch(() => {});
+    return true;
+  });
 
   // 记住窗口几何与最大化状态（见 docs/adr/0001 决策②）：maximize / unmaximize /
   // resize / move 实时（防抖 200ms）回写 config.window。用 getNormalBounds() 取非

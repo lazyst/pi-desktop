@@ -325,7 +325,7 @@ export default function App() {
       )}
       <WindowResizeZones />
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
-      <FileDrawer file={drawerFile} onClose={() => setDrawerFile(null)} />
+      <FileDrawer file={drawerFile} onClose={() => setDrawerFile(null)} onOpenFile={handleOpenFile} />
     </div>
     </div>
   );

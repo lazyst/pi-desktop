@@ -48,6 +48,9 @@ export interface PiApi {
   gitDiff(cwd: string, ref?: string): Promise<string>;
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone(): void;
+  // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。
+  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（见 PdfPreview）。
+  openExternal(url: string): Promise<boolean>;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at
