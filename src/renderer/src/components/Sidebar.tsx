@@ -5,7 +5,7 @@ import { ContextMenu } from './ContextMenu';
 import { clampSidebarWidth } from './sidebarGeometry';
 import { defaultConfig } from '../../../main/config';
 
-interface Session { key: string; cwd: string; name: string; time?: string; }
+interface Session { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
 interface Props {
   sessions: Session[];
   statusMap: Record<string, SessionStatus>;
@@ -167,13 +167,15 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                 const canTerminate = running || statusMap[s.key] === undefined;
                 const isActive = s.key === effectiveActive;
                 const selected = !!selectedKeys?.has(s.key);
+                // 未晋升（live 未落盘）会话：无文件可删，仅允许终止；因此不显示右键删除菜单。
+                const isUnsaved = !!s.unsaved;
                 // 多选模式下：整条变为可勾选行，点击切换选中，不再打开终端面板。
                 if (selectionMode) {
                   return (
                     <div
                       key={s.key}
                       data-key={s.key}
-                      className={`session-item selectable${selected ? ' selected' : ''}`}
+                      className={`session-item selectable${selected ? ' selected' : ''}${isUnsaved ? ' unsaved' : ''}`}
                       tabIndex={0}
                       aria-label={`选择会话 ${s.name}`}
                       aria-pressed={selected}
@@ -194,7 +196,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                         onChange={() => onToggleSelect?.(s.key)}
                       />
                       <span className="session-name">
-                        <div className="name">{s.name}</div>
+                        <div className="name">{s.name}{isUnsaved && <span className="unsaved-badge">未保存</span>}</div>
                         {s.time && <div className="time">{s.time}</div>}
                       </span>
                     </div>
@@ -204,7 +206,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   <div
                     key={s.key}
                     data-key={s.key}
-                    className={`session-item${isActive ? ' active' : ''}`}
+                    className={`session-item${isActive ? ' active' : ''}${isUnsaved ? ' unsaved' : ''}`}
                     tabIndex={0}
                     aria-label={`打开会话 ${s.name}`}
                     onClick={() => onOpen({ key: s.key })}
@@ -215,13 +217,15 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                       }
                     }}
                     onContextMenu={(e) => {
+                      // 未晋升会话无磁盘文件，禁止“删除会话”（只有终止），故不弹右键菜单。
+                      if (isUnsaved) return;
                       e.preventDefault();
                       setMenu({ key: s.key, name: s.name, x: e.clientX, y: e.clientY });
                     }}
                   >
                     <span className={`dot ${running ? 'running' : ''}`} />
                     <span className="session-name">
-                      <div className="name">{s.name}</div>
+                      <div className="name">{s.name}{isUnsaved && <span className="unsaved-badge">未保存</span>}</div>
                       {s.time && <div className="time">{s.time}</div>}
                     </span>
                     {canTerminate && (

@@ -151,4 +151,34 @@ describe('Sidebar', () => {
     fireEvent.click(menuItem);
     expect(onDeleteSession).toHaveBeenCalledWith('k1', 'e2e-session');
   });
+
+  it('unsaved (live, not yet promoted) session shows 未保存 badge and .unsaved class', async () => {
+    renderSidebar({
+      sessions: [
+        { key: 'live-1', cwd: 'C:\\Users\\hcz\\live-dir', name: 'new-session', unsaved: true },
+      ],
+      statusMap: { 'live-1': 'running' },
+    });
+    const item = screen.getByText('new-session').closest('.session-item')!;
+    expect(item).toHaveClass('unsaved');
+    expect(item.querySelector('.unsaved-badge')).toHaveTextContent('未保存');
+    // 仍按 cwd 分组显示
+    expect(screen.getByText(/C:\\Users\\hcz\\live-dir/)).toBeInTheDocument();
+  });
+
+  it('unsaved session has no right-click 删除会话 menu (only terminate allowed)', async () => {
+    const { onDeleteSession } = renderSidebar({
+      sessions: [
+        { key: 'live-1', cwd: 'C:\\Users\\hcz\\live-dir', name: 'new-session', unsaved: true },
+      ],
+      statusMap: { 'live-1': 'running' },
+    });
+    const item = screen.getByText('new-session').closest('.session-item')!;
+    fireEvent.contextMenu(item);
+    // 右键菜单被抑制：不出现“删除会话”，且未调用删除回调
+    expect(screen.queryByText('删除会话')).toBeNull();
+    expect(onDeleteSession).not.toHaveBeenCalled();
+    // 终止按钮仍然可用
+    expect(item.querySelector('.terminate')).toBeInTheDocument();
+  });
 });

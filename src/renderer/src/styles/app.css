@@ -198,6 +198,27 @@
 .session-item:hover .terminate,
 .session-item:focus-within .terminate { display: inline-flex; }
 
+/* Unsaved (live, not yet promoted) session */
+.session-item.unsaved {
+  opacity: 0.82;
+  border-left: 2px dashed var(--text-faint);
+  font-style: italic;
+}
+.session-item.unsaved:hover { background: var(--bg-hover); }
+.unsaved-badge {
+  display: inline-block;
+  margin-left: var(--sp-1);
+  padding: 0 var(--sp-1);
+  font-size: var(--fs-xs);
+  font-style: normal;
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  vertical-align: middle;
+}
+
 /* Group expand toggle */
 .group-expand {
   padding: var(--sp-1) var(--sp-3) var(--sp-1) var(--sp-4);
