@@ -37,6 +37,8 @@ export interface PiApi {
   getInitialConfig(): AppConfig | null; // 窗口创建时经 additionalArguments 同步注入，首屏零闪烁
   getConfig(): Promise<AppConfig>;
   setConfig(partial: Partial<AppConfig>): Promise<void>;
+  // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
+  splashDone(): void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at

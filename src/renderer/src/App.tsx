@@ -76,6 +76,17 @@ export default function App() {
     pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
+    // 启动动画：首屏（App 挂载）即视为就绪（见 docs/adr/0003 决策⑤a）。
+    // 下一帧给 #splash 加 .splash--hidden 触发 CSS 淡出，并通知主进程 show() 窗口。
+    // 用 rAF 确保过渡生效（避免同帧加 class 被合并为无过渡）；reduced-motion 下 CSS
+    // 已禁用过渡，故等同于直接隐藏。window.pi 缺失（测试）时安全跳过。
+    requestAnimationFrame(() => {
+      const splash = document.getElementById('splash');
+      if (splash) splash.classList.add('splash--hidden');
+      pi.splashDone?.();
+      // 淡出结束后从 DOM 移除，避免遮挡后续交互（pointer-events 已在 CSS 置 none）。
+      setTimeout(() => splash?.remove(), 400);
+    });
     return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
   }, []);
 

@@ -6,9 +6,54 @@
     <title>Pi Desktop</title>
     <style>
       html, body, #root { height: 100%; margin: 0; }
+      /* 启动动画 splash：纯静态 HTML/CSS，浏览器解析即渲染，无需等待 React 挂载
+         （见 docs/adr/0003）。splash:done 后由 renderer 切 .splash--hidden 淡出；
+         prefers-reduced-motion 下直接隐藏，不播动画（复用全局无障碍规则）。 */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        background: var(--bg-app, #0d1117);
+        color: var(--text, #c9d1d9);
+        transition: opacity 360ms ease;
+        opacity: 1;
+      }
+      #splash.splash--hidden { opacity: 0; pointer-events: none; }
+      #splash .splash-logo {
+        font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 48px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--accent, #7c9cff);
+        line-height: 1;
+      }
+      #splash .splash-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--accent, #7c9cff);
+        animation: splash-pulse 1.1s ease-in-out infinite;
+      }
+      @keyframes splash-pulse {
+        0%, 100% { opacity: 0.25; transform: scale(0.8); }
+        50% { opacity: 1; transform: scale(1.15); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash { transition: none; }
+        #splash .splash-dot { animation: none; }
+      }
     </style>
   </head>
   <body>
+    <div id="splash">
+      <div class="splash-logo">π</div>
+      <div class="splash-dot"></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

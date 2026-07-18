@@ -84,4 +84,6 @@ contextBridge.exposeInMainWorld('pi', {
   getInitialConfig: (): AppConfig | null => initialConfig,
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
   setConfig: (partial: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:set', partial),
+  // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
+  splashDone: () => ipcRenderer.send('splash:done'),
 });
