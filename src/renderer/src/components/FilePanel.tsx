@@ -37,6 +37,15 @@ export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }:
       setRoot(activeCwd);
     }
   }, [activeCwd]);
+
+  // 自修复：addedDirs / activeCwd 是异步到达的（App 经 getConfig 填充）。
+  // FilePanel 首次挂载时它们可能为空，root 初始为 ''，之后 addedDirs 到了但
+  // useState 初始值不会自动更新、activeCwd 又一直为 null → root 永久卡在 ''，
+  // 导致文件树永远空、点击无反应。故当 root 为空或已不在 candidates 中时，
+  // 自动回落到第一个候选目录（除非用户已手动选择过某个有效目录）。
+  const effectiveRoot = candidates.length > 0 && (!root || !candidates.includes(root))
+    ? candidates[0]
+    : root;
   const onPickRoot = (r: string) => {
     overrideRef.current = true;
     setRoot(r);
@@ -92,7 +101,7 @@ export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }:
         {!empty && (
           <select
             className="fp-root-select"
-            value={root}
+            value={effectiveRoot}
             onChange={(e) => onPickRoot(e.target.value)}
             title="根目录"
           >
@@ -109,9 +118,9 @@ export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }:
             先用 <b>+目录</b> 添加工作目录，即可浏览文件与 Git 状态。
           </div>
         ) : tab === 'files' ? (
-          <FileTree root={root} onOpenFile={onOpenFile} />
+          <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
         ) : (
-          <GitView cwd={root} />
+          <GitView cwd={effectiveRoot} />
         )}
       </div>
 
