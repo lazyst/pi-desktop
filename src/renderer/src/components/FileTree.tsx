@@ -5,6 +5,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getFileIcon, FolderIcon } from './FileIcons';
 import { pi } from '../ipc';
+import * as nodePath from 'node:path';
+
+// 文件树 → 终端拖拽使用的自定义 MIME（区别于系统文件管理器的 'Files'）。
+// XtermTerminal.bindDragAndDrop 同时识别该类型，实现「从内部文件树拖文件到终端即插入绝对路径」。
+export const PI_FILE_DRAG_MIME = 'application/x-pi-file';
+
+/** 由 root + 相对路径算出绝对路径（跨平台分隔符 + . / .. 归一化）。 */
+function toAbsolutePath(root: string, relPath: string): string {
+  try {
+    return nodePath.resolve(root, relPath);
+  } catch {
+    // 极端情况兜底：直接拼接（Electron 渲染进程 node:path 几乎不会抛）。
+    return relPath ? `${root}/${relPath}` : root;
+  }
+}
 
 interface FileNode {
   name: string;
@@ -88,11 +103,23 @@ function TreeNode({
     }
   }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded, root]);
 
+  // 拖拽整行到终端：写入绝对路径到自定义 MIME（终端侧识别并粘贴为路径）。
+  // 文件与文件夹都支持（文件夹拖入即目录路径）。
+  const handleDragStart = useCallback((e: React.DragEvent) => {
+    if (!e.dataTransfer) return;
+    const abs = toAbsolutePath(root, node.fullPath);
+    e.dataTransfer.setData(PI_FILE_DRAG_MIME, abs);
+    e.dataTransfer.setData('text/plain', abs);
+    e.dataTransfer.effectAllowed = 'copy';
+  }, [root, node.fullPath]);
+
   return (
     <div>
       <div
         className="file-row"
+        draggable
         onClick={handleClick}
+        onDragStart={handleDragStart}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{ paddingLeft: 8 + depth * 14 }}
