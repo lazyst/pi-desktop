@@ -8,6 +8,9 @@ import { clampFilePanelWidth } from './sidebarGeometry';
 
 type Tab = 'files' | 'git';
 
+// 下拉框中“自动（跟随会话）”选项的特殊 value，不与任何真实目录冲突。
+const AUTO_ROOT = '__auto__';
+
 interface Props {
   addedDirs: string[];
   activeCwd: string | null;
@@ -19,36 +22,49 @@ interface Props {
 
 export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }: Props) {
   const [tab, setTab] = useState<Tab>('files');
-  // Root directory: default to the active session's cwd, otherwise the first
-  // added dir. User can override via the dropdown.
+  // Root directory: default to the active session's cwd; otherwise empty
+  // (file tree shows “未选择工作目录”). User can still pick an added dir via
+  // the dropdown.
   const candidates = useMemo(() => {
     const set = new Set<string>(addedDirs);
     if (activeCwd) set.add(activeCwd);
     return Array.from(set);
   }, [addedDirs, activeCwd]);
 
-  const [root, setRoot] = useState<string>(activeCwd ?? addedDirs[0] ?? '');
+  const [root, setRoot] = useState<string>(activeCwd ?? '');
 
-  // Follow the active session: when no explicit override has been made, keep
-  // root in sync with the active session's cwd.
-  const overrideRef = useRef(false);
+  // 根目录是否处于“自动跟随活动会话”模式。用户手动从下拉框选了一个具体目录后
+  // 切为 false（手动优先，不被 activeCwd 抢回）；选“自动（跟随会话）”选项后切回 true。
+  // 用 state 而非 ref，使下拉框能正确高亮当前所处的模式。
+  const [isAuto, setIsAuto] = useState(true);
   useEffect(() => {
-    if (!overrideRef.current && activeCwd) {
+    if (isAuto && activeCwd) {
       setRoot(activeCwd);
     }
-  }, [activeCwd]);
+  }, [activeCwd, isAuto]);
 
   // 自修复：addedDirs / activeCwd 是异步到达的（App 经 getConfig 填充）。
-  // FilePanel 首次挂载时它们可能为空，root 初始为 ''，之后 addedDirs 到了但
-  // useState 初始值不会自动更新、activeCwd 又一直为 null → root 永久卡在 ''，
-  // 导致文件树永远空、点击无反应。故当 root 为空或已不在 candidates 中时，
-  // 自动回落到第一个候选目录（除非用户已手动选择过某个有效目录）。
-  const effectiveRoot = candidates.length > 0 && (!root || !candidates.includes(root))
-    ? candidates[0]
-    : root;
+  // FilePanel 首次挂载时它们可能为空，root 初始为 ''，之后 activeCwd 异步到达后
+  // 上方的 effect 会把它同步进 root。但当 root 已空或已不在 candidates 中、且
+  // 用户未手动选择过具体目录（仍为自动模式）时，仅在「存在 activeCwd（已打开会话）」
+  // 的前提下把 root 回落到该会话 cwd；若既无 activeCwd、也非手动模式，则保持空
+  // （文件树显示“未选择工作目录”），不再默认回落到 addedDirs[0]（见产品逻辑调整：
+  // 启动未打开会话时文件树应为空）。
+  const effectiveRoot = isAuto
+    ? (activeCwd ? candidates.find((c) => c === activeCwd) ?? activeCwd : '')
+    : (root && candidates.includes(root) ? root : '');
+  // 下拉框当前选中的值：自动模式用特殊标记 __auto__，手动模式用具体目录。
+  const selectValue = isAuto ? AUTO_ROOT : effectiveRoot;
   const onPickRoot = (r: string) => {
-    overrideRef.current = true;
-    setRoot(r);
+    if (r === AUTO_ROOT) {
+      // 恢复自动跟随活动会话
+      setIsAuto(true);
+      setRoot(activeCwd ?? '');
+    } else {
+      // 手动选定具体目录，之后不再被 activeCwd 抢回
+      setIsAuto(false);
+      setRoot(r);
+    }
   };
 
   const empty = candidates.length === 0;
@@ -101,10 +117,11 @@ export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }:
         {!empty && (
           <select
             className="fp-root-select"
-            value={effectiveRoot}
+            value={selectValue}
             onChange={(e) => onPickRoot(e.target.value)}
             title="根目录"
           >
+            <option value={AUTO_ROOT}>（自动 · 跟随会话）</option>
             {candidates.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
