@@ -83,8 +83,13 @@ export default function App() {
   // 标 unsaved）。因此此处把尚未晋升的 live 会话也并入侧边栏数据源，
   // 并排除已晋升（已在 liveToDisk 映射中）的 live，避免重复出现两条。
   const promoted = liveToDisk;
+  // 真正的“未晋升”会话 key 必为 live-<uuid> 前缀。磁盘 key 本身（如打开
+  // 已有会话时返回的 .jsonl 路径）虽会进入 open，但不是 live key，也永远
+  // 不会出现在 liveToDisk 映射里——若只用 !promoted[key] 判定，会把已存在
+  // 的磁盘会话误当成“未保存”的 live 会话重复显示并打上“未保存”徽标（见修复）。
+  const isLiveKey = (k: string) => k.startsWith('live-');
   const liveUnsaved: DiskSession[] = open
-    .filter((s) => !promoted[s.key])
+    .filter((s) => isLiveKey(s.key) && !promoted[s.key])
     .map((s) => ({ key: s.key, cwd: s.cwd, name: s.name, unsaved: true }));
   const sessions: DiskSession[] = [...disk, ...liveUnsaved];
 
