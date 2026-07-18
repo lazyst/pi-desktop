@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld('pi', {
   resize: (key: string, cols: number, rows: number) => ipcRenderer.send('session:resize', { key, cols, rows }),
   debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('session:pickDirectory'),
+  // 图片粘贴落盘：渲染端把剪贴板里的图片读成 base64 传来，主进程写临时文件并返回绝对路径。
+  saveImage: (data: string, ext: string): Promise<string | null> =>
+    ipcRenderer.invoke('session:saveImage', { data, ext }),
   onData: (cb: (key: string, data: string) => void) => {
     const handler = (_e: unknown, m: { key: string; data: string }) => cb(m.key, m.data);
     ipcRenderer.on('session:data', handler);

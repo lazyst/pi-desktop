@@ -2,6 +2,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, dialog, ipcMain } from 'el
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
@@ -268,6 +269,26 @@ function createWindow() {
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
+  });
+
+  // 图片粘贴落盘：渲染端把系统剪贴板里的图片读成 base64 后传来，主进程写到系统临时目录，
+  // 返回绝对路径。前端再把该路径当文本粘贴进终端（模拟 VS Code「拖拽文件到终端」的 sendPath
+  // 行为——终端本身不渲染图片数据，只接收文件路径）。文件名带 uuid 防碰撞，扩展名取传入的 ext。
+  ipcMain.handle('session:saveImage', (_e, payload: { data: string; ext: string }) => {
+    try {
+      if (!payload || typeof payload.data !== 'string' || !payload.data) return null;
+      const ext = (payload.ext || 'png').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'png';
+      const tmpDir = app.getPath('temp');
+      const name = `pi-paste-${crypto.randomUUID()}.${ext}`;
+      const filePath = path.join(tmpDir, name);
+      // payload.data 是 base64（不含 data: 前缀）；用 base64 解码写盘，避免 atob 的 Latin1 陷阱。
+      const buf = Buffer.from(payload.data, 'base64');
+      fs.writeFileSync(filePath, buf);
+      return filePath;
+    } catch (err) {
+      console.error('[session:saveImage] failed:', err);
+      return null;
+    }
   });
 
   // 会话写盘（用户发首条消息后 pi 写出 .jsonl）即视为"晋升"，推送最新索引给渲染进程。

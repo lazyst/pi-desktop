@@ -456,3 +456,213 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 });
+
+  // —— 编辑快捷键：粘贴 / 复制 / 全选（对齐 VS Code 基础编辑交互）——
+  describe('编辑快捷键（粘贴 / 复制 / 全选）', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('pasteText() 粘贴文本并归一化换行', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const paste = vi.spyOn((t as any).term, 'paste').mockImplementation(() => {});
+      t.pasteText('hello\nworld');
+      expect(paste).toHaveBeenCalledWith('hello\rworld');
+      t.unmount();
+    });
+
+    it('pasteText() 粘贴纯文本（不手动包裹 bracketed 序列，由 xterm 内部处理）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      // 即便模拟 bracketed 模式开启，pasteText 也必须原样传纯文本给 term.paste，
+      // 不能自己拼接 \x1b[200~/\x1b[201~（否则会被 PTY 当字面量打印出 [200~）。
+      Object.defineProperty((t as any).term, 'modes', {
+        configurable: true,
+        value: { bracketedPasteMode: true },
+      });
+      const paste = vi.spyOn((t as any).term, 'paste').mockImplementation(() => {});
+      t.pasteText('ls');
+      expect(paste).toHaveBeenCalledWith('ls');
+      t.unmount();
+    });
+
+    it('copySelection() 把选区写入系统剪贴板', async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const term = (t as any).term;
+      vi.spyOn(term, 'hasSelection').mockReturnValue(true);
+      vi.spyOn(term, 'getSelection').mockReturnValue('selected text');
+      t.copySelection();
+      expect(writeText).toHaveBeenCalledWith('selected text');
+      t.unmount();
+    });
+
+    it('copySelection() 无选区时不写入剪贴板', () => {
+      const writeText = vi.fn();
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      vi.spyOn((t as any).term, 'hasSelection').mockReturnValue(false);
+      t.copySelection();
+      expect(writeText).not.toHaveBeenCalled();
+      t.unmount();
+    });
+
+    it('selectAll() 聚焦并全选', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const term = (t as any).term;
+      const focus = vi.spyOn(term, 'focus').mockImplementation(() => {});
+      const selectAll = vi.spyOn(term, 'selectAll').mockImplementation(() => {});
+      t.selectAll();
+      expect(focus).toHaveBeenCalled();
+      expect(selectAll).toHaveBeenCalled();
+      t.unmount();
+    });
+
+    it('clearSelection() 清空选区', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const clear = vi.spyOn((t as any).term, 'clearSelection').mockImplementation(() => {});
+      t.clearSelection();
+      expect(clear).toHaveBeenCalled();
+      t.unmount();
+    });
+
+    it('pasteFromClipboard() 剪贴板含图片时落临时文件并粘贴路径', async () => {
+      const fakePath = '/tmp/pi-paste-xxxx.png';
+      const api = makeApi() as any;
+      api.saveImage = vi.fn().mockResolvedValue(fakePath);
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const paste = vi.spyOn((t as any).term, 'paste').mockImplementation(() => {});
+      // ClipboardItem + blob
+      const read = vi.fn().mockResolvedValue([
+        { types: ['image/png'], getType: vi.fn().mockResolvedValue(new Blob(['x'], { type: 'image/png' })) },
+      ]);
+      const fakeClipboard = {
+        read,
+        readText: vi.fn(),
+      };
+      vi.stubGlobal('navigator', { clipboard: fakeClipboard });
+      // FileReader 在 jsdom 可用，readAsDataURL 会把 blob 转 base64
+      await t.pasteFromClipboard();
+      await new Promise((r) => setTimeout(r, 20));
+      expect(api.saveImage).toHaveBeenCalled();
+      expect(paste).toHaveBeenCalledWith(fakePath);
+      t.unmount();
+    });
+
+    it('mount() 注册快捷键拦截器（attachCustomKeyEventHandler）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      expect((t as any)._keydownHandler).toBeTypeOf('function');
+      expect((t as any)._customKeyHandler).toBeTypeOf('function');
+      t.unmount();
+    });
+
+    it('拦截器命中 Ctrl+V 时返回 false（阻止 xterm 把 Ctrl+V 当 \x16 输入）并触发粘贴', async () => {
+      const readText = vi.fn().mockResolvedValue('clipboard-text');
+      vi.stubGlobal('navigator', { clipboard: { readText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const term = (t as any).term as Terminal;
+      const paste = vi.spyOn(term, 'paste').mockImplementation(() => {});
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      const ret = handler(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true }));
+      expect(ret).toBe(false); // 拦截，阻止默认输入
+      await new Promise((r) => setTimeout(r, 20));
+      expect(paste).toHaveBeenCalledWith('clipboard-text');
+      t.unmount();
+    });
+
+    it('拦截器命中 Ctrl+Shift+C 时返回 false 并复制选区', () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal('navigator', { clipboard: { writeText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const term = (t as any).term as Terminal;
+      vi.spyOn(term, 'hasSelection').mockReturnValue(true);
+      vi.spyOn(term, 'getSelection').mockReturnValue('sel');
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      const ret = handler(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, shiftKey: true }));
+      expect(ret).toBe(false);
+      expect(writeText).toHaveBeenCalledWith('sel');
+      t.unmount();
+    });
+
+    it('普通按键（非 Ctrl 组合）拦截器返回 true，不拦截', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      const handler = (t as any)._customKeyHandler as (e: KeyboardEvent) => boolean;
+      expect(handler(new KeyboardEvent('keydown', { key: 'a' }))).toBe(true);
+      t.unmount();
+    });
+
+    it('unmount() 清理快捷键幂等标记', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      expect((t as any)._keydownHandler).toBeTypeOf('function');
+      t.unmount();
+      expect((t as any)._keydownHandler).toBeNull();
+    });
+  });
+
+  describe('粘贴回归（防 [200~ 字面量泄漏）', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('pasteFromClipboard() 即便 bracketed paste 模式开启，发给 term.paste 的也只是纯文本', async () => {
+      const readText = vi.fn().mockResolvedValue('echo hello');
+      vi.stubGlobal('navigator', { clipboard: { readText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      // 模拟 PTY 已开启 bracketed paste 模式
+      Object.defineProperty((t as any).term, 'modes', {
+        configurable: true,
+        value: { bracketedPasteMode: true },
+      });
+      const paste = vi.spyOn((t as any).term, 'paste').mockImplementation(() => {});
+      await t.pasteFromClipboard();
+      await new Promise((r) => setTimeout(r, 20));
+      const arg = paste.mock.calls[0]?.[0] as string;
+      expect(arg).toBe('echo hello');
+      expect(arg).not.toContain('\x1b[200~');
+      expect(arg).not.toContain('[200~');
+      t.unmount();
+    });
+
+    it('handleContextMenu() 无选区时粘贴，PTY 不会收到 [200~ 字面量', async () => {
+      const readText = vi.fn().mockResolvedValue('ls -la');
+      vi.stubGlobal('navigator', { clipboard: { readText } });
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      t.mount(mountHost());
+      Object.defineProperty((t as any).term, 'modes', {
+        configurable: true,
+        value: { bracketedPasteMode: true },
+      });
+      vi.spyOn((t as any).term, 'hasSelection').mockReturnValue(false);
+      const paste = vi.spyOn((t as any).term, 'paste').mockImplementation(() => {});
+      t.handleContextMenu({ preventDefault: () => {} });
+      await new Promise((r) => setTimeout(r, 20));
+      const arg = paste.mock.calls[0]?.[0] as string;
+      expect(arg).toBe('ls -la');
+      expect(arg).not.toContain('[200~');
+      t.unmount();
+    });
+  });
