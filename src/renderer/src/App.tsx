@@ -7,7 +7,6 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
 import { FilePanel } from './components/FilePanel';
 import { FileDrawer, type DrawerFile } from './components/FileDrawer';
-import * as nodePath from 'node:path';
 import { pi } from './ipc';
 import { initTheme } from './theme';
 import { defaultConfig } from '../../main/config';
@@ -165,8 +164,9 @@ export default function App() {
   // 点击文件树中的文件 → 打开右侧预览抽屉（单文件）。
   const [drawerFile, setDrawerFile] = useState<DrawerFile | null>(null);
   const handleOpenFile = (relPath: string, _fileName: string, root: string) => {
-    // 用 Node 的 path 拼出本地绝对路径（仅 PDF webview 需要），仍以 root 做边界约束。
-    const absPath = root ? nodePath.resolve(root, relPath) : relPath;
+    // 渲染进程是 sandbox（无 Node 集成），不能用 node:path；用纯字符串拼出
+    // 本地绝对路径（仅 PDF webview 需要）。file:// 对 / 与 \\ 均接受。
+    const absPath = root ? `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[/\\]+/, '')}` : relPath;
     setDrawerFile({ root, path: relPath, absPath });
   };
 

@@ -54,6 +54,18 @@ describe('FilePanel', () => {
     await waitFor(() => expect(select.value).toBe('C:\\other'));
   });
 
+  it('falls back to the first added dir when root is empty (async addedDirs)', async () => {
+    // 模拟 addedDirs 在挂载后才异步到达：先把 addedDirs 传空，再传入真实目录。
+    const { rerender } = render(
+      <FilePanel addedDirs={[]} activeCwd={null} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />,
+    );
+    expect(screen.getByText(/先用/)).toBeInTheDocument();
+    rerender(<FilePanel addedDirs={['C:\\added']} activeCwd={null} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />);
+    // 不再显示空提示，且文件树应尝试列出该目录
+    await waitFor(() => expect(screen.queryByText(/先用/)).toBeNull());
+    expect(screen.getByText('README.md')).toBeInTheDocument();
+  });
+
   it('clicking a file calls onOpenFile with relPath, name, root', async () => {
     const onOpenFile = vi.fn();
     render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={onOpenFile} width={260} onResize={vi.fn()} />);
