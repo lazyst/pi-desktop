@@ -4,6 +4,7 @@ import { pi } from '../ipc';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconTrash } from './icons';
 import type { Theme, CloseBehavior, SessionGroup } from '../types';
+import { getFontSize, bumpFontSize, onFontSizeChange, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../fontSize';
 
 interface Props {
   onClose: () => void;
@@ -58,9 +59,16 @@ export function SettingsPanel({ onClose }: Props) {
 function GeneralSettings() {
   const [theme, setLocal] = useState<Theme>(getTheme());
   const [closeBehavior, setCloseBehavior] = useState<CloseBehavior>('minimize-to-tray');
+  // 字体大小：本地 state 镜像全局 fontSize，步进按钮 / Ctrl+滚轮都走 setFontSize 通道。
+  const [fontSize, setFontSizeLocal] = useState<number>(getFontSize());
 
   useEffect(() => {
     pi.getConfig().then((cfg) => setCloseBehavior(cfg.closeBehavior)).catch(() => {});
+  }, []);
+
+  // 订阅全局字号变化：Ctrl+滚轮在 App 层调整时，这里同步显示（保持面板数值实时）。
+  useEffect(() => {
+    return onFontSizeChange(setFontSizeLocal);
   }, []);
 
   const choose = (t: Theme) => {
@@ -71,6 +79,13 @@ function GeneralSettings() {
   const chooseClose = (b: CloseBehavior) => {
     setCloseBehavior(b);
     pi.setConfig({ closeBehavior: b }).catch(() => {});
+  };
+
+  const step = (delta: number) => {
+    const atMin = fontSize <= FONT_SIZE_MIN && delta < 0;
+    const atMax = fontSize >= FONT_SIZE_MAX && delta > 0;
+    if (atMin || atMax) return; // 已在边界，避免无谓写盘
+    setFontSizeLocal(bumpFontSize(delta));
   };
 
   return (
@@ -121,6 +136,31 @@ function GeneralSettings() {
           </button>
         </div>
       </div>
+      <div className="settings-row">
+        <span className="settings-label">字体大小</span>
+        <div className="font-stepper" role="group" aria-label="字体大小">
+          <button
+            type="button"
+            className="stepper-btn"
+            aria-label="减小字体"
+            disabled={fontSize <= FONT_SIZE_MIN}
+            onClick={() => step(-1)}
+          >
+            −
+          </button>
+          <span className="stepper-value" aria-live="polite">{fontSize}px</span>
+          <button
+            type="button"
+            className="stepper-btn"
+            aria-label="增大字体"
+            disabled={fontSize >= FONT_SIZE_MAX}
+            onClick={() => step(1)}
+          >
+            +
+          </button>
+        </div>
+      </div>
+      <p className="settings-hint">提示：也可按住 Ctrl（macOS 为 Cmd）+ 滚轮快速调整字体大小。</p>
     </>
   );
 }

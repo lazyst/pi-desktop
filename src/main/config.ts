@@ -10,7 +10,19 @@ export function defaultConfig(): AppConfig {
     sidebarWidth: 280,
     filePanelWidth: 260,
     closeBehavior: 'minimize-to-tray',
+    fontSize: 13,
   };
+}
+
+// 字体大小允许范围（px）。过小的字号无法阅读、过大撑破布局，故夹在此区间。
+export const FONT_SIZE_MIN = 8;
+export const FONT_SIZE_MAX = 28;
+
+/** 把任意输入夹进 [FONT_SIZE_MIN, FONT_SIZE_MAX] 且取整；非法输入回退默认 13。 */
+export function clampFontSize(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().fontSize;
+  return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, v));
 }
 
 // 解析 config.json 原文；损坏 / 非对象时回退默认（不抛异常，保证启动不崩）。
@@ -19,7 +31,10 @@ export function parseConfig(raw: string | null): AppConfig {
   try {
     const parsed = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return defaultConfig();
-    return mergeConfig(defaultConfig(), parsed as Partial<AppConfig>);
+    const merged = mergeConfig(defaultConfig(), parsed as Partial<AppConfig>);
+    // 数值字段单独校准，避免损坏/越界值污染全局（见 FONT_SIZE_MIN/MAX）。
+    merged.fontSize = clampFontSize((parsed as Partial<AppConfig>).fontSize);
+    return merged;
   } catch {
     console.warn('[config] config.json corrupt, using defaults');
     return defaultConfig();

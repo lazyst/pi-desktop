@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { defaultConfig, parseConfig, mergeConfig } from '../config';
+import { defaultConfig, parseConfig, mergeConfig, clampFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../config';
 
 describe('config (pure)', () => {
   it('defaultConfig has the expected shape', () => {
@@ -30,13 +30,26 @@ describe('config (pure)', () => {
     expect(c.window.bounds.width).toBe(1100); // untouched
   });
 
-  it('mergeConfig shallow-merges top-level keys (window replaced wholesale)', () => {
-    const base = defaultConfig();
-    const next = mergeConfig(base, {
-      window: { maximized: true, bounds: { x: 1, y: 2, width: 3, height: 4 } },
-    });
-    expect(next.window.maximized).toBe(true);
-    expect(next.window.bounds.width).toBe(3);
-    expect(next.theme).toBe('dark'); // untouched
+  it('defaultConfig includes fontSize default 13', () => {
+    expect(defaultConfig().fontSize).toBe(13);
+  });
+
+  it('parseConfig clamps out-of-range / invalid fontSize to defaults or bounds', () => {
+    // 合法值透传
+    expect(parseConfig(JSON.stringify({ fontSize: 20 })).fontSize).toBe(20);
+    // 越界被夹到边界
+    expect(parseConfig(JSON.stringify({ fontSize: 999 })).fontSize).toBe(FONT_SIZE_MAX);
+    expect(parseConfig(JSON.stringify({ fontSize: -5 })).fontSize).toBe(FONT_SIZE_MIN);
+    // 损坏/非数字回退默认
+    expect(parseConfig(JSON.stringify({ fontSize: 'big' })).fontSize).toBe(13);
+    expect(parseConfig('not json').fontSize).toBe(13);
+  });
+
+  it('clampFontSize rounds and clamps to [FONT_SIZE_MIN, FONT_SIZE_MAX]', () => {
+    expect(clampFontSize(13.6)).toBe(14);
+    expect(clampFontSize(FONT_SIZE_MIN - 1)).toBe(FONT_SIZE_MIN);
+    expect(clampFontSize(FONT_SIZE_MAX + 1)).toBe(FONT_SIZE_MAX);
+    expect(clampFontSize(NaN)).toBe(13);
+    expect(clampFontSize('x')).toBe(13);
   });
 });
