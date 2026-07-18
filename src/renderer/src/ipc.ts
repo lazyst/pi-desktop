@@ -11,6 +11,8 @@ export interface PiApi {
   resize(key: string, cols: number, rows: number): void;
   debug(): Promise<{ count: number; pids: number[] }>;
   pickDirectory(): Promise<string | null>;
+  // 图片粘贴落盘：渲染端把剪贴板里的图片读成 base64 传来，主进程写临时文件并返回绝对路径。
+  saveImage(data: string, ext: string): Promise<string | null>;
   onData(cb: (key: string, data: string) => void): () => void;
   onStatus(cb: (key: string, status: SessionStatus) => void): () => void;
   onExit(cb: (key: string) => void): () => void;

@@ -115,6 +115,10 @@ export class XtermTerminal {
   // 最近一次通知给壳的贴底状态（避免重复回调）。
   private _lastAtBottom = true;
 
+  // 键盘快捷键处理器（Ctrl/Cmd+V 粘贴、Ctrl/Cmd+Shift+C 复制、Ctrl/Cmd+A 全选）。
+  // 绑定在 host 上，卸载时解绑（见 unmount）。
+  private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+
   // 最近一次计算出的 cols/rows，仅在真变时才通知 PTY（对齐 VS Code 整数比较、避免无谓 resize）。
   private _lastCols = 0;
   private _lastRows = 0;
@@ -173,6 +177,9 @@ export class XtermTerminal {
     this.offStatus?.();
     this.offTheme?.();
     this.offStatus = this.offTheme = null;
+    // 键盘快捷键走 xterm attachCustomKeyEventHandler，term.dispose 时随实例清理；
+    // 这里只清幂等标记，无需手动 removeEventListener（已不再绑 host）。
+    this._keydownHandler = null;
     try {
       this.term?.dispose();
     } catch {
@@ -243,15 +250,139 @@ export class XtermTerminal {
         if (text) navigator.clipboard?.writeText(text).catch(() => {});
         term.clearSelection();
       } else {
-        // 无选区：从系统剪贴板读取并粘贴。ClipboardAddon 已接管剪贴板读写
-        // （对齐 VS Code 的 ClipboardAddon 装配），此处经其提供的 navigator.clipboard 读取。
-        navigator.clipboard?.readText().then((text) => {
-          if (text) term.paste(text);
-        }).catch(() => {});
+        // 无选区：智能粘贴（图片优先，回退文本）。复用 pasteFromClipboard 保证
+        // 右键与 Ctrl+V 行为一致（图片落临时文件再粘贴路径，对齐 VS Code 拖拽文件语义）。
+        this.pasteFromClipboard().catch(() => {});
       }
     } catch {
       /* 剪贴板不可用（如非安全上下文）时静默跳过 */
     }
+  }
+
+  /**
+   * 把文本粘贴进终端。直接调用 xterm 的 term.paste()，换行归一化为 \r。
+   * bracketed paste 模式由 xterm 的 paste() 内部自动处理（它会在模式开启时自行包裹
+   * \x1b[200~...\x1b[201~），**绝不能**在这里手动拼接 escape 序列——否则序列会被当作
+   * 字面量发进 PTY，shell 不识别，反而把 `[200~` 原样打印出来（即本次 bug 的根因）。
+   */
+  pasteText(text: string): void {
+    const term = this.term;
+    if (!term || this.disposed || !text) return;
+    const data = text.replace(/\r?\n/g, '\r');
+    term.paste(data);
+  }
+
+  /**
+   * 智能粘贴：优先粘贴图片（剪贴板含 image 类型时，把图片落临时文件再粘贴其路径，
+   * 模拟 VS Code「拖拽文件到终端」行为）；否则回退到文本粘贴。
+   * 对齐 VS Code 终端不支持在 PTY 内渲染图片数据的事实——只接收文件路径。
+   */
+  async pasteFromClipboard(): Promise<void> {
+    const term = this.term;
+    if (!term || this.disposed) return;
+    try {
+      // 优先探测图片：navigator.clipboard.read 返回带类型的 ClipboardItem。
+      const items = await (navigator.clipboard as any)?.read?.();
+      if (Array.isArray(items)) {
+        for (const item of items) {
+          const type = item.types?.find((t: string) => t.startsWith('image/'));
+          if (type) {
+            const blob: Blob = await item.getType(type);
+            const ext = type.split('/')[1] || 'png';
+            const base64 = await this._blobToBase64(blob);
+            const filePath = await this.pi.saveImage?.(base64, ext);
+            if (filePath) {
+              this.pasteText(filePath);
+              return;
+            }
+          }
+        }
+      }
+    } catch {
+      /* 剪贴板读取不可用 / 非安全上下文：回退文本粘贴 */
+    }
+    // 文本路径：从系统剪贴板读文本并粘贴（bracketed paste 包裹在 pasteText 内完成）。
+    const text = await navigator.clipboard?.readText();
+    if (text) this.pasteText(text);
+  }
+
+  /** Blob → base64（不含 data: 前缀）。用于把剪贴板图片送主进程落盘。 */
+  private _blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        const comma = result.indexOf(',');
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  /** 复制当前选区（对齐 VS Code copySelection）；无选区时不动作。 */
+  copySelection(): void {
+    const term = this.term;
+    if (!term || this.disposed || !term.hasSelection()) return;
+    const text = term.getSelection();
+    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+  }
+
+  /** 全选（对齐 VS Code selectAll）。 */
+  selectAll(): void {
+    const term = this.term;
+    if (!term || this.disposed) return;
+    term.focus();
+    term.selectAll();
+  }
+
+  /** 清除选区（对齐 VS Code clearSelection）。 */
+  clearSelection(): void {
+    this.term?.clearSelection();
+  }
+
+  /**
+   * 绑定键盘快捷键（在 mount 时调用，用 xterm 的 attachCustomKeyEventHandler 拦截——
+   * 这是 xterm 在所有按键处理“之前”的官方拦截点，先于 xterm 把 Ctrl+V 当 \x16 输入，
+   * 命中即返回 false 阻止默认输入，从而让粘贴/复制/全选走我们的逻辑）。
+   *   - Ctrl/Cmd+V：智能粘贴（图片优先，回退文本）
+   *   - Ctrl/Cmd+Shift+C：复制选区
+   *   - Ctrl/Cmd+A：全选
+   * 注意：bind 在 host 的 keydown 会“晚于”xterm 在 textarea 层的默认处理，导致真实 Ctrl+V
+   * 已被 xterm 转成 \x16 输入（见 e2e 复现），故必须用 attachCustomKeyEventHandler。
+   */
+  private bindKeyShortcuts(_host: HTMLElement): void {
+    const term = this.term;
+    if (!term || this._keydownHandler) return;
+    this._keydownHandler = () => {}; // 幂等标记：已绑定
+    const handler = (e: KeyboardEvent): boolean => {
+      if (e.type !== 'keydown') return true;
+      const mod = e.ctrlKey || e.metaKey; // Ctrl（Win/Linux）或 Cmd（mac）
+      if (!mod) return true;
+      const key = e.key.toLowerCase();
+      // Ctrl/Cmd+V：粘贴（图片优先，回退文本）
+      if (key === 'v' && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        this.pasteFromClipboard().catch(() => {});
+        return false; // 阻止 xterm 把 Ctrl+V 当 \x16 输入
+      }
+      // Ctrl/Cmd+Shift+C：复制选区（仅精确组合，避免吞掉普通 Ctrl+C）
+      if (key === 'c' && e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        this.copySelection();
+        return false;
+      }
+      // Ctrl/Cmd+A：全选
+      if (key === 'a' && !e.shiftKey && !e.altKey) {
+        e.preventDefault();
+        this.selectAll();
+        return false;
+      }
+      return true;
+    };
+    // 存一份供单测直接验证拦截逻辑（生产无副作用）
+    (this as any)._customKeyHandler = handler;
+    term.attachCustomKeyEventHandler(handler);
   }
 
   /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走分轴防抖 refit。
@@ -480,7 +611,13 @@ export class XtermTerminal {
     this._lastAtBottom = true;
 
     // 输入：终端按键 → pi.input → 主进程 pty.write。
-    term.onData((d) => this.pi.input(this.sessionKey, d));
+    // 注：window.__piOnDataSpy 是可选的测试钩子（e2e 用它观测真实写入 PTY 的字节），
+    // 生产中不存在该字段，无副作用。
+    term.onData((d) => {
+      const spy = (window as any).__piOnDataSpy;
+      if (typeof spy === 'function') spy(d);
+      this.pi.input(this.sessionKey, d);
+    });
 
     // 输出：主进程 pty 数据 → TerminalDataBufferer（5ms 时间窗聚合）→ handleProcessData。
     this.dataBufferer = new TerminalDataBufferer((id, data) => this.handleProcessData(id, data));
@@ -510,6 +647,9 @@ export class XtermTerminal {
       (cols) => this._resizeX(cols),
       (rows) => this._resizeY(rows),
     );
+
+    // 键盘快捷键：Ctrl/Cmd+V 粘贴、Ctrl/Cmd+Shift+C 复制、Ctrl/Cmd+A 全选（绑定到 host DOM）。
+    this.bindKeyShortcuts(host);
 
     this.doResize(true);
   }
