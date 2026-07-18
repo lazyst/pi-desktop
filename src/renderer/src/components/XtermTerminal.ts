@@ -43,6 +43,7 @@ import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
 import { DecorationAddon } from './decorationAddon';
 import { MarkNavigationAddon } from './markNavigationAddon';
 import type { PiApi } from '../ipc';
+import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
 
 // 终端字体栈：对齐 VS Code 默认（等宽优先）。鉴于已加载 Unicode11Addon 处理宽字符度量，
@@ -295,14 +296,30 @@ export class XtermTerminal {
     if (this._dragOverHandler || this._dropHandler) return; // 幂等
     const onDragOver = (e: DragEvent) => {
       if (!e.dataTransfer) return;
-      // 仅当拖的是文件时才接管（types 含 'Files'）；文本/内部拖拽放行给 xterm。
-      if (Array.from(e.dataTransfer.types).includes('Files')) {
+      const types = Array.from(e.dataTransfer.types);
+      // 接管两类拖拽：
+      //  - 系统文件管理器拖入（types 含 'Files'）；
+      //  - 内部文件树节点拖入（自定义 MIME 'application/x-pi-file'）。
+      // 文本/其它内部拖拽放行给 xterm。
+      if (types.includes('Files') || types.includes(PI_FILE_DRAG_MIME)) {
         e.preventDefault();
         e.dataTransfer.dropEffect = 'copy';
       }
     };
     const onDrop = (e: DragEvent) => {
-      if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+      if (!e.dataTransfer) return;
+      const types = Array.from(e.dataTransfer.types);
+      const dt = e.dataTransfer as DataTransfer & { getData?: (t: string) => string };
+      // 优先处理内部文件树拖入：直接读绝对路径（已归一化，无需再解析）。
+      // 用可选调用兜底：部分测试/旧环境注入的 dataTransfer 可能无 getData 方法。
+      const piFile = typeof dt.getData === 'function' ? dt.getData(PI_FILE_DRAG_MIME) : '';
+      if (piFile) {
+        e.preventDefault();
+        this.pasteText(this._shellQuote(piFile));
+        return;
+      }
+      // 回退到系统文件管理器拖入（Files）。
+      if (!types.includes('Files')) return;
       e.preventDefault();
       const files = Array.from(e.dataTransfer.files ?? []);
       if (!files.length) return;
