@@ -32,13 +32,34 @@ import '@xterm/xterm/css/xterm.css';
 
 // 终端字体栈：对齐 VS Code 默认（等宽优先）。鉴于已加载 Unicode11Addon 处理宽字符度量，
 // 不再需要此前「含 CJK 的等宽字体栈」hack——VS Code 同样不靠字体栈兜底 CJK 度量，而是
-// 交给 Unicode11Addon + xterm 原生渲染。保留系统等宽中文作兜底以覆盖纯 DOM 渲染器路径。
+// 交给 Unicode11Addon + xterm 原生渲染。移除主栈里的 'Microsoft YaHei Mono'/'Microsoft YaHei'
+// 等可变宽 CJK 字体：它们会让 WebGL 渲染器在 CJK 占比变化的帧间出现 cell 度量跳变（全屏
+// TUI 差分重绘时表现为整屏上下抖动）。CJK 兜底交由 xterm 的 generic monospace fallback +
+// Unicode11Addon 处理，纯 DOM 渲染器路径仍由 CSS 兜底覆盖。
 const FONT_MONO =
-  "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,'Microsoft YaHei Mono','Microsoft YaHei',monospace";
+  "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace";
 
 // 对齐 VS Code TerminalDataBufferer 的固定时间窗（5ms）：窗口内累积到达的数据块，
 // 窗口结束一次性 term.write，消除流式高频重绘的中间帧闪烁。
 const WRITE_DEBOUNCE_MS = 5;
+// 单批写入行数上限（对齐 VS Code 聚合 + xterm 高吞吐实践）：一个 5ms 窗口内若洪泛输出
+// 数千行（pi-tui 高速 fullRender 常见），不分批会一次性 term.write 数千行 → 触发整屏
+// 重绘 + 可能 fit 重排 → 表现为持续跳动。按行切片、批间让出渲染（setTimeout(0)）可把
+// 巨量输出摊平到多帧，避免「一次加多行」的整屏抖动。1000 行/批：足够覆盖 TUI 单帧
+// （通常远小于此），又远小于无限制的洪泛量。
+const WRITE_MAX_LINES = 1000;
+// resize 防抖：对齐 VS Code TerminalResizeDebouncer 的 DebounceResizeXDelay(100ms)，
+// 且 VS Code 认为「horizontal resize is expensive due to reflow」——改列宽 = 整屏重排，
+// 正是流式输出跳动的核心放大器，故列宽变化必须防抖且只在尺寸真变时才触发。
+const RESIZE_DEBOUNCE_MS = 100;
+// 尺寸变化阈值（像素）：fit 用浮点测量，亚像素抖动会让 proposeDimensions 算出不同
+// cols/rows，触发无谓的 terminal.resize() → WebGL handleResize 强制全重绘。小于该阈值的
+// 尺寸微动视为「无变化」，跳过 fit（对齐 VS Code 用整数 cols/rows 比较、天然无亚像素抖）。
+const RESIZE_PIXEL_THRESHOLD = 2;
+// 流式活跃判定：距上次写入超过该时长（ms）才视为「输出间歇」，允许列宽(X)变化。
+// 对齐 VS Code「buffer 小/不可见才立即 resize、否则防抖」的思路——高速输出期冻结列宽，
+// 避免每帧因 1px 宽度微动触发整屏重排；仅行数(Y)便宜，可即时跟随。
+const RESIZE_ACTIVE_GUARD_MS = 200;
 
 export interface XtermTerminalOptions {
   sessionKey: string;
@@ -64,14 +85,17 @@ export class XtermTerminal {
   // —— 数据写缓冲（对齐 VS Code TerminalDataBufferer 的 5ms 时间窗聚合）——
   private writeBuffer = '';
   private writeTimer: ReturnType<typeof setTimeout> | null = null;
+  // 分帧写入链 timer：当单窗口累积数据超 WRITE_MAX_LINES 时，切片后逐批 write，
+  // 批间用 requestAnimationFrame 让出渲染（对齐 xterm/VS Code 的帧驱动渲染节奏，每帧最多
+  // 一批、每帧只重绘一次），避免一次 write 数千行。与 writeTimer 独立，互不干扰。
+  // 类型用 number（浏览器下 setTimeout 与 requestAnimationFrame 均返回 number）。
+  private writeChainTimer: number | null = null;
+  // 最近一次写入时间戳：用于判定是否处于「流式活跃期」，决定 resize 时是否冻结列宽。
+  private lastWriteAt = 0;
   // 独立字段：resize 防抖 timer，绝不能复用 writeTimer（否则 ResizeObserver 会清掉
   // 正在聚合的写操作，导致 PTY 输出永远不写入 xterm —— 见 scheduleResize）。
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // —— 置底按钮可见性回调（壳订阅）——
-  private showJumpCb: ((show: boolean) => void) | null = null;
-  // xterm 的 onScroll 返回 IDisposable（非函数），用 disposer 包装以便统一反注册。
-  private offScroll: (() => void) | null = null;
 
   // —— 反注册函数 ——
   private offData: (() => void) | null = null;
@@ -83,10 +107,6 @@ export class XtermTerminal {
     this.pi = opts.pi;
   }
 
-  /** 订阅“未贴底”状态变化，供 React 壳渲染置底按钮。 */
-  onShowJump(cb: (show: boolean) => void): void {
-    this.showJumpCb = cb;
-  }
 
   /**
    * 在 active 且 host 就绪时挂载终端：构造 xterm、装载 addons、open、锁定渲染器、绑定 IPC。
@@ -98,25 +118,77 @@ export class XtermTerminal {
 
     const term = new Terminal({
       allowProposedApi: true, // 启用提案 API（pi-tui 使用同步输出 ?2026 APM 序列所需）
+      // 初始维度：VS Code 构造时即传入 cols/rows，避免 0 尺寸下的首帧测量异常；
+      // 随后由 doResize(true) 用 FitAddon 测量宿主尺寸对齐。
+      cols: 80,
+      rows: 24,
+      // Alt+点击移动光标：对齐 VS Code 默认 false（依赖 multiCursorModifier，本应用无此绑定）。
+      altClickMovesCursor: false,
+      // 日志级别：对齐 VS Code 精神（生产按日志级别收敛），'off' 避免 xterm 内部 console 噪音。
+      logLevel: 'off',
       // 不开启 convertEol。PTY 已输出标准 \r\n，convertEol 会把裸 \n 也转 \r\n，
       // 在 pi-tui 差分渲染里偶尔多出回车字节，导致行错位/重排式闪烁。VS Code 终端同样不对 PTY 数据开 convertEol。
       cursorBlink: true,
       // VS Code 默认 cursorStyle: 'bar'（terminal.integrated.cursorStyle 默认 'bar'）。
       cursorStyle: 'bar',
+      // 非活跃光标样式：对齐 VS Code 默认 'outline'（光标停在非激活面板时不闪烁实心）。
+      cursorInactiveStyle: 'outline',
       // minimumContrastRatio 对齐 VS Code 默认（1）。过高会让 xterm 每帧重算 cell 前景对比度，
       // 流式时增加重绘；VS Code 默认 1。
       minimumContrastRatio: 1,
       drawBoldTextInBrightColors: true,
+      // 字重：对齐 VS Code 默认（normal / bold），避免依赖 xterm 隐式默认导致平台差异。
+      fontWeight: 'normal',
+      fontWeightBold: 'bold',
       letterSpacing: 0,
       tabStopWidth: 8,
-      // 对齐 VS Code 的 scrollOnEraseInDisplay: true。Erase in Display(ED2) 时把被擦除的
-      // 文本推入 scrollback 而非只清视口，避免 pi-tui 每帧 fullRender(true) 清屏时视口跳动/内容错位。
-      scrollOnEraseInDisplay: true,
+      // 关闭 scrollOnEraseInDisplay：默认 false。pi-tui 每帧 fullRender(true) 发 ED2
+      // （Erase in Display）清屏时，若开启会把整屏旧内容推入 scrollback，使 baseY 每帧
+      // 被推高、视口在「清屏→重画」间隙短暂不贴底，高速输出时表现为「内容溢出→再跟随」
+      // 的持续抖动。关闭后清屏只清视口、不推 scrollback，baseY 稳定，视口锚定当前整屏，
+      // 从根上消除向下溢出跟随（见用户反馈的跳动现象）。代价：清屏不保留历史到
+      // scrollback——但 pi-tui 是主场景且已移除置底/历史浏览，副作用可接受。
+      scrollOnEraseInDisplay: false,
+      // 滚轮/快速滚动灵敏度：对齐 VS Code 默认（fastScrollSensitivity 5 / scrollSensitivity 1）。
+      fastScrollSensitivity: 5,
+      scrollSensitivity: 1,
+      // 平滑滚动时长：对齐 VS Code RenderConstants.SmoothScrollDuration(125ms)。仅在有滚轮/
+      // 触摸板滚动事件时由 xterm 内部启用平滑动画；全屏 TUI 无手动滚动交互，常态不触发，
+      // 不对写入造成拖影。
+      smoothScrollDuration: 125,
+      // macOS 选项键行为：对齐 VS Code 默认 false（electron 桌面端行为一致）。
+      macOptionIsMeta: false,
+      macOptionClickForcesSelection: false,
+      // 右键选择单词：对齐 VS Code 默认 false（你的 handleContextMenu 已自定义右键语义）。
+      rightClickSelectsWord: false,
+      // 词分隔符：对齐 VS Code 默认，保证双击选词/链接检测一致。
+      wordSeparator: " ()[]{}\',\"\`─‘’“”|",
+      // 忽略 bracketed paste 模式：对齐 VS Code 默认 false（粘贴时由 addon-clipboard 接管）。
+      ignoreBracketedPasteMode: false,
+      // 重叠字形重缩放：对齐 VS Code 默认 true。改善重叠/组合字形（部分 CJK、组合字符）的
+      // cell 度量，从源头减少中英混排与字形重叠时的度量跳变（正对 WebGL 度量抖动根因）。
+      rescaleOverlappingGlyphs: true,
+      // 不启用透明度（你用实色主题背景，allowTransparency 会引发合成层开销与过滚动露黑边）。
+      allowTransparency: false,
+      // 窗口尺寸查询：对齐 VS Code 默认开启，使 TUI 能经 escape 序列获取像素/字符尺寸。
+      windowOptions: {
+        getWinSizePixels: true,
+        getCellSizePixels: true,
+        getWinSizeChars: true,
+      },
+      // 用户滚动后输入是否跳回底部：对齐 VS Code 默认 true（全屏 TUI 本就无手动滚动，保持默认）。
+      scrollOnUserInput: true,
+      // 光标行重排：对齐 VS Code 默认 true（resize 时光标所在行内容重排，避免错位）。
+      reflowCursorLine: true,
+      // 自定义字形（连字/组合字渲染）：对齐 VS Code 默认 true。
+      customGlyphs: true,
+      // 滚动条：xterm 6 无 scrollbar option；本应用全屏 TUI 且 CSS 已 overflow:hidden，
+      // 原生/内部滚动条均禁用，滑块配色由 theme.scrollbarSlider* 注入（见 theme.ts）。
       fontFamily: FONT_MONO,
       fontSize: 13,
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
       lineHeight: 1.0,
-      scrollback: 5000,
+      scrollback: 1000,
       theme: TERM_THEMES[getTheme()],
     });
     const fit = new FitAddon();
@@ -164,7 +236,6 @@ export class XtermTerminal {
       /* jsdom/headless: ignore open failures */
     }
     this.doResize(true);
-    this.bindScroll(host);
   }
 
   /** 非 active / 卸载时销毁终端，释放所有监听与定时器。 */
@@ -172,10 +243,14 @@ export class XtermTerminal {
     this.disposed = true;
     if (this.writeTimer != null) clearTimeout(this.writeTimer);
     this.writeTimer = null;
+    if (this.writeChainTimer != null) {
+      clearTimeout(this.writeChainTimer);
+      cancelAnimationFrame(this.writeChainTimer);
+    }
+    this.writeChainTimer = null;
     if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
     this.resizeTimer = null;
     this.writeBuffer = '';
-    this.offScroll?.();
     this.offData?.();
     this.offStatus?.();
     this.offTheme?.();
@@ -215,15 +290,12 @@ export class XtermTerminal {
     }
   }
 
-  /** 点击置底按钮：滚动到最新（对齐原 jump-bottom onClick）。 */
-  scrollToBottom(): void {
-    this.term?.scrollToBottom();
-  }
 
-  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走防抖 refit。 */
+  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走防抖 refit。
+   * 防抖时长对齐 VS Code TerminalResizeDebouncer 的 DebounceResizeXDelay(100ms)。 */
   scheduleResize(): void {
     if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
-    this.resizeTimer = setTimeout(() => this.doResize(false), 100);
+    this.resizeTimer = setTimeout(() => this.doResize(false), RESIZE_DEBOUNCE_MS);
   }
 
   // —— 私有实现 ——
@@ -255,85 +327,140 @@ export class XtermTerminal {
     }
   }
 
-  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用（壳侧已做 100ms 防抖）。
-   * 对齐 VS Code：每个 render frame 都 fit，不冻结——冻结会让 PTY 列宽与 TUI 实际高度脱节，
-   * 正是流式输出时内容区“多几行/少几行”错位（编辑器上下跳）的来源。 */
+  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用（壳侧已做防抖）。
+   *
+   * 对齐 VS Code TerminalResizeDebouncer 的分层 resize 思路（见 vscode-src
+   * terminalResizeDebouncer.ts）：horizontal resize is expensive due to reflow（改列宽 =
+   * 整屏重排 → WebGL handleResize 强制全重绘，正是流式输出跳动的核心放大器），故列宽变化
+   * 必须防抖且只在尺寸真变时才触发；vertical resize 便宜，可即时跟随。
+   *
+   * 关键修复（相对旧实现）：旧实现「先 fit.fit()、再比较 _lastDims」——但 fit.fit() 内部已
+   * 调用 terminal.resize() + WebGL handleResize 全重绘，比较在 resize 之后、太晚，导致即使
+   * 尺寸未变仍每帧重绘。新实现「先测量→比较阈值→变化才 fit」，且：
+   *   1) 亚像素阈值：host 像素尺寸变化 < RESIZE_PIXEL_THRESHOLD 视为无变化，跳过 fit，
+   *      消除 fit 浮点测量亚像素抖动引发的反复重排（对齐 VS Code 用整数 cols/rows 比较）。
+   *   2) 流式活跃期冻结列宽：距上次写入 < RESIZE_ACTIVE_GUARD_MS 时只跟随行数(Y)、不动列宽(X)，
+   *      避免高速输出期因 1px 宽度微动触发整屏重排（对齐 VS Code「buffer 大才防抖」）。
+   *   3) force=true（会话结束/首挂载）时无视活跃期与阈值，确保收尾/首帧对齐视口。 */
   private doResize(force = false): void {
     const term = this.term;
     const fit = this.fit;
-    if (!term || !fit || !this.host) return;
-    try {
-      fit.fit();
-    } catch {
-      /* fit 失败（尺寸为 0 等边界）时跳过 */
+    const host = this.host;
+    if (!term || !fit || !host) return;
+
+    // 亚像素阈值：host 像素尺寸变化小于阈值视为「无变化」，跳过 fit（避免无谓重排）。
+    const w = host.clientWidth;
+    const h = host.clientHeight;
+    const lastPx = (this as any)._lastPx as { w: number; h: number } | undefined;
+    if (!force && lastPx) {
+      if (
+        Math.abs(w - lastPx.w) < RESIZE_PIXEL_THRESHOLD &&
+        Math.abs(h - lastPx.h) < RESIZE_PIXEL_THRESHOLD
+      ) {
+        return; // 尺寸微动未超阈值，跳过
+      }
     }
+
+    // 流式活跃期：近期有写入则冻结列宽（X 贵），仅允许行数(Y)变化。
+    const active = !force && Date.now() - this.lastWriteAt < RESIZE_ACTIVE_GUARD_MS;
+
+    try {
+      // 先测量目标 dims（不立即 resize）。非活跃期允许列宽变化；活跃期冻结列宽(X)。
+      const proposed = fit.proposeDimensions();
+      if (proposed) {
+        if (!active) {
+          fit.fit(); // 正常 fit：列宽可随容器变化
+        } else {
+          // 活跃期冻结列宽：仅行数跟随（用 propose 出的 rows），列宽锁定为 term.cols，
+          // 不调 fit 改 X → 不触发 WebGL 整屏重排。
+          if (proposed.rows !== term.rows) term.resize(term.cols, proposed.rows);
+        }
+      }
+    } catch {
+      /* fit/propose 失败（尺寸为 0 等边界）时跳过 */
+    }
+
     const { cols, rows } = term;
-    if (!force && (this as any)._lastDims) {
-      const last = (this as any)._lastDims;
-      if (last.cols === cols && last.rows === rows) return;
+    const last = (this as any)._lastDims as { cols: number; rows: number } | undefined;
+    if (!force && last && last.cols === cols && last.rows === rows) {
+      return; // 目标 dims 与上次相同，无需通知 PTY resize
     }
     (this as any)._lastDims = { cols, rows };
+    (this as any)._lastPx = { w, h };
     this.pi.resize(this.sessionKey, cols, rows);
   }
 
   /** 收到 PTY 数据：对齐 VS Code TerminalDataBufferer，用 5ms 固定时间窗聚合到达的数据块，
-   * 窗口结束一次性 term.write，避免流式高频重绘产生的中间帧闪烁。
+   * 窗口结束一次性取出累积数据，再按 WRITE_MAX_LINES 切片、逐批 term.write（批间让出渲染）。
+   * 这样即便一个窗口内洪泛输出数千行（pi-tui 高速 fullRender 常见），也不会「一次 write 灌入
+   * 数千行」触发整屏重绘 + 可能 fit 重排的跳动，而是摊平到多帧、每帧只增有限行。
    * xterm 原生支持 ?2026 同步输出序列（DEC 同步输出），会自行合并未闭合的同步帧再呈现，
-   * 故不再需要此前自研的同步帧切分 / hasOpenSyncFrame / 兜底 setTimeout 逻辑。 */
+   * 故不再需要此前自研的同步帧切分 / hasOpenSyncFrame / 兜底 setTimeout 逻辑。
+   *
+   * 写后锁底：每批 term.write 后，若写前视口已贴底则立即 scrollToBottom()。消除「新行先写入
+   * scrollback、xterm 原生贴底跟随要等下一渲染帧才滚下」的时间窗——高速输出时该时间窗表现为
+   * 「内容溢出→再跟随」的持续抖动（见用户反馈的跳动现象）。仅当写前已贴底时锁底，避免把用
+   * 滚轮上滚看历史的用户强行拽回底部。 */
   private handleData(key: string, data: string): void {
     if (key !== this.sessionKey || !this.term) return;
     this.writeBuffer += data;
+    this.lastWriteAt = Date.now(); // 记录数据到达时刻，供 resize 判定是否处于流式活跃期。
     if (this.writeTimer != null) return;
     this.writeTimer = setTimeout(() => {
       this.writeTimer = null;
       if (this.disposed || !this.term) return;
+      const term = this.term;
       const buf = this.writeBuffer;
       this.writeBuffer = '';
-      try {
-        this.term.write(buf);
-      } catch {
-        /* 终端已销毁等边界 */
-      }
+      // 写前是否在底部：整批来自同一窗口，贴底状态连续，仅首批前算一次。
+      const atBottomBefore =
+        (term as any).buffer?.active?.viewportY >= (term as any).buffer?.active?.baseY - 1;
+      this.flushBatched(term, buf, atBottomBefore);
     }, WRITE_DEBOUNCE_MS);
   }
 
-  /**
-   * 绑定滚动探测，驱动置底按钮可见性。
-   *
-   * 关键修复：xterm 6.0.0 的 **WebGL 渲染器**下，文本画在 <canvas> 上，
-   * `.xterm-viewport` 的 scrollHeight 始终等于 clientHeight（不随缓冲区增长），
-   * 原生 scrollTop 也恒为 0——故用原生 scrollTop/scrollHeight 判断“未贴底”在 WebGL 下
-   * 永远失效（按钮永不出现）。改用 xterm 渲染器无关的 buffer API：
-   *   term.buffer.active.viewportY —— 当前视口顶行（ydisp）
-   *   term.buffer.active.baseY    —— 缓冲区底行对应的 ydisp
-   * 当 viewportY < baseY 即视口未贴底。订阅 term.onScroll（缓冲区滚动时触发）实时更新；
-   * 同时保留原生 scroll 事件作 DOM 渲染器兜底（DOM 模式下 scrollHeight 会真实增长）。
-   */
-  private bindScroll(host: HTMLElement): void {
-    const viewport = this.term?.element?.querySelector('.xterm-viewport') as HTMLElement | null;
-    const updateFromBuffer = () => {
-      const term = this.term;
-      if (!term) return;
-      // buffer 在 open 后才有；open 失败时跳过。
-      const buf = (term as any).buffer?.active;
-      if (!buf) return;
-      const atBottom = buf.viewportY >= buf.baseY - 1;
-      this.showJumpCb?.(!atBottom);
+  /** 把窗口累积数据按 WRITE_MAX_LINES 切片，串行逐批 term.write（批间 requestAnimationFrame
+   * 让出渲染）。避免单次 write 数千行导致的整屏重绘抖动。
+   * 批间用 rAF 而非 setTimeout(0)：对齐 xterm/VS Code 的帧驱动渲染节奏，使每批写入落在帧边界、
+   * 每帧最多重绘一次，彻底消除「一帧内多次 write 引发的中间帧闪烁」。
+   * 每批写后按需锁底。 */
+  private flushBatched(term: Terminal, data: string, atBottomBefore: boolean): void {
+    if (this.disposed) return;
+    // 按行切片：保留行尾 \n，使每段都是完整行（TUI 序列不被切断）。
+    const lines = data.split(/(\n)/); // 捕获分组：奇数索引为分隔符 \n
+    let batch = '';
+    let lineCount = 0;
+    let i = 0;
+    const writeNextBatch = () => {
+      if (this.disposed || !this.term) return;
+      // 累积到一批（WRITE_MAX_LINES 行）或耗尽所有行。
+      while (i < lines.length) {
+        batch += lines[i];
+        // 分隔符 \n 出现在奇数位，计为一行结束。
+        if (i % 2 === 1) {
+          lineCount++;
+          if (lineCount >= WRITE_MAX_LINES) break;
+        }
+        i++;
+      }
+      if (batch.length === 0) return; // 无更多数据
+      const chunk = batch;
+      batch = '';
+      try {
+        term.write(chunk);
+      } catch {
+        /* 终端已销毁等边界 */
+      }
+      if (atBottomBefore) term.scrollToBottom();
+      // 还有剩余行：让出渲染一帧（对齐帧边界，每帧最多一批）再写下一批，摊平巨量输出。
+      // 兜底：测试/jsdom 等无 rAF 环境降级到 setTimeout(0)，行为等价。
+      if (i < lines.length) {
+        const raf = typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame
+          : (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number;
+        this.writeChainTimer = raf(writeNextBatch);
+      }
     };
-    const onScrollEvt = () => {
-      const el = viewport ?? host ?? null;
-      if (!el) return;
-      const atBottom = el.scrollTop >= el.scrollHeight - el.clientHeight - 2;
-      this.showJumpCb?.(!atBottom);
-    };
-    // 渲染器无关的主路径：缓冲区滚动（含滚轮上滚、流式输出贴底变化）均触发。
-    // xterm 的 onScroll 返回 IDisposable，包装成 disposer 便于 unmount 统一清理。
-    const termForScroll = this.term!;
-    const scrollDisp = termForScroll.onScroll?.(updateFromBuffer);
-    this.offScroll = scrollDisp ? () => scrollDisp.dispose() : null;
-    // DOM 渲染器兜底：原生 scroll 事件（WebGL 下 scrollHeight 不增长，此分支实际不触发未贴底）。
-    viewport?.addEventListener('scroll', onScrollEvt);
-    host.addEventListener('scroll', onScrollEvt);
-    updateFromBuffer();
+    writeNextBatch();
   }
 }
