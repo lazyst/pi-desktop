@@ -19,6 +19,16 @@
 //     drawBoldTextInBrightColors / tabStopWidth / cursorBlink / letterSpacing
 //     逐项对齐 VS Code 默认（见 vscode src/xterm/xtermTerminal.ts _initialization）。
 //
+// 在 0003 之上补齐的防闪烁机制（对齐 VS Code 集成终端，见 task_plan.md）：
+//   - keep-alive：TerminalPane 非 active 时不销毁实例，只隐藏；切回时 setActive(true) 立即
+//     refit，避免「销毁→重建→WebGL 重探测」带来的切 tab 首帧闪（对齐 VS Code setVisible）。
+//   - 写完成确认 flush()：_latestWriteSeq / _latestParsedSeq 计数器 + 轮询，对齐 VS Code
+//     _flushXtermData 的「已写入=已解析」闸门，避免尾部帧撕裂/丢失。
+//   - 同帧 RIS 重置 resetSameFrame()：对齐 VS Code SeamlessRelaunch 的 \x1bc 同帧语义，
+//     会话重置/复用时彻底清屏不闪。
+//   - 背景色跟随容器：theme.ts 的 TERM_THEMES.background 改为运行时读 --bg-app 计算值
+//     （对齐 VS Code terminalInstance.getBackgroundColor 的「与容器像素一致」语义）。
+//
 // 对外契约（B2-a 契约保形）：本类只通过构造传入的 pi 接口收发数据，不触碰主进程 / preload /
 // IPC 信道名。PTY 链路零接触（见 docs/adr/0002）。
 import { Terminal } from '@xterm/xterm';
@@ -68,9 +78,11 @@ export interface XtermTerminalOptions {
 
 /**
  * 单个会话的 xterm 终端封装。生命周期：
- *   new → mount(host)（active 时 open + 锁定渲染器 + 绑 IPC）→ unmount()（dispose）。
- * 对 React 壳完全透明：壳只负责在 active 时调用 mount、非 active 时调用 unmount，
- * 以及把 host div / 置底按钮的 DOM 事件转交本类。
+ *   new → mount(host)（首次进入 active 时构造 open + 锁定渲染器 + 绑 IPC）→ setActive(bool)
+ *   （切 tab 时 keep-alive，不重建）→ unmount()（真正销毁，如会话被删除）。
+ * 对 React 壳完全透明：壳在首次 active 时调用 mount、非 active 时调用 setActive(false)、
+ * 再次 active 时调用 setActive(true)，会话删除时调用 unmount()，并把 host div / 置底按钮
+ * 的 DOM 事件转交本类。
  */
 export class XtermTerminal {
   private readonly sessionKey: string;
@@ -78,6 +90,8 @@ export class XtermTerminal {
   private term: Terminal | null = null;
   private fit: FitAddon | null = null;
   private opened = false;
+  private mounted = false; // 是否已完成首次 mount（keep-alive 下不再重建）
+  private active = false; // keep-alive：当前是否可见（对齐 VS Code setVisible）
   private rendererLocked = false; // 本实例是否已锁定渲染器（open 前探测、open 后不再变）
   private disposed = false;
   private host: HTMLElement | null = null;
@@ -96,26 +110,180 @@ export class XtermTerminal {
   // 正在聚合的写操作，导致 PTY 输出永远不写入 xterm —— 见 scheduleResize）。
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
+  // 每次 term.write 递增写序号；xterm 解析回调递增解析序号。flush() 轮询确认两者追平，
+  // 避免尾部帧在卸载/会话结束前撕裂或丢失。
+  private _latestWriteSeq = 0;
+  private _latestParsedSeq = 0;
+  private _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // —— 反注册函数 ——
   private offData: (() => void) | null = null;
   private offStatus: (() => void) | null = null;
   private offTheme: (() => void) | null = null;
+  // 滚动状态回调：视口是否贴底变化时通知 React 壳（驱动「跳到底部」浮钮显隐）。
+  onScrollState: ((atBottom: boolean) => void) | null = null;
+  // 最近一次通知给壳的贴底状态（避免重复回调）。
+  private _lastAtBottom = true;
 
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     this.pi = opts.pi;
   }
 
-
   /**
-   * 在 active 且 host 就绪时挂载终端：构造 xterm、装载 addons、open、锁定渲染器、绑定 IPC。
+   * 在首次进入 active 且 host 就绪时挂载终端：构造 xterm、装载 addons、open、锁定渲染器、绑定 IPC。
    * 与 VS Code XtermTerminal._initialization 等价（构造 → loadAddon 系列 → open → webgl）。
+   * keep-alive：仅在首次进入时调用一次；后续 active 切换走 setActive，不重建实例。
    */
   mount(host: HTMLElement): void {
-    if (this.opened) return;
+    if (this.mounted) return;
     this.host = host;
+    this.mounted = true;
+    this._initXterm(host);
+    this.active = true;
+  }
 
+  /**
+   * keep-alive：active 切换时调用，不销毁实例（对齐 VS Code terminalInstance.setVisible）。
+   * active=false 时仅标记不可见；active=true 时恢复并立即 refit（对齐 VS Code setVisible 的
+   * _resizeDebouncer.flush + _resize），使切回的终端即时用最新尺寸渲染，消除切 tab 回来的
+   * 首帧尺寸跳变闪烁。
+   */
+  setActive(active: boolean): void {
+    if (this.active === active) return;
+    this.active = active;
+    if (active && this.host && this.term && !this.disposed) {
+      // 切回可见：立即 refit，用最新宿主尺寸校准（见 doResize 的 force 语义）。
+      this.doResize(true);
+    }
+  }
+
+  /** 非 active / 卸载时销毁终端，释放所有监听与定时器。 */
+  unmount(): void {
+    this.disposed = true;
+    if (this.writeTimer != null) clearTimeout(this.writeTimer);
+    this.writeTimer = null;
+    if (this.writeChainTimer != null) {
+      clearTimeout(this.writeChainTimer);
+      cancelAnimationFrame(this.writeChainTimer);
+    }
+    this.writeChainTimer = null;
+    if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
+    this.resizeTimer = null;
+    if (this._flushTimer != null) clearTimeout(this._flushTimer);
+    this._flushTimer = null;
+    this.writeBuffer = '';
+    this.offData?.();
+    this.offStatus?.();
+    this.offTheme?.();
+    this.offData = this.offStatus = this.offTheme = null;
+    try {
+      this.term?.dispose();
+    } catch {
+      /* 已销毁 */
+    }
+    this.term = null;
+    this.fit = null;
+    this.opened = false;
+    this.mounted = false;
+    this.host = null;
+  }
+
+  /**
+   * 写完成确认（对齐 VS Code _flushXtermData）：轮询确认所有已 term.write 的数据都被 xterm
+   * 解析完（_latestWriteSeq === _latestParsedSeq），最多重试若干次。供会话结束/卸载前 await，
+   * 避免尾部帧撕裂或丢失。无待写或已销毁时立即 resolve。
+   */
+  flush(): Promise<void> {
+    if (this.disposed || !this.term || this._latestWriteSeq === this._latestParsedSeq) {
+      return Promise.resolve();
+    }
+    let retries = 0;
+    return new Promise<void>((resolve) => {
+      const tick = () => {
+        if (this.disposed || this._latestWriteSeq === this._latestParsedSeq || ++retries > 5) {
+          if (this._flushTimer != null) clearTimeout(this._flushTimer);
+          this._flushTimer = null;
+          resolve();
+        } else {
+          this._flushTimer = setTimeout(tick, 20);
+        }
+      };
+      this._flushTimer = setTimeout(tick, 20);
+    });
+  }
+
+  /**
+   * 同帧 RIS 重置（对齐 VS Code SeamlessRelaunch 的 triggerSwap 同帧语义）：发全清序列
+   * \x1bc。紧随其后的首段写会在 xterm 同一次重绘中呈现，避免「清屏→旧内容残留→重画」的
+   * 中间帧闪。用于会话重置/复用时需要彻底清屏的场景（如 onRelink 后需清旧缓冲）。
+   */
+  resetSameFrame(): void {
+    if (!this.term || this.disposed) return;
+    this.term.write('\x1bc');
+  }
+
+  /** 跳到底部：把视口滚动到最新输出（对齐 VS Code 终端视口贴底）。同时通知壳隐藏浮钮。
+   * 由 React 壳的「跳到底部」浮钮点击调用。 */
+  scrollToBottom(): void {
+    if (!this.term || this.disposed) return;
+    this.term.scrollToBottom();
+    this.notifyScrollState();
+  }
+
+  /** 当前视口是否贴底（对齐 VS Code：viewportY >= baseY 即贴底）。xterm 6 WebGL 下
+   * scrollTop 恒为 0，故用 buffer 的 viewportY/baseY 判定，而非 DOM 原生 scroll。 */
+  private isAtBottom(): boolean {
+    const buf = (this.term as any)?.buffer?.active;
+    if (!buf) return true;
+    return buf.viewportY >= buf.baseY - 1;
+  }
+
+  /** 视口贴底状态变化时通知 React 壳（驱动浮钮显隐），仅在状态翻转时回调以省渲染。 */
+  private notifyScrollState(): void {
+    if (!this.onScrollState) return;
+    const atBottom = this.isAtBottom();
+    if (atBottom === this._lastAtBottom) return;
+    this._lastAtBottom = atBottom;
+    this.onScrollState(atBottom);
+  }
+
+  /** 右键上下文菜单：有选区则复制并清空，否则粘贴（对齐原 handleContextMenu 语义）。
+   * 剪贴板读写已由 addon-clipboard 接管（对齐 VS Code 的 ClipboardAddon 装配）；
+   * 粘贴直接走 term.paste()，由 addon 从系统剪贴板读取，无需自管 navigator.clipboard。 */
+  handleContextMenu(e: { preventDefault: () => void }): void {
+    e.preventDefault();
+    const term = this.term;
+    if (!term) return;
+    try {
+      if (term.hasSelection()) {
+        const text = term.getSelection();
+        if (text) navigator.clipboard?.writeText(text).catch(() => {});
+        term.clearSelection();
+      } else {
+        // 无选区：从系统剪贴板读取并粘贴。ClipboardAddon 已接管剪贴板读写
+        // （对齐 VS Code 的 ClipboardAddon 装配），此处经其提供的 navigator.clipboard 读取。
+        navigator.clipboard?.readText().then((text) => {
+          if (text) term.paste(text);
+        }).catch(() => {});
+      }
+    } catch {
+      /* 剪贴板不可用（如非安全上下文）时静默跳过 */
+    }
+  }
+
+  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走防抖 refit。
+   * 防抖时长对齐 VS Code TerminalResizeDebouncer 的 DebounceResizeXDelay(100ms)。 */
+  scheduleResize(): void {
+    if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
+    this.resizeTimer = setTimeout(() => this.doResize(false), RESIZE_DEBOUNCE_MS);
+  }
+
+  // —— 私有实现 ——
+
+  /** 构造 xterm、装载 addons、open、锁定渲染器、绑定 IPC（mount 内部调用一次）。 */
+  private _initXterm(host: HTMLElement): void {
     const term = new Terminal({
       allowProposedApi: true, // 启用提案 API（pi-tui 使用同步输出 ?2026 APM 序列所需）
       // 初始维度：VS Code 构造时即传入 cols/rows，避免 0 尺寸下的首帧测量异常；
@@ -189,12 +357,30 @@ export class XtermTerminal {
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
       lineHeight: 1.0,
       scrollback: 1000,
+      // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义，
+      // 由 theme.ts 的 TERM_THEMES 在运行时读取，见 theme.ts）。
       theme: TERM_THEMES[getTheme()],
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     this.term = term;
     this.fit = fit;
+
+    // 写完成确认计数器：xterm 每解析完一批写数据即递增解析序号（对齐 VS Code onWriteParsed）。
+    try {
+      (term as any).onWriteParsed?.(() => { this._latestParsedSeq = this._latestWriteSeq; });
+    } catch {
+      /* 旧版 xterm 无 onWriteParsed：降级为「写即解析」，flush 立即 resolves */
+    }
+
+    // 滚动状态：xterm 视口随输出/滚轮变化时经 onScroll 驱动浮钮显隐。
+    try {
+      term.onScroll(() => this.notifyScrollState());
+    } catch {
+      /* 旧版 xterm 无 onScroll：降级为始终贴底，浮钮不出现 */
+    }
+    // 初始状态：新终端默认贴底。
+    this._lastAtBottom = true;
 
     // 输入：终端按键 → pi.input → 主进程 pty.write。
     term.onData((d) => this.pi.input(this.sessionKey, d));
@@ -238,68 +424,6 @@ export class XtermTerminal {
     this.doResize(true);
   }
 
-  /** 非 active / 卸载时销毁终端，释放所有监听与定时器。 */
-  unmount(): void {
-    this.disposed = true;
-    if (this.writeTimer != null) clearTimeout(this.writeTimer);
-    this.writeTimer = null;
-    if (this.writeChainTimer != null) {
-      clearTimeout(this.writeChainTimer);
-      cancelAnimationFrame(this.writeChainTimer);
-    }
-    this.writeChainTimer = null;
-    if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
-    this.resizeTimer = null;
-    this.writeBuffer = '';
-    this.offData?.();
-    this.offStatus?.();
-    this.offTheme?.();
-    this.offData = this.offStatus = this.offTheme = null;
-    try {
-      this.term?.dispose();
-    } catch {
-      /* 已销毁 */
-    }
-    this.term = null;
-    this.fit = null;
-    this.opened = false;
-    this.host = null;
-  }
-
-  /** 右键上下文菜单：有选区则复制并清空，否则粘贴（对齐原 handleContextMenu 语义）。
-   * 剪贴板读写已由 addon-clipboard 接管（对齐 VS Code 的 ClipboardAddon 装配）；
-   * 粘贴直接走 term.paste()，由 addon 从系统剪贴板读取，无需自管 navigator.clipboard。 */
-  handleContextMenu(e: { preventDefault: () => void }): void {
-    e.preventDefault();
-    const term = this.term;
-    if (!term) return;
-    try {
-      if (term.hasSelection()) {
-        const text = term.getSelection();
-        if (text) navigator.clipboard?.writeText(text).catch(() => {});
-        term.clearSelection();
-      } else {
-        // 无选区：从系统剪贴板读取并粘贴。ClipboardAddon 已接管剪贴板读写
-        // （对齐 VS Code 的 ClipboardAddon 装配），此处经其提供的 navigator.clipboard 读取。
-        navigator.clipboard?.readText().then((text) => {
-          if (text) term.paste(text);
-        }).catch(() => {});
-      }
-    } catch {
-      /* 剪贴板不可用（如非安全上下文）时静默跳过 */
-    }
-  }
-
-
-  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走防抖 refit。
-   * 防抖时长对齐 VS Code TerminalResizeDebouncer 的 DebounceResizeXDelay(100ms)。 */
-  scheduleResize(): void {
-    if (this.resizeTimer != null) clearTimeout(this.resizeTimer);
-    this.resizeTimer = setTimeout(() => this.doResize(false), RESIZE_DEBOUNCE_MS);
-  }
-
-  // —— 私有实现 ——
-
   /** 渲染器策略（S1）：open 前同步探测 WebGL 可用性，open 后整个会话恒定、绝不中途切换。
    * 可用环境变量 PI_DESKTOP_RENDERER 强制渲染器，用于排查“WebGL cell 度量跳变导致编辑器漂移”：
    *   - 未设置 / 'auto'：探测 WebGL，可用则 GPU，否则 DOM
@@ -341,7 +465,7 @@ export class XtermTerminal {
    *      消除 fit 浮点测量亚像素抖动引发的反复重排（对齐 VS Code 用整数 cols/rows 比较）。
    *   2) 流式活跃期冻结列宽：距上次写入 < RESIZE_ACTIVE_GUARD_MS 时只跟随行数(Y)、不动列宽(X)，
    *      避免高速输出期因 1px 宽度微动触发整屏重排（对齐 VS Code「buffer 大才防抖」）。
-   *   3) force=true（会话结束/首挂载）时无视活跃期与阈值，确保收尾/首帧对齐视口。 */
+   *   3) force=true（会话结束/首挂载/切回可见）时无视活跃期与阈值，确保收尾/首帧对齐视口。 */
   private doResize(force = false): void {
     const term = this.term;
     const fit = this.fit;
@@ -446,12 +570,19 @@ export class XtermTerminal {
       if (batch.length === 0) return; // 无更多数据
       const chunk = batch;
       batch = '';
+      // 递增写序号（对齐 VS Code _latestXtermWriteData）；回调里递增解析序号（见 onWriteParsed 注册）。
+      const seq = ++this._latestWriteSeq;
       try {
-        term.write(chunk);
+        term.write(chunk, () => {
+          // xterm 解析完本批：把解析序号推到本次写序号（多批在队列中时取最大已解析）。
+          this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        });
       } catch {
         /* 终端已销毁等边界 */
       }
       if (atBottomBefore) term.scrollToBottom();
+      // 写前贴底时锁底后，视口回到底部 → 状态可能翻转（如从非底写回底），通知壳。
+      this.notifyScrollState();
       // 还有剩余行：让出渲染一帧（对齐帧边界，每帧最多一批）再写下一批，摊平巨量输出。
       // 兜底：测试/jsdom 等无 rAF 环境降级到 setTimeout(0)，行为等价。
       if (i < lines.length) {

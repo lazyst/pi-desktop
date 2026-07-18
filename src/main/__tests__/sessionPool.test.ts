@@ -217,6 +217,63 @@ describe('SessionPool.deleteSession alias resolution (promoted session)', () => 
   });
 });
 
+describe('SessionPool data buffering (对齐 VS Code TerminalDataBufferer)', () => {
+  it('aggregates rapid pty chunks within the 5ms window into a single onData emit', async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool, factory, onData } = makePool();
+      const key = '/tmp/sessions/x/session.jsonl';
+      pool.openExisting(key);
+      const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+      // 同一 tick 内到达的三块数据应被聚合成一次 onData（含 5ms 窗口）。
+      pty.emit('data', 'chunk-1');
+      pty.emit('data', 'chunk-2');
+      pty.emit('data', 'chunk-3');
+      expect(onData).not.toHaveBeenCalled(); // 窗口未结束，尚未 emit
+      await vi.advanceTimersByTimeAsync(10);
+      expect(onData).toHaveBeenCalledTimes(1);
+      expect(onData).toHaveBeenCalledWith(key, 'chunk-1chunk-2chunk-3');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits separate windows independently across the 5ms boundary', async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool, factory, onData } = makePool();
+      const key = '/tmp/sessions/x/session.jsonl';
+      pool.openExisting(key);
+      const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+      pty.emit('data', 'frame-a');
+      await vi.advanceTimersByTimeAsync(10);
+      pty.emit('data', 'frame-b');
+      await vi.advanceTimersByTimeAsync(10);
+      expect(onData).toHaveBeenCalledTimes(2);
+      expect(onData).toHaveBeenNthCalledWith(1, key, 'frame-a');
+      expect(onData).toHaveBeenNthCalledWith(2, key, 'frame-b');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears pending buffer on terminate (no late emit after kill)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { pool, factory, onData } = makePool();
+      const key = '/tmp/sessions/x/session.jsonl';
+      pool.openExisting(key);
+      const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+      pty.emit('data', 'late');
+      pool.terminate(key); // 立即 terminate，未到 5ms 时间窗
+      await vi.advanceTimersByTimeAsync(10);
+      expect(onData).not.toHaveBeenCalled(); // 终止后清空缓冲，不迟到 emit
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('SessionPool promotion linking (live -> disk)', () => {
   it('links a new live session to its written .jsonl and reuses it on openExisting', () => {
     const { pool, factory, onStatus } = makePool();
