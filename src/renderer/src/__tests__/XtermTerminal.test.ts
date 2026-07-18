@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
 import { XtermTerminal } from '../components/XtermTerminal';
+import { DecorationAddon } from '../components/decorationAddon';
 import type { PiApi } from '../ipc';
 
 // 用可控的 mock 替换 addons，验证加载/回退，不触发真实 GPU / 剪贴板 / unicode 解析。
@@ -215,12 +217,21 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
 
   it('calls pi.resize with fitted dims after mount', () => {
     const api = makeApi();
+    // jsdom 无布局引擎，proposeDimensions 默认返回 undefined；mock 出有效目标维度，
+    // 对齐真实浏览器里 mount 后首帧用宿主尺寸校准终端、通知 PTY 的路径。
+    const propose = vi
+      .spyOn(FitAddon.prototype, 'proposeDimensions')
+      .mockReturnValue({ cols: 100, rows: 30 });
+    const fit = vi.spyOn(FitAddon.prototype, 'fit').mockImplementation(() => {});
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     const host = mountHost();
     Object.defineProperty(host, 'clientWidth', { value: 800, configurable: true });
     Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true });
     t.mount(host);
+    expect(fit).toHaveBeenCalled();
     expect(api.resize).toHaveBeenCalled();
+    propose.mockRestore();
+    fit.mockRestore();
     t.unmount();
   });
 
@@ -379,49 +390,69 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
   });
 
   // Decoration 覆盖层（对齐 VS Code DecorationAddon 差分 overlay 基座）：registerLineDecoration
-  // 经 xterm.registerDecoration 锚定 marker；clearDecorations 释放全部装饰。
-  it('registerLineDecoration / clearDecorations manage the overlay decorations', () => {
+  // 经 DecorationAddon.registerCommandDecoration 锚定 marker；clearDecorations 释放全部装饰。
+  it('registerLineDecoration / clearDecorations delegate to the DecorationAddon overlay', () => {
     const api = makeApi();
-    // marker 是 IMarker 形态的最小桩：xterm.registerDecoration 需要 marker.id。
+    // marker 是 IMarker 形态的最小桩：DecorationAddon.registerCommandDecoration 需要 marker.id。
     const fakeMarker = { id: 42, dispose: vi.fn() } as any;
-    const fakeDeco = { marker: fakeMarker, dispose: vi.fn(), onRender: vi.fn(), element: undefined, isDisposed: false } as any;
+    const fakeDeco = { marker: fakeMarker, dispose: vi.fn(), onRender: vi.fn(), onDispose: vi.fn(), element: undefined, isDisposed: false } as any;
     const registerSpy = vi
-      .spyOn(Terminal.prototype, 'registerDecoration')
+      .spyOn(DecorationAddon.prototype, 'registerCommandDecoration')
       .mockReturnValue(fakeDeco);
+    const clearSpy = vi.spyOn(DecorationAddon.prototype, 'clearDecorations').mockImplementation(() => {});
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const deco = t.registerLineDecoration(fakeMarker, { marker: fakeMarker });
     expect(registerSpy).toHaveBeenCalled();
     expect(deco).toBe(fakeDeco);
-    expect((t as any).decorations.size).toBe(1);
     t.clearDecorations();
-    expect((t as any).decorations.size).toBe(0);
-    expect(fakeDeco.dispose).toHaveBeenCalled();
+    expect(clearSpy).toHaveBeenCalled();
     registerSpy.mockRestore();
+    clearSpy.mockRestore();
     t.unmount();
   });
 
   // 不可见终端的 idle 延迟 resize（对齐 VS Code runWhenWindowIdle）：非 active 时 scheduleResize
-  // 不立即执行、推迟到 idle 后再 doResize；可见时仍走原 100ms 防抖。
+  // 不立即执行、推迟到 idle 后再经 TerminalResizeDebouncer 分别触发 _resizeX / _resizeY；
+  // 可见时仍走同步/防抖。
   it('defers resize to idle when not active (runWhenWindowIdle semantics)', async () => {
     const api = makeApi();
-    const resizeMock = vi.spyOn(XtermTerminal.prototype as any, 'doResize').mockImplementation(() => {});
+    const propose = vi
+      .spyOn(FitAddon.prototype, 'proposeDimensions')
+      .mockReturnValue({ cols: 100, rows: 30 });
+    const resizeX = vi
+      .spyOn(XtermTerminal.prototype as any, '_resizeX')
+      .mockImplementation(() => {});
+    const resizeY = vi
+      .spyOn(XtermTerminal.prototype as any, '_resizeY')
+      .mockImplementation(() => {});
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     const host = mountHost();
     Object.defineProperty(host, 'clientWidth', { value: 800, configurable: true });
     Object.defineProperty(host, 'clientHeight', { value: 600, configurable: true });
     t.mount(host);
-    // mount 内部已调过 doResize(true)（首帧对齐尺寸），清零后再测 idle 延迟语义。
-    resizeMock.mockClear();
+    // 模拟「大 buffer」（行数 ≥ 200，对齐 VS Code StartDebouncingThreshold），使非 active 时
+    // resize 走 idle 延迟而非立即路径。
+    Object.defineProperty((t as any).term, 'buffer', {
+      configurable: true,
+      value: { active: { length: 500, viewportY: 0, baseY: 400 } },
+    });
+    // mount 内部已调过 doResize(true)（首帧对齐尺寸，走 immediate），清零后再测 idle 延迟语义。
+    resizeX.mockClear();
+    resizeY.mockClear();
     // 模拟隐藏（keep-alive 非 active）。
     (t as any).active = false;
     t.scheduleResize();
-    // 立即不应执行（idle 延迟）。
-    expect(resizeMock).not.toHaveBeenCalled();
-    // 让出事件循环后 idle 回调触发 doResize。
+    // 立即不应执行（idle 延迟）。jsdom 无 requestIdleCallback，降级 setTimeout(0)。
+    expect(resizeX).not.toHaveBeenCalled();
+    expect(resizeY).not.toHaveBeenCalled();
+    // 让出事件循环后 idle 回调触发 _resizeX / _resizeY。
     await new Promise((r) => setTimeout(r, 30));
-    expect(resizeMock).toHaveBeenCalled();
-    resizeMock.mockRestore();
+    expect(resizeX).toHaveBeenCalled();
+    expect(resizeY).toHaveBeenCalled();
+    propose.mockRestore();
+    resizeX.mockRestore();
+    resizeY.mockRestore();
     t.unmount();
   });
 });
