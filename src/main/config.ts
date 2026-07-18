@@ -8,6 +8,7 @@ export function defaultConfig(): AppConfig {
     addedDirs: [],
     window: { maximized: false, bounds: { x: 0, y: 0, width: 1100, height: 720 } },
     sidebarWidth: 280,
+    filePanelWidth: 260,
     closeBehavior: 'minimize-to-tray',
   };
 }

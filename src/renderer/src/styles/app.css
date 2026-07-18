@@ -768,7 +768,6 @@
 
 /* ── 文件面板（侧边栏右侧独立栏）── */
 .file-panel {
-  width: 260px;
   flex: none;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
@@ -776,6 +775,7 @@
   flex-direction: column;
   min-height: 0;
   color: var(--text);
+  position: relative;
 }
 .file-panel-header {
   display: flex;
@@ -836,6 +836,20 @@
 }
 .file-empty, .file-error { padding: var(--sp-3) var(--sp-3); font-size: 11px; color: var(--text-dim); }
 .file-error { color: #f87171; }
+
+/* 文件面板右缘拖拽条：复用侧边栏拖拽条的视觉语言。 */
+.file-panel-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--transition);
+}
+.file-panel-resizer:hover { background: var(--accent-soft); }
+.file-panel-resizer:active { background: var(--accent); }
 
 /* ── Git 视图 ── */
 .git-view { font-size: var(--fs-sm); padding: var(--sp-2); display: flex; flex-direction: column; min-height: 0; height: 100%; }
