@@ -478,6 +478,10 @@
   outline: none;
   box-shadow: var(--focus-ring);
 }
+.btn-sm {
+  font-size: var(--fs-xs);
+  padding: var(--sp-1) var(--sp-2);
+}
 
 /* 自建标题条（无边框窗口）：整条为拖拽区，按钮 opt-out。颜色走 CSS 变量，随主题自动变。 */
 .titlebar {
@@ -540,12 +544,18 @@
 
 /* 设置面板（模态） */
 .settings-modal {
-  width: min(380px, calc(100vw - 32px));
+  /* 宽高均为应用窗口的 80%（Electron 内容区≈视口），随窗口缩放保持一致比例；
+     “常规”与“会话管理”共用同一尺寸，切换时不再跳动。 */
+  width: 80vw;
+  height: 80vh;
+  display: flex;
+  flex-direction: column;
   padding: var(--sp-4);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-modal);
+  overflow: hidden;
 }
 .settings-header {
   display: flex;
@@ -554,6 +564,43 @@
   margin-bottom: var(--sp-3);
 }
 .settings-title { font-size: var(--fs-xl); font-weight: var(--fw-semibold); color: var(--text); }
+.settings-body {
+  display: flex;
+  /* 在固定高度的 modal 内撑满 header 之下的剩余空间；min-height:0 允许内部滚动。
+     不使用固定 height / flex:1 去“猜”高度，避免内容少时塌缩、多时撑破。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--sp-4);
+}
+.settings-nav {
+  flex: 0 0 148px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-right: var(--sp-3);
+  border-right: 1px solid var(--border);
+}
+.nav-item {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  padding: var(--sp-2) var(--sp-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color var(--transition), color var(--transition), border-color var(--transition);
+}
+.nav-item:hover { background: var(--bg-hover); color: var(--text); }
+.nav-item.active { background: var(--bg-active); color: var(--accent); border-color: var(--border-strong); }
+.settings-content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .settings-row {
   display: flex;
   align-items: center;
@@ -586,4 +633,130 @@
   margin: var(--sp-4) 0 0;
   font-size: var(--fs-xs);
   color: var(--text-faint);
+}
+
+/* 会话管理（设置面板内） */
+.session-mgmt {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.session-mgmt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.session-mgmt-list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.session-mgmt .group {
+  margin-bottom: var(--sp-3);
+}
+.session-mgmt .group-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-1);
+}
+/* 目录路径可能很长：允许折行，并把收缩权重交给它，避免把右侧操作按钮挤变形。 */
+.session-mgmt .group-name {
+  min-width: 0;
+  flex: 1;
+  word-break: break-all;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+/* 组级操作（清空目录）：默认隐藏，hover 整组时淡入；固定宽度不引起布局抖动。 */
+.session-mgmt .group-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--transition);
+}
+/* 目录会话总数统计，例如 “(12)”。 */
+.session-mgmt .group-count {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+/* “展开 N 个 / 收起”折叠开关。 */
+.session-mgmt .group-expand {
+  display: inline-block;
+  margin: var(--sp-1) 0 0;
+  padding: 2px 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.session-mgmt .group-expand:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+.session-mgmt .group:hover .group-actions,
+.session-mgmt .group:focus-within .group-actions {
+  opacity: 1;
+}
+.session-mgmt .session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+}
+/* 会话名/时间容器：接管剩余空间并允许长路径折行，右侧删除图标固定不被挤压。 */
+.session-mgmt .session-name {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.session-mgmt .session-name .name {
+  word-break: break-all;
+}
+/* 单条删除（垃圾桶图标）：固定尺寸、默认隐藏，hover 整条时淡入。 */
+.session-mgmt .session-delete {
+  flex: none;
+  opacity: 0;
+  transition: opacity var(--transition), color var(--transition), background-color var(--transition);
+}
+.session-mgmt .session-item:hover .session-delete,
+.session-mgmt .session-item:focus-within .session-delete {
+  opacity: 1;
+}
+.session-mgmt .session-item.selectable {
+  cursor: pointer;
+}
+.session-mgmt .session-item.selectable:hover { background: var(--bg-hover); }
+.session-mgmt .session-item.selected { background: var(--bg-active); }
+.session-mgmt .session-item .name { font-size: var(--fs-md); color: var(--text); }
+.session-mgmt .session-item .time { font-size: var(--fs-xs); color: var(--text-faint); }
+
+/* 会话管理里的图标操作按钮（垃圾桶 / 清空目录）。 */
+.icon-danger {
+  color: var(--text-muted);
+}
+.icon-danger:hover {
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.12);
 }

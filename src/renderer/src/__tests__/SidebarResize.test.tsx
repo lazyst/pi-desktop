@@ -31,6 +31,7 @@ function renderWithResize(overrides: any = {}) {
       onEnterSelect={vi.fn()}
       onExitSelect={vi.fn()}
       onBatchDelete={vi.fn()}
+      onRemoveDir={vi.fn()}
     />,
   );
   return { onSidebarResize, onTerminate, ...utils };

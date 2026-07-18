@@ -38,6 +38,16 @@ export function IconTrash({ size = 16, className }: IconProps) {
   );
 }
 
+// 从侧边栏移除一个已添加目录（仅注销，不删文件）。
+export function IconRemoveDir({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12h8" />
+    </svg>
+  );
+}
+
 // 窗口控制 + 设置图标（与上方 stroke 风格一致）
 export function IconSettings({ size = 16, className }: IconProps) {
   return (
