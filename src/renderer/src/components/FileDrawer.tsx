@@ -4,7 +4,7 @@
 // • Per-type rendering: images → ImagePreview, pdf → PdfPreview,
 //   text/code → CodePreview.
 // • Dirty tracking + explicit save (fs:writeFile) + close-confirm when dirty.
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { pi } from '../ipc';
 import { CodePreview } from './CodePreview';
 import { ImagePreview } from './ImagePreview';
@@ -104,7 +104,7 @@ export function FileDrawer({ file, onClose }: Props) {
     else onClose();
   };
 
-  const doSave = async () => {
+  const doSave = useCallback(async () => {
     if (!file) return;
     setSaving(true);
     setError(null);
@@ -117,7 +117,22 @@ export function FileDrawer({ file, onClose }: Props) {
     } finally {
       setSaving(false);
     }
-  };
+  }, [file, currentContent]);
+
+  // Ctrl/Cmd+S → save (when there are unsaved changes).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        // Only intercept when this drawer is the active file editor and there is something to save.
+        if (file && kind === 'code' && dirty && !saving) {
+          e.preventDefault();
+          void doSave();
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [file, kind, dirty, saving, doSave]);
 
   if (!file) return null;
 

@@ -1,6 +1,7 @@
 import './theme';
 import './styles/tokens.css';
 import './styles/app.css';
+import 'katex/dist/katex.min.css';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
