@@ -217,6 +217,26 @@ describe('SessionPool.deleteSession alias resolution (promoted session)', () => 
   });
 });
 
+describe('SessionPool.terminate via disk key (sidebar promote path)', () => {
+  it('kills the live process when terminated by the on-disk .jsonl key', () => {
+    // 复现 bug：侧边栏渲染的是磁盘 key，点击「终止进程」传入磁盘 key；
+    // 进程实际以 live-<uuid> 为 key 存在 entries，需经 alias 反查命中。
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-term-aliased-'));
+    const { pool, factory, onExit } = makePoolIn(dir);
+    const live = pool.openNew('/some/cwd', 'n'); // 进程以 live-<uuid> 为 key
+    const grp = path.join(dir, 'grp');
+    fs.mkdirSync(grp);
+    const disk = path.join(grp, 'abc.jsonl');
+    fs.writeFileSync(disk, JSON.stringify({ cwd: '/some/cwd' }) + '\n');
+    pool.reconcile([{ cwd: '/some/cwd', sessions: [{ key: disk, name: 'hi', time: 't' }] }]);
+    // 侧边栏点「终止进程」传的是磁盘 key
+    pool.terminate(disk);
+    const pty = factory.mock.results[0].value as ReturnType<typeof mockPty>;
+    expect(pty.kill).toHaveBeenCalledTimes(1); // 进程被真正杀掉（此前静默失败 → 杀不掉）
+    expect(onExit).toHaveBeenCalledWith(live.key);
+    expect(pool.get(live.key)).toBeUndefined();
+  });
+});
 describe('SessionPool data buffering (对齐 VS Code TerminalDataBufferer)', () => {
   it('aggregates rapid pty chunks within the 5ms window into a single onData emit', async () => {
     vi.useFakeTimers();

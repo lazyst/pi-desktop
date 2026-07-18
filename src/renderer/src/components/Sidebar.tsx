@@ -160,6 +160,11 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
               </div>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
+                // UX 兜底：状态未知（undefined，多半是状态推送尚未到达/竞态）时
+                // 也允许显示「终止进程」——侧边栏里的会话基本都是运行中的 pi 进程，
+                // 隐藏按钮反而让用户“连终止的机会都没有”（尤其 terminate 修复前那种
+                // 点了没反应的体感）。仅当状态明确为 'dead' 时才隐藏（进程已退出）。
+                const canTerminate = running || statusMap[s.key] === undefined;
                 const isActive = s.key === effectiveActive;
                 const selected = !!selectedKeys?.has(s.key);
                 // 多选模式下：整条变为可勾选行，点击切换选中，不再打开终端面板。
@@ -219,7 +224,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                       <div className="name">{s.name}</div>
                       {s.time && <div className="time">{s.time}</div>}
                     </span>
-                    {running && (
+                    {canTerminate && (
                       <button className="terminate" title="终止进程" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}>终止进程</button>
                     )}
                   </div>
