@@ -20,6 +20,8 @@ export interface DrawerFile {
 interface Props {
   file: DrawerFile | null;
   onClose: () => void;
+  /** 预览内相对链接点击 → 在应用内切到目标文件（语义同文件树 onOpenFile）。 */
+  onOpenFile?: (relPath: string, fileName: string, root: string) => void;
 }
 
 function basename(p: string): string {
@@ -32,7 +34,7 @@ function countLines(s: string): number {
   return s.split(/\r\n|\r|\n/).length;
 }
 
-export function FileDrawer({ file, onClose }: Props) {
+export function FileDrawer({ file, onClose, onOpenFile }: Props) {
   const [widthPct, setWidthPct] = useState(45);
   const [dirty, setDirty] = useState(false);
   const [initialContent, setInitialContent] = useState('');
@@ -169,10 +171,15 @@ export function FileDrawer({ file, onClose }: Props) {
         <div className="drawer-body">
           {kind === 'loading' && <div className="preview-empty">加载中…</div>}
           {kind === 'code' && (
-            <CodePreview root={file.root} path={file.path} onChange={(c) => {
-              setCurrentContent(c);
-              setDirty(c !== initialContent);
-            }} />
+            <CodePreview
+              root={file.root}
+              path={file.path}
+              onChange={(c) => {
+                setCurrentContent(c);
+                setDirty(c !== initialContent);
+              }}
+              onOpenFile={onOpenFile ? (relPath, name) => onOpenFile(relPath, name, file.root) : undefined}
+            />
           )}
           {kind === 'image' && <ImagePreview root={file.root} path={file.path} />}
           {kind === 'pdf' && file.absPath && <PdfPreview absPath={file.absPath} />}

@@ -26,7 +26,7 @@ vi.mock('electron', () => ({
     isDestroyed = () => false;
     isVisible = () => false;
     focus = vi.fn();
-    webContents = { send: vi.fn(), on: vi.fn() };
+    webContents = { send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn() };
     on = vi.fn();
   },
   Tray: class { constructor() {} setToolTip() {} setContextMenu() {} on() {} },
