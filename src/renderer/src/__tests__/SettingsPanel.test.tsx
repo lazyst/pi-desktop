@@ -120,4 +120,27 @@ describe('SettingsPanel', () => {
     expect(screen.getByText('sess-4')).toBeInTheDocument();
     expect(screen.getByText('收起')).toBeInTheDocument();
   });
+
+  it('字体大小步进器：增大/减小调用 setConfig 并更新显示', async () => {
+    const api = {
+      getConfig: vi.fn().mockResolvedValue(CONFIG),
+      setConfig: vi.fn().mockResolvedValue(undefined),
+    };
+    (window as any).pi = api;
+    render(<SettingsPanel onClose={() => {}} />);
+
+    // 默认字号 13px（getFontSize 回退默认），显示 “13px”
+    expect(await screen.findByText('字体大小')).toBeInTheDocument();
+    expect(screen.getByText('13px')).toBeInTheDocument();
+
+    // 点 + 增大到 14px 并持久化
+    fireEvent.click(screen.getByLabelText('增大字体'));
+    expect(api.setConfig).toHaveBeenCalledWith({ fontSize: 14 });
+    await waitFor(() => expect(screen.getByText('14px')).toBeInTheDocument());
+
+    // 点 − 减小回 13px
+    fireEvent.click(screen.getByLabelText('减小字体'));
+    expect(api.setConfig).toHaveBeenCalledWith({ fontSize: 13 });
+    await waitFor(() => expect(screen.getByText('13px')).toBeInTheDocument());
+  });
 });

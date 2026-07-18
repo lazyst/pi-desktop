@@ -9,6 +9,7 @@ import { FilePanel } from './components/FilePanel';
 import { FileDrawer, type DrawerFile } from './components/FileDrawer';
 import { pi } from './ipc';
 import { initTheme } from './theme';
+import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { defaultConfig } from '../../main/config';
 import type { SessionInfo, SessionStatus, AppConfig } from './types';
 
@@ -79,6 +80,7 @@ export default function App() {
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
     pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
+    initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
     // 启动动画：首屏（App 挂载）即视为就绪（见 docs/adr/0003 决策⑤a）。
     // 下一帧给 #splash 加 .splash--hidden 触发 CSS 淡出，并通知主进程 show() 窗口。
@@ -92,6 +94,22 @@ export default function App() {
       setTimeout(() => splash?.remove(), 400);
     });
     return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
+  }, []);
+
+  // 全局 Ctrl/Cmd + 滚轮缩放字体大小：在 window 捕获阶段拦截，先于 xterm 的
+  // passive wheel 监听器执行，调用 preventDefault 阻止浏览器原生页面缩放。
+  // 滚轮向上（deltaY<0）放大、向下缩小，步长 ±1px，夹在 [FONT_SIZE_MIN, FONT_SIZE_MAX]。
+  useEffect(() => {
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return; // 仅 Ctrl/Cmd+滚轮触发；普通滚动留给终端/页面。
+      e.preventDefault();
+      const dir = e.deltaY < 0 ? 1 : -1;
+      // 高通：忽略极小的物理刻度抖动，避免误触微调（触控板小步幅仍生效）。
+      if (Math.abs(e.deltaY) < 1) return;
+      bumpFontSize(dir);
+    };
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    return () => { window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions); };
   }, []);
 
   // 侧边栏只渲染 disk 会话；live 会话默认只活在终端区，发消息写盘后才出现。

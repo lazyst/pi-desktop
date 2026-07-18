@@ -49,6 +49,10 @@
   --focus-ring: 0 0 0 2px rgba(124, 156, 255, 0.55);
 
   /* Type */
+  /* 全局字体缩放因子：由 JS（fontSize.ts）按 fontSize/13 写入根节点，
+     所有 --fs-* 与 --term-font-size 均乘以它，实现“一处缩放、处处联动”。
+     默认 1（=13px 基准）；8–28px 范围对应 0.615–2.154。 */
+  --font-scale: 1;
   /* 终端专用字体栈：前置一个"含 CJK 的等宽字体"（更纱黑体/Sarasa Mono SC）。
      JetBrains Mono 仅含 latin 子集（见上方 @font-face），CJK 字符会回退到系统字体、
      墨迹高度与 ASCII 不同→DOM 渲染器下 cell 高度微变→视口上下漂（跳动根因之一）。
@@ -56,13 +60,13 @@
      （决策见 docs/adr/0002，对应 VS Code 在中文 Windows 依赖系统等宽字体含 CJK 的做法） */
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
   --term-font-mono: 'Sarasa Mono SC', 'Sarasa Mono', 'Microsoft YaHei Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, 'Microsoft YaHei', monospace;
-  --term-font-size: 13px;
+  --term-font-size: calc(13px * var(--font-scale));
   --term-line-height: 1.2;
-  --fs-xs: 11px;
-  --fs-sm: 12px;
-  --fs-md: 13px;
-  --fs-lg: 14px;
-  --fs-xl: 16px;
+  --fs-xs: calc(11px * var(--font-scale));
+  --fs-sm: calc(12px * var(--font-scale));
+  --fs-md: calc(13px * var(--font-scale));
+  --fs-lg: calc(14px * var(--font-scale));
+  --fs-xl: calc(16px * var(--font-scale));
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;

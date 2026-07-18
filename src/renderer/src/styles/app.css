@@ -366,13 +366,13 @@
   display: none;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text);
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1;
   cursor: pointer;
   box-shadow: var(--shadow-modal);
@@ -635,6 +635,42 @@
   color: var(--text-faint);
 }
 
+/* 字体大小步进器（设置面板常规项）：− [数值] +，与 segmented 同视觉语言 */
+.font-stepper {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.stepper-btn {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  transition: background-color var(--transition), color var(--transition);
+}
+.stepper-btn + .stepper-value { border-left: 1px solid var(--border); }
+.stepper-btn:last-child { border-left: 1px solid var(--border); }
+.stepper-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--accent); }
+.stepper-btn:disabled { color: var(--text-faint); cursor: not-allowed; opacity: 0.5; }
+.stepper-value {
+  min-width: 52px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  padding: 0 var(--sp-2);
+}
+
 /* 会话管理（设置面板内） */
 .session-mgmt {
   display: flex;
@@ -827,14 +863,14 @@
 }
 .file-row:hover { background: var(--bg-hover); }
 .file-name {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale));
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
 }
-.file-empty, .file-error { padding: var(--sp-3) var(--sp-3); font-size: 11px; color: var(--text-dim); }
+.file-empty, .file-error { padding: var(--sp-3) var(--sp-3); font-size: calc(11px * var(--font-scale)); color: var(--text-dim); }
 .file-error { color: #f87171; }
 
 /* 文件面板右缘拖拽条：复用侧边栏拖拽条的视觉语言。 */
@@ -853,7 +889,7 @@
 
 /* ── Git 视图 ── */
 .git-view { font-size: var(--fs-sm); padding: var(--sp-2); display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.git-empty { padding: var(--sp-3); font-size: 11px; color: var(--text-dim); }
+.git-empty { padding: var(--sp-3); font-size: calc(11px * var(--font-scale)); color: var(--text-dim); }
 .git-branch-row { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-1) var(--sp-2) var(--sp-2); flex-wrap: wrap; }
 .git-branch { font-weight: var(--fw-semibold); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .git-ahead-behind { display: inline-flex; gap: 4px; }
@@ -885,7 +921,7 @@
 .git-diff { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
 /* ── 双栏 diff 渲染 ── */
-.diff-scroll { overflow: auto; flex: 1; min-height: 0; font-family: var(--font-mono); font-size: 12px; line-height: 1.55; background: var(--bg-app); }
+.diff-scroll { overflow: auto; flex: 1; min-height: 0; font-family: var(--font-mono); font-size: calc(12px * var(--font-scale)); line-height: 1.55; background: var(--bg-app); }
 .diff-file + .diff-file { border-top: 1px solid var(--border); }
 .diff-file-header {
   display: grid;

@@ -134,7 +134,7 @@ export function CodePreview({ root, path, onChange }: Props) {
       langCompartment.current.of(langExtension(language)),
       themeCompartment.current.of(themeIsDark() ? oneDark : []),
       EditorView.theme({
-        '&': { height: '100%', fontSize: '13px' },
+        '&': { height: '100%', fontSize: 'calc(13px * var(--font-scale))' },
         '.cm-scroller': { fontFamily: 'var(--font-mono)', overflow: 'auto' },
       }),
       updateListener,

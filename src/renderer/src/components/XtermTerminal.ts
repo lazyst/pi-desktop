@@ -38,6 +38,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { getTheme, onThemeChange, TERM_THEMES } from '../theme';
+import { getFontSize, onFontSizeChange } from '../fontSize';
 import { TerminalDataBufferer } from './terminalDataBufferer';
 import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
 import { DecorationAddon } from './decorationAddon';
@@ -111,6 +112,8 @@ export class XtermTerminal {
   // —— 反注册函数 ——
   private offStatus: (() => void) | null = null;
   private offTheme: (() => void) | null = null;
+  // 字体大小变更反注册（订阅全局 fontSize，联动终端字号 + 重测 fit）。
+  private offFontSize: (() => void) | null = null;
   // 滚动状态回调：视口是否贴底变化时通知 React 壳（驱动「跳到底部」浮钮显隐）。
   onScrollState: ((atBottom: boolean) => void) | null = null;
   // 最近一次通知给壳的贴底状态（避免重复回调）。
@@ -182,7 +185,8 @@ export class XtermTerminal {
     this.markNavigationAddon = null;
     this.offStatus?.();
     this.offTheme?.();
-    this.offStatus = this.offTheme = null;
+    this.offFontSize?.();
+    this.offStatus = this.offTheme = this.offFontSize = null;
     // 键盘快捷键走 xterm attachCustomKeyEventHandler，term.dispose 时随实例清理；
     // 这里只清幂等标记，无需手动 removeEventListener（已不再绑 host）。
     this._keydownHandler = null;
@@ -646,7 +650,8 @@ export class XtermTerminal {
       // 滚动条：xterm 6 无 scrollbar option；本应用全屏 TUI 且 CSS 已 overflow:hidden，
       // 原生/内部滚动条均禁用，滑块配色由 theme.scrollbarSlider* 注入（见 theme.ts）。
       fontFamily: FONT_MONO,
-      fontSize: 13,
+      // 跟随全局字体大小（fontSize.ts）：默认基准 13px，可 8–28px 调节。
+      fontSize: getFontSize(),
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
       lineHeight: 1.0,
       scrollback: 1000,
@@ -742,6 +747,13 @@ export class XtermTerminal {
     this.offTheme = onThemeChange((t) => {
       if (this.term) this.term.options.theme = TERM_THEMES[t];
       // 主题切换清纹理图集，避免 WebGL 下旧配色/旧字形纹理残留闪留（对齐 VS Code forceRedraw）。
+      this.forceRedraw();
+    });
+    // 全局字体大小变化：同步终端字号并重新 fit + 重绘（cell 度量改变必须重建渲染纹理）。
+    this.offFontSize = onFontSizeChange((size) => {
+      if (!this.term || this.disposed) return;
+      this.term.options.fontSize = size;
+      this.doResize(true); // fit + 通知 PTY，对齐窗口尺寸变化时的校准路径。
       this.forceRedraw();
     });
 
