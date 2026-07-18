@@ -8,6 +8,7 @@ const sessions = [{ key: 'k1', cwd: 'C:\\Users\\hcz\\.pi-agent', name: 'e2e-sess
 
 function renderWithResize(overrides: any = {}) {
   const onSidebarResize = vi.fn();
+  const onTerminate = overrides.onTerminate ?? vi.fn();
   (window as any).pi = {
     listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
@@ -15,12 +16,12 @@ function renderWithResize(overrides: any = {}) {
   const utils = render(
     <Sidebar
       sessions={overrides.sessions ?? sessions}
-      statusMap={{}}
+      statusMap={overrides.statusMap ?? {}}
       pinned={[]}
       sidebarWidth={overrides.sidebarWidth ?? 280}
       onSidebarResize={overrides.onSidebarResize ?? onSidebarResize}
       onOpen={vi.fn()}
-      onTerminate={vi.fn()}
+      onTerminate={onTerminate}
       onPickDirectory={vi.fn()}
       onTogglePin={vi.fn()}
       onDeleteSession={vi.fn()}
@@ -32,8 +33,32 @@ function renderWithResize(overrides: any = {}) {
       onBatchDelete={vi.fn()}
     />,
   );
-  return { onSidebarResize, ...utils };
+  return { onSidebarResize, onTerminate, ...utils };
 }
+
+describe('Sidebar terminate button visibility', () => {
+  it('shows 终止进程 when status is running', () => {
+    const { container } = renderWithResize({ statusMap: { 'k1': 'running' } });
+    expect(container.querySelector('.terminate')).toBeTruthy();
+  });
+
+  it('shows 终止进程 when status is unknown (undefined) as a UX fallback', () => {
+    // 状态推送尚未到达/竞态时，会话仍在运行，隐藏按钮会使用户“无法终止”。
+    const { container } = renderWithResize({ statusMap: {} });
+    expect(container.querySelector('.terminate')).toBeTruthy();
+  });
+
+  it('hides 终止进程 when status is dead', () => {
+    const { container } = renderWithResize({ statusMap: { 'k1': 'dead' } });
+    expect(container.querySelector('.terminate')).toBeNull();
+  });
+
+  it('calls onTerminate with the disk key when clicked', () => {
+    const { container, onTerminate } = renderWithResize({ statusMap: { 'k1': 'running' } });
+    fireEvent.click(container.querySelector('.terminate')!);
+    expect(onTerminate).toHaveBeenCalledWith('k1');
+  });
+});
 
 describe('Sidebar resizer (draggable width)', () => {
   it('applies the persisted sidebarWidth as inline width on mount', () => {

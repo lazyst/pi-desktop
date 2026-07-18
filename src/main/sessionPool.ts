@@ -193,20 +193,29 @@ export class SessionPool {
     return new Set();
   }
   terminate(key: string) {
-    const e = this.entries.get(key);
+    // 侧边栏的「终止进程」按钮传入的是磁盘 `.jsonl` key，而进程实际以
+    // `live-<uuid>` 为 key 存在 entries 中（由 alias 间接关联）。必须先反查
+    // 到 live key 才能命中真实进程；否则 entries.get(diskKey) 为 undefined，
+    // 会静默 return（进程杀不掉、UI 无反馈）——这就是“过了一段时间后点击终止无效”的根因。
+    // 注意：killAll / clearDirectory 内部直接传 live key，这里反查对它们也安全
+    // （liveKeyFor 命中自身即原样返回）。
+    const liveKey = this.liveKeyFor(key);
+    const e = this.entries.get(liveKey);
     if (!e) return;
+    // 同时清理指向该 live 进程的 alias 映射，避免悬空引用（对齐 deleteSession）。
+    for (const [dk, lk] of this.alias) if (lk === liveKey) this.alias.delete(dk);
     e.pty.kill();
-    this.entries.delete(key);
+    this.entries.delete(liveKey);
     // 清掉该 key 的待发聚合缓冲，避免 kill 后迟到数据发往已销毁的渲染实例。
-    this.clearDataBuffer(key);
-    this.ackedBytes.delete(key);
+    this.clearDataBuffer(liveKey);
+    this.ackedBytes.delete(liveKey);
     if (e.diskKey) { this.clearDataBuffer(e.diskKey); this.ackedBytes.delete(e.diskKey); }
     // Update status AND notify the UI that the session ended. We call onExit
     // explicitly (not only via the pty 'exit' event) so the renderer updates
     // reliably even if the killed process does not emit a clean 'exit'. The
     // pty 'exit' handler may also fire onExit — that is idempotent.
-    this.opts.onStatus(key, 'dead');
-    this.opts.onExit(key);
+    this.opts.onStatus(liveKey, 'dead');
+    this.opts.onExit(liveKey);
   }
   // Resolve a disk `.jsonl` key to the key of the live process that owns it.
   // A session promoted from a `live-<uuid>` process links its disk path to that
@@ -214,6 +223,9 @@ export class SessionPool {
   // terminating by the disk key would miss the process. Resolve first so the right
   // pty is killed and `onExit` fires for the live key (the terminal pane's key),
   // avoiding orphaned processes and ghost panes.
+  // 若 key 既非 live key 也无 alias 映射（例如 reconcile 因竞态/预存同名 .jsonl
+  // 未能建立 alias），则返回原 key，交由调用方决定（terminate 会 miss 并安全返回，
+  // deleteSession 仍会按原 key 删文件）。
   private liveKeyFor(key: string): string {
     if (this.entries.has(key)) return key;
     const linked = this.alias.get(key);
