@@ -308,7 +308,10 @@ function createWindow() {
   // every create/destroy/exit (see ADR integrated-terminal-dir-grouping.md §6).
   function pushTerminalList(): void {
     if (win.isDestroyed()) return;
-    win.webContents.send('term:list', termPool.list());
+    // 注意：preload 的 onTerminalList 按 { list } 形状解构（见 preload/index.ts），
+    // 故此处必须发送 { list: [...] } 而非裸数组，否则渲染端收到 undefined →
+    // setTerminals(undefined) → useMemo 遍历时抛 "terminals is not iterable" 崩溃。
+    win.webContents.send('term:list', { list: termPool.list() });
   }
 
   // 列出当前平台可用的终端 profile（供设置面板下拉 + 新建终端默认选择）

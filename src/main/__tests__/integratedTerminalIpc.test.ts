@@ -178,7 +178,7 @@ describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
     sentSpy.mockClear();
     capturedOnExit!('term-x');
     // 退出即主动推送最新终端列表（ADR §6「主动推送，避免轮询」）。
-    expect(sentSpy).toHaveBeenCalledWith('term:list', expect.any(Array));
+    expect(sentSpy).toHaveBeenCalledWith('term:list', { list: expect.any(Array) });
   });
 
   it('terminal:create pushes term:list after creating a terminal', async () => {
@@ -186,6 +186,6 @@ describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
     sentSpy.mockClear();
     await ipcHandlers['terminal:create'](null, { profile, cwd: 'C:\\work' });
     // create 后同样主动推送，保证渲染层计数实时。
-    expect(sentSpy).toHaveBeenCalledWith('term:list', expect.any(Array));
+    expect(sentSpy).toHaveBeenCalledWith('term:list', { list: expect.any(Array) });
   });
 });
