@@ -20,11 +20,17 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 // 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
-import { defaultConfig, parseConfig, mergeConfig, getDefaultAppWorkDir } from './config';
+import { defaultConfig, parseConfig, mergeConfig } from './config';
 import { snapshotWindowState, initialBoundsOptions } from './windowState';
 import { IntegratedTerminalPool } from './integratedTerminalPool';
 import { detectTerminalProfiles } from './shellProfiles';
-import type { AppConfig, TerminalProfile } from '../renderer/src/types';
+
+// 默认应用工作目录的绝对路径（仅 main 进程使用，有 node:os）。config.ts 因被
+// renderer（sandbox，无 node:os）共享而不能 import node 模块，故在此用 node:os/path 计算。
+// 文件夹名 ('piDesktop') 由 config.DEFAULT_APP_WORK_DIR_NAME 提供，保持单一来源。
+function getDefaultAppWorkDir(): string {
+  return path.join(os.homedir(), 'piDesktop');
+}import type { AppConfig, TerminalProfile } from '../renderer/src/types';
 
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 let configState: AppConfig | undefined;
