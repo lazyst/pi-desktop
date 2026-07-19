@@ -21,6 +21,7 @@ function renderSidebar(overrides: any = {}) {
   const onBatchDelete = vi.fn();
   const onToggleSelect = vi.fn();
   const onRemoveDir = vi.fn();
+  const onNewTerminalInAppWorkDir = vi.fn();
   (window as any).pi = {
     listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
@@ -45,9 +46,12 @@ function renderSidebar(overrides: any = {}) {
       onBatchDelete={overrides.onBatchDelete ?? onBatchDelete}
       onRemoveDir={overrides.onRemoveDir ?? onRemoveDir}
       addedDirs={overrides.addedDirs ?? []}
+      appWorkDir={overrides.appWorkDir ?? ''}
+      terminalsByCwd={overrides.terminalsByCwd ?? new Map<string, number>()}
+      onNewTerminalInAppWorkDir={overrides.onNewTerminalInAppWorkDir ?? onNewTerminalInAppWorkDir}
     />,
   );
-  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, onRemoveDir, ...utils };
+  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, onRemoveDir, onNewTerminalInAppWorkDir, ...utils };
 }
 
 it('group “移除目录” action calls onRemoveDir with that cwd', () => {
@@ -213,4 +217,39 @@ describe('Sidebar', () => {
     // 终止按钮仍然可用
     expect(item.querySelector('.terminate')).toBeInTheDocument();
   });
+  it('renders the "应用工作目录" group when appWorkDir is provided', () => {
+    renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
+    const title = screen.getByText('📁 应用工作目录');
+    expect(title).toBeInTheDocument();
+  });
+
+  it('app work dir group shows a terminal count badge from terminalsByCwd', () => {
+    const map = new Map<string, number>([['C:\\Users\\hcz\\piDesktop', 3]]);
+    renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop', terminalsByCwd: map });
+    const badge = screen.getByText('3 Terminal');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveClass('terminal-count');
+  });
+
+  it('app work dir group "+“ calls onNewTerminalInAppWorkDir', () => {
+    const { onNewTerminalInAppWorkDir } = renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
+    fireEvent.click(screen.getByLabelText('在应用工作目录新建集成终端'));
+    expect(onNewTerminalInAppWorkDir).toHaveBeenCalled();
+  });
+
+  it('app work dir group does NOT show pin/remove/clear actions', () => {
+    renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
+    expect(screen.queryByLabelText('置顶 C:\\Users\\hcz\\piDesktop')).toBeNull();
+    expect(screen.queryByLabelText('移除目录 C:\\Users\\hcz\\piDesktop')).toBeNull();
+    expect(screen.queryByLabelText('清空 C:\\Users\\hcz\\piDesktop')).toBeNull();
+  });
+
+  it('project group shows terminal count badge and keeps its session actions', () => {
+    const map = new Map<string, number>([['C:\\Users\\hcz\\project', 2]]);
+    const { onTogglePin } = renderSidebar({ terminalsByCwd: map });
+    expect(screen.getByText('2 Terminal')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('置顶 C:\\Users\\hcz\\project'));
+    expect(onTogglePin).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
+  });
+
 });

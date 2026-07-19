@@ -104,6 +104,8 @@ contextBridge.exposeInMainWorld('pi', {
   // ── 集成终端（抽屉内嵌的真实 shell）──
   listTerminalProfiles: (): Promise<TerminalProfile[]> => ipcRenderer.invoke('terminal:listProfiles'),
   createTerminal: (req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:create', req),
+  createTerminalInAppWorkDir: (req: { profile: TerminalProfile }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:createInAppWorkDir', req),
+  listIntegratedTerminals: (): Promise<IntegratedTerminalInfo[]> => ipcRenderer.invoke('terminal:list'),
   destroyTerminal: (id: string): Promise<void> => ipcRenderer.invoke('terminal:destroy', id),
   terminalInput: (id: string, data: string) => ipcRenderer.send('terminal:input', { id, data }),
   terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
@@ -116,5 +118,10 @@ contextBridge.exposeInMainWorld('pi', {
     const handler = (_e: unknown, m: { id: string }) => cb(m.id);
     ipcRenderer.on('term:exit', handler);
     return () => ipcRenderer.removeListener('term:exit', handler);
+  },
+  onTerminalList: (cb: (list: IntegratedTerminalInfo[]) => void) => {
+    const handler = (_e: unknown, m: { list: IntegratedTerminalInfo[] }) => cb(m.list);
+    ipcRenderer.on('term:list', handler);
+    return () => ipcRenderer.removeListener('term:list', handler);
   },
 });

@@ -22,6 +22,7 @@ function setup(overrides: Partial<AppConfig> = {}, listProfiles = PROFILES) {
     getConfig: vi.fn().mockResolvedValue({ ...CONFIG, ...overrides }),
     setConfig: vi.fn().mockResolvedValue(undefined),
     listTerminalProfiles: vi.fn().mockResolvedValue(listProfiles),
+    pickDirectory: vi.fn().mockResolvedValue(null),
   };
   (window as any).pi = api;
   render(<SettingsPanel onClose={() => {}} />);
@@ -92,5 +93,24 @@ describe('SettingsPanel 终端设置', () => {
     fireEvent.click(await screen.findByText('保存为默认'));
     expect(await screen.findByText('请填写 shell 路径')).toBeInTheDocument();
     expect(api.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('应用工作目录配置行存在，可填值并保存', async () => {
+    const api = setup({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
+    fireEvent.click(screen.getByText('终端'));
+    const input = (await screen.findByLabelText('应用工作目录')) as HTMLInputElement;
+    expect(input.value).toBe('C:\\Users\\hcz\\piDesktop');
+    fireEvent.change(input, { target: { value: 'D:\\work' } });
+    fireEvent.click(screen.getByText('保存'));
+    await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ appWorkDir: 'D:\\work' }));
+  });
+
+  it('应用工作目录“浏览…”调用 pickDirectory 并填入返回路径', async () => {
+    const api = setup({ appWorkDir: '' });
+    api.pickDirectory.mockResolvedValue('E:\\picked');
+    fireEvent.click(screen.getByText('终端'));
+    fireEvent.click(await screen.findByText('浏览…'));
+    const input = (await screen.findByLabelText('应用工作目录')) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('E:\\picked'));
   });
 });

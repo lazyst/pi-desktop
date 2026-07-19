@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import { ConfirmDialog } from './components/ConfirmDialog';
@@ -34,6 +34,9 @@ export default function App() {
   const [disk, setDisk] = useState<DiskSession[]>([]);
   const [pinned, setPinned] = useState<string[]>([]);
   const [addedDirs, setAddedDirs] = useState<string[]>([]);
+  // 应用工作目录分组的根目录（config.appWorkDir，默认 ~/piDesktop）。
+  // 该分组下的集成终端不挂靠任何项目 cwd，统一收容闲聊/临时终端。
+  const [appWorkDir, setAppWorkDir] = useState<string>('');
   // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
   // 文件管理器面板宽度（持久化于 config.filePanelWidth）。
@@ -107,7 +110,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then((diskList) => {
@@ -140,7 +143,10 @@ export default function App() {
         return remaining.length ? remaining[0].id : null;
       });
     });
-    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); };
+    // 订阅主进程主动推送的集成终端实例列表（create/destroy/exit 时），
+    // 保证左侧分组计数实时（对齐 ADR §6「主动推送，避免轮询」）。
+    const offTermList = pi.onTerminalList?.((list) => setTerminals(list));
+    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); offTermList?.(); };
   }, []);
   // passive wheel 监听器执行，调用 preventDefault 阻止浏览器原生页面缩放。
   // 滚轮向上（deltaY<0）放大、向下缩小，步长 ±1px，夹在 [FONT_SIZE_MIN, FONT_SIZE_MAX]。
@@ -177,6 +183,26 @@ export default function App() {
     ...disk.filter((d) => addedSet.has(d.cwd)),
     ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
   ];
+
+  // 集成终端按 cwd 聚合计数（纯终端数，不含 pi 会话数）：
+  //  - 终端 cwd === appWorkDir → 归入「应用工作目录」分组；
+  //  - 否则若命中某会话分组 cwd → 归入该项目分组；
+  //  - 其余（历史遗留 / 改 appWorkDir 前的旧终端，无对应会话分组）→ 归入空串兜底 key，
+  //    不污染 appWorkDir 计数（对齐 ADR §4/§5.3）。渲染层对该兜底 key 不显示徽标。
+  // 关键：appWorkDir 优先于项目 cwd 判定，避免「应用目录 == 某项目目录」时双重计数。
+  const terminalsByCwd = useMemo(() => {
+    const map = new Map<string, number>();
+    const sessionCwds = new Set(sessions.map((s) => s.cwd));
+    for (const t of terminals) {
+      const owner = appWorkDir && t.cwd === appWorkDir
+        ? appWorkDir
+        : sessionCwds.has(t.cwd)
+          ? t.cwd
+          : ''; // 无匹配分组（历史/旧终端）兜底进空串 key
+      map.set(owner, (map.get(owner) ?? 0) + 1);
+    }
+    return map;
+  }, [terminals, appWorkDir, sessions]);
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
@@ -324,6 +350,24 @@ export default function App() {
     }
   }, [activeCwd]);
 
+  // 在「应用工作目录」分组下新建终端：cwd 取 config.appWorkDir（主进程确保目录存在）。
+  const handleNewTerminalInAppWorkDir = useCallback(async () => {
+    setDrawerOpen(true);
+    try {
+      if (!profilesRef.current) profilesRef.current = await pi.listTerminalProfiles();
+      const profiles = profilesRef.current;
+      const cfg = await pi.getConfig();
+      const defaultId = cfg.defaultTerminalProfile;
+      const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
+      if (!profile) return;
+      const info = await pi.createTerminalInAppWorkDir({ profile });
+      setTerminals((prev) => [...prev, info]);
+      setActiveTermId(info.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   // 关闭 tab：移除本地列表 + 通知主进程销毁；若关掉的是激活态则切到剩余第一个或 null；
   // 关掉最后一个则自动收起抽屉。
   const handleCloseTab = useCallback((id: string) => {
@@ -375,6 +419,9 @@ export default function App() {
         onBatchDelete={handleBatchDelete}
         sidebarWidth={sidebarWidth}
         onSidebarResize={handleSidebarResize}
+        appWorkDir={appWorkDir}
+        terminalsByCwd={terminalsByCwd}
+        onNewTerminalInAppWorkDir={handleNewTerminalInAppWorkDir}
       />
       <FilePanel
         addedDirs={addedDirs}

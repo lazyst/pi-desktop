@@ -160,6 +160,27 @@ describe('IntegratedTerminalPool (logic, mocked node-pty)', () => {
     expect(onExit).toHaveBeenCalledTimes(2);
   });
 
+  it('list returns info for all live terminals including their cwd', () => {
+    const { pool } = makePool();
+    const a = pool.create(profile, cwd);
+    const b = pool.create(profile, cwd);
+    const all = pool.list();
+    expect(all.map((t) => t.id).sort()).toEqual([a.id, b.id].sort());
+    // cwd 透传，供渲染层按目录分组聚合计数
+    expect(all[0].cwd).toBe(cwd);
+    expect(all.every((t) => t.id.startsWith('term-'))).toBe(true);
+  });
+
+  it('list excludes terminals that have exited', () => {
+    const { pool } = makePool();
+    const a = pool.create(profile, cwd);
+    pool.create(profile, cwd);
+    pool.destroy(a.id);
+    const ids = pool.list().map((t) => t.id);
+    expect(ids).not.toContain(a.id);
+    expect(ids).toHaveLength(1);
+  });
+
   describe('5ms aggregation window (aligned with SessionPool TerminalDataBufferer)', () => {
     it('merges multiple rapid data chunks into a single onData call', async () => {
       vi.useFakeTimers();

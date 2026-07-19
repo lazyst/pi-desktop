@@ -21,6 +21,7 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 // 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
 import { defaultConfig, parseConfig, mergeConfig } from './config';
+import { DEFAULT_APP_WORK_DIR } from './config';
 import { snapshotWindowState, initialBoundsOptions } from './windowState';
 import { IntegratedTerminalPool } from './integratedTerminalPool';
 import { detectTerminalProfiles } from './shellProfiles';
@@ -41,6 +42,26 @@ function loadConfig(): AppConfig {
   } catch {
     return defaultConfig();
   }
+}
+
+// 确保 config.appWorkDir 字段存在（旧配置/损坏时补全默认 ~/piDesktop），
+// 并创建该目录（递归），使「应用工作目录」分组下的集成终端 cwd 真实可用，
+// 避免 integratedTerminalPool 的 safeCwd 因目录缺失而静默回退到 process.cwd()、导致分组语义失效。
+function ensureAppWorkDir(): string {
+  ensureLoaded();
+  const cfg = configState!;
+  // 旧配置/损坏时补全默认 ~/piDesktop，并写回持久化（对齐 ADR §3 A1「自动填默认并写回」）。
+  const dir = cfg.appWorkDir || DEFAULT_APP_WORK_DIR;
+  if (!cfg.appWorkDir) {
+    configState = mergeConfig(cfg, { appWorkDir: dir });
+    writeConfigNow();
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch (err) {
+    console.error('[appWorkDir] failed to create dir:', dir, err);
+  }
+  return dir;
 }
 
 function ensureLoaded(): void {
@@ -64,6 +85,10 @@ function getConfig(): AppConfig {
 function setConfig(partial: Partial<AppConfig>): void {
   ensureLoaded();
   configState = mergeConfig(configState!, partial);
+  // 应用工作目录变更：确保新目录已创建（递归），使该分组下的终端 cwd 立即可用。
+  if (partial.appWorkDir) {
+    try { fs.mkdirSync(partial.appWorkDir, { recursive: true }); } catch (err) { console.error('[appWorkDir] failed to create dir:', partial.appWorkDir, err); }
+  }
   configDirty = true;
   if (configTimer) clearTimeout(configTimer);
   // 防抖写盘：拖拽 / 缩放等高频变更下避免频繁 IO。
@@ -269,8 +294,17 @@ function createWindow() {
   const termPool = new IntegratedTerminalPool({
     cols: 80, rows: 24,
     onData: (id, data) => { if (!win.isDestroyed()) win.webContents.send('term:data', { id, data }); },
-    onExit: (id) => { if (!win.isDestroyed()) win.webContents.send('term:exit', { id }); },
+    // push the latest instance list on exit too, so the renderer's per-dir count stays live
+    onExit: (id) => { if (!win.isDestroyed()) { win.webContents.send('term:exit', { id }); pushTerminalList(); } },
   });
+
+  // Push the current live integrated-terminal instance list (each with its cwd) to the
+  // renderer, which aggregates it into per-directory group counts. Called after
+  // every create/destroy/exit (see ADR integrated-terminal-dir-grouping.md §6).
+  function pushTerminalList(): void {
+    if (win.isDestroyed()) return;
+    win.webContents.send('term:list', termPool.list());
+  }
 
   // 列出当前平台可用的终端 profile（供设置面板下拉 + 新建终端默认选择）
   ipcMain.handle('terminal:listProfiles', () => detectTerminalProfiles());
@@ -278,10 +312,26 @@ function createWindow() {
   // 或从 config 读取 defaultTerminalProfile 解析。此处直接接收完整 profile 对象即可。
   ipcMain.handle('terminal:create', (_e, req: { profile: TerminalProfile; cwd: string }) => {
     try {
-      return termPool.create(req.profile, req.cwd);
+      const info = termPool.create(req.profile, req.cwd);
+      pushTerminalList();
+      return info;
     } catch (err) {
       console.error('[terminal:create] failed:', err);
       throw new Error('无法启动集成终端，请确认所选 shell 可用');
+    }
+  });
+  // 列出当前所有存活的集成终端实例信息（含 cwd），供渲染层按目录分组统计计数。
+  ipcMain.handle('terminal:list', () => termPool.list());
+  // 在「应用工作目录」分组下创建集成终端：cwd 取 config.appWorkDir（已确保存在）。
+  ipcMain.handle('terminal:createInAppWorkDir', (_e, req: { profile: TerminalProfile }) => {
+    try {
+      const cwd = ensureAppWorkDir();
+      const info = termPool.create(req.profile, cwd);
+      pushTerminalList();
+      return info;
+    } catch (err) {
+      console.error('[terminal:createInAppWorkDir] failed:', err);
+      throw new Error('无法在应用工作目录启动集成终端，请确认所选 shell 可用');
     }
   });
   ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => termPool.write(m.id, m.data));
