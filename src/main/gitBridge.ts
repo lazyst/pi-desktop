@@ -24,7 +24,10 @@ async function git(cwd: string, args: string[]): Promise<string> {
 export interface GitStatus {
   isGit: boolean;
   branch: string | null;
-  dirty: boolean;
+  /** Total added lines across working tree (unstaged + staged). */
+  additions: number;
+  /** Total deleted lines across working tree (unstaged + staged). */
+  deletions: number;
   ahead: number;
   behind: number;
   porcelain: string;
@@ -61,10 +64,34 @@ export async function gitStatus(cwd: string): Promise<GitStatus> {
       ahead = a ? Number(a[1]) : 0;
       behind = b ? Number(b[1]) : 0;
     }
-    const dirty = lines.length > 1 && lines.some((l) => l.trim().length > 0);
-    return { isGit: true, branch, dirty, ahead, behind, porcelain };
+    // Skip the first line (the `## branch` header); only real file-change
+    // lines (tracked modifications, untracked files, etc.) indicate dirtiness.
+    const dirty = lines.slice(1).some((l) => l.trim().length > 0);
+    // Count added / deleted lines via `git diff --numstat` (unstaged + staged).
+    // numstat prints `<additions>\t<deletions>\t<path>` per file; binary or
+    // renamed files may show `-` for a count, which we treat as 0.
+    const unstagedStat = await git(cwd, ['diff', '--numstat']);
+    const stagedStat = await git(cwd, ['diff', '--cached', '--numstat']);
+    const sumStat = (out: string): { additions: number; deletions: number } => {
+      let additions = 0;
+      let deletions = 0;
+      for (const line of out.split('\n')) {
+        const cols = line.split('\t');
+        if (cols.length < 2) continue;
+        const a = Number(cols[0]);
+        const d = Number(cols[1]);
+        additions += Number.isFinite(a) ? a : 0;
+        deletions += Number.isFinite(d) ? d : 0;
+      }
+      return { additions, deletions };
+    };
+    const u = sumStat(unstagedStat);
+    const s = sumStat(stagedStat);
+    const additions = u.additions + s.additions;
+    const deletions = u.deletions + s.deletions;
+    return { isGit: true, branch, additions, deletions, ahead, behind, porcelain };
   } catch {
-    return { isGit: false, branch: null, dirty: false, ahead: 0, behind: 0, porcelain: '' };
+    return { isGit: false, branch: null, additions: 0, deletions: 0, ahead: 0, behind: 0, porcelain: '' };
   }
 }
 

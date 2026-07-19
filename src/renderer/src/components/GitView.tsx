@@ -19,7 +19,7 @@ interface Props {
 }
 
 export function GitView({ cwd }: Props) {
-  const [status, setStatus] = useState<{ isGit: boolean; branch: string | null; dirty: boolean; ahead: number; behind: number } | null>(null);
+  const [status, setStatus] = useState<{ isGit: boolean; branch: string | null; additions: number; deletions: number; ahead: number; behind: number } | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [selectedHash, setSelectedHash] = useState<string | null>(null);
   const [commitDiff, setCommitDiff] = useState<string>('');
@@ -30,7 +30,7 @@ export function GitView({ cwd }: Props) {
     if (!cwd) { setStatus(null); setLog([]); return; }
     try {
       const s = await pi.gitStatus(cwd);
-      setStatus({ isGit: s.isGit, branch: s.branch, dirty: s.dirty, ahead: s.ahead, behind: s.behind });
+      setStatus({ isGit: s.isGit, branch: s.branch, additions: s.additions, deletions: s.deletions, ahead: s.ahead, behind: s.behind });
       if (s.isGit) {
         const l = await pi.gitLog(cwd, 100);
         setLog(l);
@@ -41,7 +41,7 @@ export function GitView({ cwd }: Props) {
         setWorkDiff('');
       }
     } catch {
-      setStatus({ isGit: false, branch: null, dirty: false, ahead: 0, behind: 0 });
+      setStatus({ isGit: false, branch: null, additions: 0, deletions: 0, ahead: 0, behind: 0 });
       setLog([]);
       setWorkDiff('');
     }
@@ -83,7 +83,12 @@ export function GitView({ cwd }: Props) {
             {status.behind > 0 && <span className="git-behind">↓{status.behind}</span>}
           </span>
         )}
-        {status.dirty && <span className="git-dirty" title="工作区有改动">● 改动</span>}
+        {(status.additions > 0 || status.deletions > 0) && (
+          <span className="git-changes" title="工作区改动行数">
+            {status.additions > 0 && <span className="git-add">+{status.additions}</span>}
+            {status.deletions > 0 && <span className="git-del">−{status.deletions}</span>}
+          </span>
+        )}
       </div>
 
       <div className="git-section-title">提交历史</div>
