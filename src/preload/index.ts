@@ -125,6 +125,18 @@ contextBridge.exposeInMainWorld('pi', {
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),
   gitDiff: (cwd: string, ref?: string): Promise<string> => ipcRenderer.invoke('git:diff', { cwd, ref }),
+  // 工作区实时监听：订阅某仓库 cwd，主进程经 'git:change' 推送变更；返回取消订阅函数。
+  gitWatch: (cwd: string, cb: () => void): (() => void) => {
+    const handler = (_e: unknown, m: { cwd: string }) => {
+      if (m.cwd === cwd) cb();
+    };
+    ipcRenderer.send('git:watch', { cwd });
+    ipcRenderer.on('git:change', handler);
+    return () => {
+      ipcRenderer.removeListener('git:change', handler);
+      ipcRenderer.send('git:unwatch', { cwd });
+    };
+  },
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone: () => ipcRenderer.send('splash:done'),
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。

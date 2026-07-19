@@ -4,7 +4,7 @@
 // All data comes from the `git:status` / `git:log` / `git:diff` IPC channels,
 // which degrade gracefully for non-git directories. Ported concept from plan
 // M5 (G1). No push / commit / checkout — read only.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { pi } from '../ipc';
 
 interface LogEntry {
@@ -43,9 +43,23 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit }: Props) {
     }
   }, [cwd]);
 
+  // 事件驱动实时刷新：订阅该仓库的工作区变更（主进程 git:watch 监听整个仓库目录），
+  // 任意文件/分支/暂存变更即刷新。用 250ms 防抖合并突发连发事件（如编辑器批量保存）。
+  // 同时首次挂载立即拉取一次，避免依赖外部事件才有初始数据。
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (!cwd) return;
     void refresh();
-  }, [refresh]);
+    const scheduleRefresh = () => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => { refreshTimer.current = null; void refresh(); }, 250);
+    };
+    const unsubscribe = pi.gitWatch(cwd, scheduleRefresh);
+    return () => {
+      unsubscribe();
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    };
+  }, [cwd, refresh]);
 
   if (!status) {
     return <div className="git-empty">加载中…</div>;
