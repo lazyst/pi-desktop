@@ -24,6 +24,8 @@ export function GitDiffDrawer({ cwd, commitHash, onClose }: Props) {
   const draggingRef = useRef(false);
 
   // Fetch the right diff whenever the target (cwd / commit) changes.
+  // 工作区 diff（commitHash 为 null）额外订阅该仓库的实时变更，文件改动即时刷新；
+  // 提交 diff（历史快照）无需订阅。
   useEffect(() => {
     if (!cwd) return;
     let cancelled = false;
@@ -40,7 +42,23 @@ export function GitDiffDrawer({ cwd, commitHash, onClose }: Props) {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    let unsubscribe: (() => void) | undefined;
+    if (commitHash === null) {
+      // 250ms 防抖合并突发事件；刷新复用本轮 fetch 逻辑（重新拉取 diff）。
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      unsubscribe = pi.gitWatch(cwd, () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = null;
+          setLoading(true);
+          pi.gitDiff(cwd).then((d) => { if (!cancelled) setDiff(d); }).catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); }).finally(() => { if (!cancelled) setLoading(false); });
+        }, 250);
+      });
+    }
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [cwd, commitHash]);
 
   // Resize from the left edge (mirrors FileDrawer).

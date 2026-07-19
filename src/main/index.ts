@@ -580,6 +580,46 @@ function createWindow() {
   ipcMain.handle('git:status', (_e, req: { cwd: string }) => gitStatus(req.cwd));
   ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
   ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
+  // ── Git 工作区实时监听（事件驱动刷新，对齐 VS Code FileWatcher）──
+  // 渲染端订阅某仓库 cwd，主进程以 recursive 监听整个仓库目录（含子目录改动与
+  // .git/ 内 index/ref 变更），任意变更即经 'git:change' 推送 { cwd } 让渲染端刷新。
+  // 同一 cwd 可能被多处订阅（GitView + 打开中的 GitDiffDrawer），用引用计数管理，
+  // 最后一处取消才真正关闭底层 watcher，避免重复句柄。
+  const gitWatchers = new Map<string, { stop: () => void; refs: number }>();
+  ipcMain.on('git:watch', (_e, req: { cwd: string }) => {
+    const cwd = req.cwd;
+    const existing = gitWatchers.get(cwd);
+    if (existing) {
+      existing.refs += 1;
+      return;
+    }
+    let watcher: fs.FSWatcher | undefined;
+    let closed = false;
+    const stop = () => {
+      if (closed) return;
+      closed = true;
+      try { watcher?.close(); } catch { /* 已关闭，忽略 */ }
+    };
+    try {
+      watcher = fs.watch(cwd, { recursive: true }, () => {
+        if (!win.isDestroyed()) win.webContents.send('git:change', { cwd });
+      });
+      watcher.on('error', () => stop());
+    } catch {
+      // 目录不存在/无权限：降级为 no-op（仓库可能尚未就绪）。
+      return;
+    }
+    gitWatchers.set(cwd, { stop, refs: 1 });
+  });
+  ipcMain.on('git:unwatch', (_e, req: { cwd: string }) => {
+    const entry = gitWatchers.get(req.cwd);
+    if (!entry) return;
+    entry.refs -= 1;
+    if (entry.refs <= 0) {
+      entry.stop();
+      gitWatchers.delete(req.cwd);
+    }
+  });
 
   // 无边框窗口的窗口控制（自建标题条调用）
   ipcMain.on('window:minimize', () => { if (!win.isDestroyed()) win.minimize(); });

@@ -12,6 +12,8 @@ function seedPi(overrides: Record<string, any> = {}) {
     gitStatus: vi.fn(async () => ({ isGit: true, branch: 'main', additions: 0, deletions: 0, ahead: 0, behind: 0, porcelain: '## main' })),
     gitLog: vi.fn(async () => []),
     gitDiff: vi.fn(async () => ''),
+    // GitView 挂载时订阅工作区实时变更（事件驱动刷新）；测试无需真实监听。
+    gitWatch: vi.fn(() => () => {}),
     ...overrides,
   };
 }
