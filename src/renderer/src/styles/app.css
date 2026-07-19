@@ -192,6 +192,57 @@
   background: var(--bg-panel);
 }
 
+/* 终端设置页原生控件（下拉框 / 文本框）深色主题适配。
+   <select>/<input> 为浏览器原生控件，默认白底黑字，需显式覆盖才能融入深色面板。
+   与 .segmented / .btn 共用 --bg-panel / --border / --text / --accent 变量，保持视觉一致。 */
+.profile-select,
+.custom-path-input,
+.custom-args-input,
+.app-work-dir-input {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  outline: none;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+/* 文本框占据剩余空间（.settings-row 为 space-between，label 在左、控件在右） */
+.app-work-dir { display: flex; flex: 1; }
+.app-work-dir-input { flex: 1; min-width: 0; }
+.profile-select,
+.custom-path-input,
+.custom-args-input { flex: 1; min-width: 0; }
+.profile-select:focus,
+.custom-path-input:focus,
+.custom-args-input:focus,
+.app-work-dir-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.profile-select:hover,
+.custom-path-input:hover,
+.custom-args-input:hover,
+.app-work-dir-input:hover {
+  border-color: var(--border-strong);
+}
+/* 下拉框选项（option）在多数浏览器中无法完全自定义，但至少保证控件本体深色 */
+.profile-select {
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  /* 右侧预留箭头空间：用渐变绘制一个简洁的下拉指示符，避免系统原生箭头白块 */
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+                    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: var(--sp-5);
+}
+.profile-select option { background: var(--bg-panel); color: var(--text); }
+
 /* Sidebar */
 .sidebar {
   width: 280px;
