@@ -292,6 +292,8 @@ function TreeNode({
       autoFocus
       defaultValue={value}
       onClick={(e) => e.stopPropagation()}
+      // VS Code 风格：聚焦即全选默认名，用户直接打字即覆盖（无需先删除）。
+      onFocus={(e) => (e.target as HTMLInputElement).select()}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           onCommitEdit((e.target as HTMLInputElement).value);
