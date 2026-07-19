@@ -355,6 +355,8 @@ export class XtermTerminal {
         if (paths.length) {
           const joined = paths.map((p) => this._shellQuote(p)).join(' ');
           this.pasteText(joined);
+          // 拖拽落盘后把焦点转移到终端，使其可直接键盘输入（对齐 VS Code）。
+          this.term?.focus();
         }
         return;
       }
@@ -363,7 +365,9 @@ export class XtermTerminal {
       e.preventDefault();
       const files = Array.from(e.dataTransfer.files ?? []);
       if (!files.length) return;
-      this.pasteDroppedFiles(files).catch(() => {});
+      this.pasteDroppedFiles(files)
+        .catch(() => {})
+        .finally(() => this.term?.focus());
     };
     this._dragOverHandler = onDragOver;
     this._dropHandler = onDrop;
