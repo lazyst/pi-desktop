@@ -1234,7 +1234,17 @@
   width: 4px;
   height: 100%;
   cursor: ew-resize;
+  z-index: 5; /* 始终高于内部 header/body（含 CodeMirror），保证任何文件类型都能命中拖拽 */
   transition: background-color var(--transition);
+}
+/* 透明命中区加宽到约 10px，避免 4px 过窄难以点中（尤其 CodeMirror 编辑模式下） */
+.drawer-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 10px;
+  height: 100%;
 }
 .drawer-resizer:hover { background: var(--accent-soft); }
 .drawer-resizer:active { background: var(--accent); }
