@@ -62,10 +62,6 @@ const FONT_MONO =
 // 窗口结束一次性 term.write，消除流式高频重绘的中间帧闪烁。
 const WRITE_DEBOUNCE_MS = 5;
 
-// 平滑滚动时长：对齐 VS Code RenderConstants.SmoothScrollDuration(125ms)。仅物理滚轮/触控板
-// 滚动事件时由 xterm 内部启用平滑动画；全屏 TUI 无手动滚动交互，常态不触发，不对写入造成拖影。
-const SMOOTH_SCROLL_DURATION = 125;
-
 export interface XtermTerminalOptions {
   // 数据通道抽象：PTY 输出订阅 / 退出订阅 / 键盘输入 / 尺寸通知全部走 channel，
   // XtermTerminal 不再直接引用全局 pi 的会话数据流 API（见 terminalChannel.ts）。
@@ -657,10 +653,8 @@ export class XtermTerminal {
       // 滚轮/快速滚动灵敏度：对齐 VS Code 默认（fastScrollSensitivity 5 / scrollSensitivity 1）。
       fastScrollSensitivity: 5,
       scrollSensitivity: 1,
-      // 平滑滚动时长：对齐 VS Code RenderConstants.SmoothScrollDuration(125ms)。仅在有滚轮/
-      // 触摸板滚动事件时由 xterm 内部启用平滑动画；全屏 TUI 无手动滚动交互，常态不触发，
-      // 不对写入造成拖影。
-      smoothScrollDuration: SMOOTH_SCROLL_DURATION,
+      // 关闭平滑滚动：始终为 0，避免物理滚轮/触控板滚动时的平滑动画与拖影。
+      smoothScrollDuration: 0,
       // macOS 选项键行为：对齐 VS Code 默认 false（electron 桌面端行为一致）。
       macOptionIsMeta: false,
       macOptionClickForcesSelection: false,
@@ -800,9 +794,6 @@ export class XtermTerminal {
       this.forceRedraw();
     });
 
-    // 物理滚轮/触控板分类器：仅物理滚轮启用平滑滚动（对齐 VS Code MouseWheelClassifier）。
-    this.bindWheelClassifier();
-
     // resize 分轴防抖器（对齐 VS Code TerminalResizeDebouncer）。
     this.resizeDebouncer = new TerminalResizeDebouncer(
       () => this.active,
@@ -862,25 +853,8 @@ export class XtermTerminal {
     }
   }
 
-  /** 物理滚轮 vs 触控板判定（精简自 VS Code MouseWheelClassifier）。
-   * 物理滚轮 deltaX 恒为 0 且 deltaY 为离散整数倍（±刻度）；触控板两轴皆有连续小数。
-   * 仅当物理滚轮时启用 smoothScrollDuration，触控板滚动禁用平滑（否则轻滚拖影）。
-   * 判定结果经此动态写入 term.options.smoothScrollDuration（基础时长 125ms 对齐 VS Code）。 */
-  private bindWheelClassifier(): void {
-    const term = this.term;
-    if (!term) return;
-    const el = (term as any).element as HTMLElement | undefined;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      if (this.disposed || !this.term) return;
-      const isPhysical = e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 1;
-      const enabled = isPhysical;
-      this.term.options.smoothScrollDuration = enabled ? SMOOTH_SCROLL_DURATION : 0;
-    };
-    el.addEventListener('wheel', onWheel, { passive: true });
-  }
 
-  /** 收到 5ms 聚合后的 PTY 数据（对齐 VS Code TerminalInstance._onProcessData）：
+  /** 滚动到指定 buffer 行（对齐 VS Code MarkNavigationAddon.scrollToLine）。（对齐 VS Code TerminalInstance._onProcessData）：
    * 按 shell integration 的 OSC 633 序列（命令开始/结束）做语义切分，各段按序 term.write，
    * 使命令边界成为独立写入单元。xterm 原生处理 ?2026 同步输出序列（DEC 同步输出），会自行
    * 合并未闭合的同步帧再呈现，故无需自研同步帧切分。
