@@ -153,6 +153,20 @@ describe('Sidebar', () => {
     expect(onTerminate).toHaveBeenCalledWith('k1');
   });
 
+  it('does NOT show 终止进程 for a session with no status record (not started)', async () => {
+    // 回归：磁盘历史/未启动会话在 statusMap 中无记录时不应误显「终止进程」。
+    renderSidebar({ statusMap: {} });
+    const item = (await screen.findByText('e2e-session')).closest('.session-item')!;
+    expect(item.querySelector('.terminate')).toBeNull();
+  });
+
+  it('does NOT show 终止进程 for a dead session', async () => {
+    // 回归：已退出（'dead'）的会话不应显示「终止进程」。
+    renderSidebar({ statusMap: { k1: 'dead' } });
+    const item = (await screen.findByText('e2e-session')).closest('.session-item')!;
+    expect(item.querySelector('.terminate')).toBeNull();
+  });
+
   it('marks the active session item with .active class', () => {
     const { container } = renderSidebar({ statusMap: { k1: 'running' }, activeKey: 'k1' });
     const active = screen.getByText('e2e-session').closest('.session-item')!;
