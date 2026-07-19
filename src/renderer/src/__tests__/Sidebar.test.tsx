@@ -22,6 +22,7 @@ function renderSidebar(overrides: any = {}) {
   const onToggleSelect = vi.fn();
   const onRemoveDir = vi.fn();
   const onNewTerminalInAppWorkDir = vi.fn();
+  const onNewTerminalInCwd = vi.fn();
   (window as any).pi = {
     listSessions: vi.fn(), openSession: vi.fn(), terminate: vi.fn(),
     input: vi.fn(), resize: vi.fn(), onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(),
@@ -49,9 +50,10 @@ function renderSidebar(overrides: any = {}) {
       appWorkDir={overrides.appWorkDir ?? ''}
       terminalsByCwd={overrides.terminalsByCwd ?? new Map<string, number>()}
       onNewTerminalInAppWorkDir={overrides.onNewTerminalInAppWorkDir ?? onNewTerminalInAppWorkDir}
+      onNewTerminalInCwd={overrides.onNewTerminalInCwd ?? onNewTerminalInCwd}
     />,
   );
-  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, onRemoveDir, onNewTerminalInAppWorkDir, ...utils };
+  return { onOpen, onTerminate, onPickDirectory, onTogglePin, onDeleteSession, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete, onToggleSelect, onRemoveDir, onNewTerminalInAppWorkDir, onNewTerminalInCwd, ...utils };
 }
 
 it('group “移除目录” action calls onRemoveDir with that cwd', () => {
@@ -225,10 +227,11 @@ describe('Sidebar', () => {
     // 终止按钮仍然可用
     expect(item.querySelector('.terminate')).toBeInTheDocument();
   });
-  it('renders the "应用工作目录" group when appWorkDir is provided', () => {
+  it('app work dir group shows the actual directory name (not a fixed label)', () => {
     renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
-    const title = screen.getByText('📁 应用工作目录');
+    const title = screen.getByText('📁 piDesktop');
     expect(title).toBeInTheDocument();
+    expect(title.closest('.group-name')).toHaveAttribute('title', 'C:\\Users\\hcz\\piDesktop');
   });
 
   it('app work dir group shows a terminal count badge from terminalsByCwd', () => {
@@ -239,25 +242,39 @@ describe('Sidebar', () => {
     expect(badge).toHaveClass('terminal-count');
   });
 
-  it('app work dir group "+“ calls onNewTerminalInAppWorkDir', () => {
+  it('app work dir group "+" (terminal) calls onNewTerminalInAppWorkDir', () => {
     const { onNewTerminalInAppWorkDir } = renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
-    fireEvent.click(screen.getByLabelText('在应用工作目录新建集成终端'));
+    fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\piDesktop 新建集成终端'));
     expect(onNewTerminalInAppWorkDir).toHaveBeenCalled();
   });
 
-  it('app work dir group does NOT show pin/remove/clear actions', () => {
-    renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
-    expect(screen.queryByLabelText('置顶 C:\\Users\\hcz\\piDesktop')).toBeNull();
+  it('app work dir group shows pin/new-session/new-terminal/clear actions (same as project dirs)', () => {
+    const { onTogglePin, onOpen, onClearDirectory, onNewTerminalInAppWorkDir } = renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
+    // 置顶
+    fireEvent.click(screen.getByLabelText('置顶 C:\\Users\\hcz\\piDesktop'));
+    expect(onTogglePin).toHaveBeenCalledWith('C:\\Users\\hcz\\piDesktop');
+    // 新建会话
+    fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\piDesktop 新建会话'));
+    expect(onOpen).toHaveBeenCalledWith({ cwd: 'C:\\Users\\hcz\\piDesktop' });
+    // 新建终端
+    fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\piDesktop 新建集成终端'));
+    expect(onNewTerminalInAppWorkDir).toHaveBeenCalled();
+    // 清空
+    fireEvent.click(screen.getByLabelText('清空 C:\\Users\\hcz\\piDesktop'));
+    expect(onClearDirectory).toHaveBeenCalledWith('C:\\Users\\hcz\\piDesktop');
+    // 应用工作目录不提供“移除目录”（它不像项目目录那样可被注销）
     expect(screen.queryByLabelText('移除目录 C:\\Users\\hcz\\piDesktop')).toBeNull();
-    expect(screen.queryByLabelText('清空 C:\\Users\\hcz\\piDesktop')).toBeNull();
   });
 
   it('project group shows terminal count badge and keeps its session actions', () => {
     const map = new Map<string, number>([['C:\\Users\\hcz\\project', 2]]);
-    const { onTogglePin } = renderSidebar({ terminalsByCwd: map });
+    const { onTogglePin, onNewTerminalInCwd } = renderSidebar({ terminalsByCwd: map });
     expect(screen.getByText('2 Terminal')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('置顶 C:\\Users\\hcz\\project'));
     expect(onTogglePin).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
+    // 项目分组新增“新建集成终端”入口
+    fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\project 新建集成终端'));
+    expect(onNewTerminalInCwd).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
   });
 
 });
