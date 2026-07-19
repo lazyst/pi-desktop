@@ -14,6 +14,7 @@ import {
   copy,
   listNames,
   uniqueName,
+  watchDir,
 } from '../fsBridge';
 
 describe('fsBridge io (real tmp dir)', () => {
@@ -125,6 +126,36 @@ describe('fsBridge io (real tmp dir)', () => {
     await writeFile(dir, 'f.txt', 'x');
     const names = await listNames(dir, '');
     expect(names.sort()).toEqual(['d', 'f.txt']);
+  });
+});
+
+describe('watchDir (external change detection)', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fswatch-'));
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('fires onChange when a file is created externally', async () => {
+    let fired = 0;
+    const stop = watchDir(dir, '', () => { fired++; });
+    await new Promise((r) => setTimeout(r, 50));
+    fs.writeFileSync(path.join(dir, 'created.txt'), 'x');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(fired).toBeGreaterThan(0);
+    stop();
+  });
+
+  it('stops firing after unsubscribe', async () => {
+    let fired = 0;
+    const stop = watchDir(dir, '', () => { fired++; });
+    await new Promise((r) => setTimeout(r, 50));
+    stop();
+    fs.writeFileSync(path.join(dir, 'after-stop.txt'), 'x');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(fired).toBe(0);
   });
 });
 

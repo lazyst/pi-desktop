@@ -107,6 +107,20 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('fs:listNames', { root, dir }),
   fsUniqueName: (base: string, existing: string[]): Promise<string> =>
     ipcRenderer.invoke('fs:uniqueName', { base, existing }),
+  // 目录监听（外部变更自动刷新，对齐 VS Code FileWatcher）：
+  // 渲染端订阅某目录，主进程经 'fs:change' 通道推送变更；返回取消订阅函数。
+  fsWatch: (root: string, dir: string, cb: () => void): (() => void) => {
+    const handler = (_e: unknown, m: { dir: string }) => {
+      if (m.dir === dir) cb();
+    };
+    ipcRenderer.send('fs:watch', { root, dir });
+    ipcRenderer.on('fs:change', handler);
+    // 返回的取消函数：移除监听 + 通知主进程引用计数减一。
+    return () => {
+      ipcRenderer.removeListener('fs:change', handler);
+      ipcRenderer.send('fs:unwatch', { root, dir });
+    };
+  },
   // ── Git 只读查看（D）──
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),

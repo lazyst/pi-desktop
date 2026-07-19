@@ -8,6 +8,51 @@ import * as path from 'node:path';
 // ============================================================================
 
 // ============================================================================
+// Directory watching (external change detection)
+// ============================================================================
+
+/**
+ * 监听某目录的「直接子项」变更（新建/删除/重命名），对齐 VS Code 的 FileWatcher
+ * 语义：只关心目录自身直接子项的变化，不递归子目录内部。
+ *
+ * - 用 fs.watch(abs, { recursive: false })；监听器注册在目录上，子项的增删触发
+ *   'rename' 事件，子项内容改动触发 'change' 事件（内容改动对文件树无影响，但无害）。
+ * - 目录不存在时静默返回 no-op（避免抛错拖垮渲染端订阅）；目录被外部删除后，
+ *   底层 watcher 可能异步报错，这里 catch 吸收。
+ * - 返回 unsubscribe 函数，调用即停止监听并移除底层的 'error' 兜底监听。
+ */
+export function watchDir(
+  root: string,
+  dir: string,
+  onChange: () => void,
+): () => void {
+  const abs = path.resolve(root, dir);
+  let watcher: fs.FSWatcher | undefined;
+  let closed = false;
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      watcher?.close();
+    } catch {
+      /* 已关闭/无效句柄，忽略 */
+    }
+  };
+  try {
+    watcher = fs.watch(abs, { recursive: false }, (_event, _filename) => {
+      // _event: 'rename' | 'change'；我们关心任意直接子项变化。
+      onChange();
+    });
+    // 目录在监听期间被外部删除：底层会触发 'error'（如 EPERM/ENOENT），
+    // 兜底关闭，避免句柄泄漏与重复回调。
+    watcher.on('error', () => stop());
+  } catch {
+    // 目录不存在或无法监听：降级为 no-op。
+    return stop;
+  }
+  return stop;
+}
+
 // Directory listing
 // ============================================================================
 
