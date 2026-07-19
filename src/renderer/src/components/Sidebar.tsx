@@ -137,7 +137,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           return (
             <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}`}>
               <div className="group-title">
-                <span className="group-name">📁 {g.cwd}</span>
+                <span className="group-name" title={g.cwd}>📁 {g.cwd.split(/[\\/]/).pop() || g.cwd}</span>
                 <span className="group-actions">
                   <button
                     className="icon-btn"
