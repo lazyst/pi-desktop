@@ -350,10 +350,11 @@ function TerminalSettings() {
   const [customPath, setCustomPath] = useState('');
   const [customArgs, setCustomArgs] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
+  const [appWorkDir, setAppWorkDir] = useState('');
 
   useEffect(() => {
     pi.getConfig()
-      .then((cfg) => setDefaultId(cfg.defaultTerminalProfile))
+      .then((cfg) => { setDefaultId(cfg.defaultTerminalProfile); setAppWorkDir(cfg.appWorkDir ?? ''); })
       .catch(() => {});
     pi.listTerminalProfiles()
       .then(setProfiles)
@@ -448,6 +449,37 @@ function TerminalSettings() {
         </div>
       )}
       <p className="settings-hint">提示：新建集成终端时会使用此处选择的默认终端。</p>
+      <div className="settings-row">
+        <span className="settings-label">应用工作目录</span>
+        <div className="app-work-dir">
+          <input
+            type="text"
+            className="app-work-dir-input"
+            aria-label="应用工作目录"
+            placeholder={'~/piDesktop'}
+            value={appWorkDir}
+            onChange={(e) => setAppWorkDir(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn"
+            onClick={async () => {
+              const dir = await pi.pickDirectory();
+              if (dir) setAppWorkDir(dir);
+            }}
+          >
+            浏览…
+          </button>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => pi.setConfig({ appWorkDir }).catch(() => {})}
+          >
+            保存
+          </button>
+        </div>
+      </div>
+      <p className="settings-hint">用于收容与具体项目无关、与 pi-agent 闲聊或临时的集成终端。修改后只影响之后新建的终端。</p>
     </div>
   );
 }

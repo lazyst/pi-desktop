@@ -54,7 +54,14 @@ export interface PiApi {
   // ── 集成终端（抽屉内嵌的真实 shell）──
   listTerminalProfiles(): Promise<TerminalProfile[]>;
   createTerminal(req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo>;
+  // 在「应用工作目录」分组下创建集成终端（cwd 取 config.appWorkDir，主进程确保目录存在）。
+  createTerminalInAppWorkDir(req: { profile: TerminalProfile }): Promise<IntegratedTerminalInfo>;
+  // 列出当前所有存活的集成终端实例信息（含各自 cwd），供侧边栏按目录分组统计计数。
+  listIntegratedTerminals(): Promise<IntegratedTerminalInfo[]>;
   destroyTerminal(id: string): Promise<void>;
+  // 主进程在终端 create/destroy/exit 时主动推送的最新实例列表（含各自 cwd），
+  // 供侧边栏按目录分组实时刷新计数（对齐 ADR §6「主动推送，避免轮询」）。
+  onTerminalList(cb: (list: IntegratedTerminalInfo[]) => void): () => void;
   terminalInput(id: string, data: string): void;
   terminalResize(id: string, cols: number, rows: number): void;
   onTerminalData(cb: (id: string, data: string) => void): () => void;

@@ -35,11 +35,18 @@ interface Props {
   // 用户“添加目录”显式注册的目录列表：即使该目录下暂无会话，也需在侧边栏
   // 渲染出对应分组，保证“移除目录 / 新建会话 / 清空目录 / 置顶”等功能可用。
   addedDirs?: string[];
+  // 「应用工作目录」分组的根目录（config.appWorkDir，默认 ~/piDesktop）。
+  // 始终渲染为一个独立分组，收容与具体项目无关、与 pi-agent 闲聊/临时的集成终端。
+  appWorkDir?: string;
+  // 各 cwd 下运行中的集成终端计数（纯终端数，不含会话数），key 为 cwd。
+  terminalsByCwd?: Map<string, number>;
+  // 在「应用工作目录」分组下新建集成终端的入口。
+  onNewTerminalInAppWorkDir?: () => void;
 }
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
-  sidebarWidth, onSidebarResize, addedDirs }: Props) {
+  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -89,7 +96,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
 
   // 分组按 cwd；置顶分组排到最前（保持置顶先后顺序），其余维持原序。
   const pinnedSet = new Set(pinned);
-  const rawGroups: Array<{ cwd: string; items: Session[] }> = [];
+  const rawGroups: Array<{ cwd: string; items: Session[]; isAppWorkDir?: boolean }> = [];
   const cwdIndex = new Map<string, number>();
   for (const s of sessions) {
     let i = cwdIndex.get(s.cwd);
@@ -107,6 +114,14 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
   for (const cwd of addedDirs ?? []) {
     if (!cwdIndex.has(cwd)) groups.push({ cwd, items: [] });
   }
+  // 始终渲染「应用工作目录」分组（收容与具体项目无关的闲聊/临时集成终端），
+  // 即使其下暂无会话也显示，以提供独立的新建入口。
+  if (appWorkDir && !cwdIndex.has(appWorkDir)) {
+    groups.push({ cwd: appWorkDir, items: [], isAppWorkDir: true });
+  }
+
+  // 取某 cwd 下运行中的集成终端计数（纯终端数）；无则 0。
+  const terminalCount = (cwd: string): number => terminalsByCwd?.get(cwd) ?? 0;
 
   return (
     <>
@@ -134,11 +149,28 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           const isOpen = !!expanded[g.cwd];
           const visible = isOpen ? g.items : g.items.slice(0, 5);
           const hidden = g.items.length - visible.length;
+          const termCount = terminalCount(g.cwd);
+          const showTermBadge = termCount > 0;
           return (
             <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}`}>
               <div className="group-title">
-                <span className="group-name" title={g.cwd}>📁 {g.cwd.split(/[\\/]/).pop() || g.cwd}</span>
+                <span className="group-name" title={g.cwd}>
+                  {g.isAppWorkDir ? '📁 应用工作目录' : `📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
+                  {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>{termCount} Terminal</span>}
+                </span>
                 <span className="group-actions">
+                  {g.isAppWorkDir ? (
+                    <button
+                      className="icon-btn"
+                      title="在应用工作目录新建集成终端"
+                      aria-label="在应用工作目录新建集成终端"
+                      data-action="new-app-terminal"
+                      onClick={() => onNewTerminalInAppWorkDir?.()}
+                    >
+                      <IconNewSession />
+                    </button>
+                  ) : (
+                    <>
                   <button
                     className="icon-btn"
                     title={`置顶 ${g.cwd}`}
@@ -175,6 +207,8 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   >
                     <IconTrash />
                   </button>
+                    </>
+                  )}
                 </span>
               </div>
               {visible.map((s) => {

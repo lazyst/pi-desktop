@@ -13,6 +13,8 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 const ipcHandlers: Record<string, (...a: any[]) => any> = {};
 const ipcListeners: Record<string, (...a: any[]) => any> = {};
 let readyResolver: (() => void) | undefined;
+// 捕获 createWindow 内构造的 win.webContents.send，便于断言「主动推送 term:list」。
+const sentSpy = vi.fn();
 
 // 记录传给 IntegratedTerminalPool 构造器的 onData/onExit 回调，便于后续模拟数据/退出事件。
 let capturedOnData: ((id: string, data: string) => void) | undefined;
@@ -24,6 +26,7 @@ const poolFns = {
   write: vi.fn(),
   resize: vi.fn(),
   destroy: vi.fn(),
+  list: vi.fn(() => []),
 };
 
 // detectTerminalProfiles 的真实实现应由 shellProfiles 提供；此处断言「被调用」即可
@@ -47,7 +50,7 @@ vi.mock('electron', () => ({
     isDestroyed = () => false;
     isVisible = () => false;
     focus = vi.fn();
-    webContents = { send: vi.fn(), on: vi.fn(), setWindowOpenHandler: vi.fn() };
+    webContents = { send: sentSpy, on: vi.fn(), setWindowOpenHandler: vi.fn() };
     on = vi.fn();
   },
   Tray: class { constructor() {} setToolTip() {} setContextMenu() {} on() {} },
@@ -79,6 +82,7 @@ vi.mock('../integratedTerminalPool', () => ({
     write = poolFns.write;
     resize = poolFns.resize;
     destroy = poolFns.destroy;
+    list = poolFns.list;
   },
 }));
 
@@ -171,7 +175,17 @@ describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
   it('pool onExit → renderer exit channel (term:exit) contract is captured', () => {
     expect(typeof capturedOnExit).toBe('function');
     expect(capturedOnExit!.length).toBe(1); // (id)
+    sentSpy.mockClear();
     capturedOnExit!('term-x');
-    // 契约成立：onExit(id) 供 preload onTerminalExit 通过 'term:exit' 过滤。
+    // 退出即主动推送最新终端列表（ADR §6「主动推送，避免轮询」）。
+    expect(sentSpy).toHaveBeenCalledWith('term:list', expect.any(Array));
+  });
+
+  it('terminal:create pushes term:list after creating a terminal', async () => {
+    poolFns.create.mockReturnValue(fakeInfo);
+    sentSpy.mockClear();
+    await ipcHandlers['terminal:create'](null, { profile, cwd: 'C:\\work' });
+    // create 后同样主动推送，保证渲染层计数实时。
+    expect(sentSpy).toHaveBeenCalledWith('term:list', expect.any(Array));
   });
 });

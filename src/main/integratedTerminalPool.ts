@@ -124,6 +124,14 @@ export class IntegratedTerminalPool {
     return this.entries.has(id);
   }
 
+  /**
+   * 列出当前所有存活的集成终端实例信息（含各自的 cwd）。
+   * 渲染层据此按 cwd 聚合、统计各目录分组下运行中的终端数。
+   */
+  list(): IntegratedTerminalInfo[] {
+    return [...this.entries.values()].map((e) => e.info);
+  }
+
   /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。 */
   private emitData(id: string, data: string): void {
     let buf = this.dataBuffers.get(id);

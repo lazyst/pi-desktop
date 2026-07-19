@@ -1,4 +1,9 @@
 import type { AppConfig } from '../renderer/src/types';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+// Default root dir for the "app work dir" group (~/piDesktop). Overridable in settings.
+export const DEFAULT_APP_WORK_DIR = path.join(os.homedir(), 'piDesktop');
 
 // 默认配置（见 docs/adr/0001）。窗口几何默认 1100×720、非最大化。
 export function defaultConfig(): AppConfig {
@@ -17,6 +22,8 @@ export function defaultConfig(): AppConfig {
     terminalDrawerHeight: 220,
     // 用户自定义终端 profile 覆盖（key 为 profile id）。
     terminalProfiles: {},
+    // app work dir group root (defaults to ~/piDesktop)
+    appWorkDir: DEFAULT_APP_WORK_DIR,
   };
 }
 
