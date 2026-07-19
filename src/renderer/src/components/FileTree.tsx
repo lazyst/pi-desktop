@@ -237,6 +237,28 @@ function TreeNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // 外部变更自动刷新（对齐 VS Code FileWatcher）：目录展开后订阅其直接子项变更，
+  // 系统文件管理器在该目录新建/删除文件时，主进程经 'fs:change' 推送 → 这里刷新本目录。
+  // 防抖 150ms 合并编辑器保存等高频抖动；折叠或卸载时取消订阅。
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!node.isDir || !open) return;
+    // 测试环境 pi mock 可能无 fsWatch；判空跳过（生产环境正常订阅）。
+    if (typeof pi.fsWatch !== 'function') return;
+    const onChange = () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        model.refresh(node.fullPath);
+        loadChildren(true);
+      }, 150);
+    };
+    const unsubscribe = pi.fsWatch(root, node.fullPath, onChange);
+    return () => {
+      unsubscribe();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [node.isDir, node.fullPath, open, root, model, loadChildren]);
+
   const handleClick = useCallback((e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
       onToggleSelect(node.fullPath, e);
@@ -420,6 +442,23 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     // 子目录：仅 bump 版本，TreeNode 在展开态自行重载。
     setTreeRefreshKey((k) => k + 1);
   }, [root, model]);
+
+  // 根目录（''）外部变更自动刷新：watch 根层直接子项，系统文件管理器在根目录
+  // 新建/删除文件时实时反映到文件树（对齐 VS Code FileWatcher）。防抖 150ms。
+  useEffect(() => {
+    if (!root) return;
+    // 测试环境 pi mock 可能无 fsWatch；判空跳过（生产环境正常订阅）。
+    if (typeof pi.fsWatch !== 'function') return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const unsubscribe = pi.fsWatch(root, '', () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => refreshDir(''), 150);
+    });
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, [root, refreshDir]);
 
   useEffect(() => {
     const rootChanged = prevRootRef.current !== root;
