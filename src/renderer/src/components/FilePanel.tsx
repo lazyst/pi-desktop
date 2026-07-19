@@ -22,12 +22,15 @@ interface Props {
   addedDirs: string[];
   activeCwd: string | null;
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
+  // 在右侧抽屉查看工作区改动 / 某次提交改动（由 App 管理抽屉状态）。
+  onOpenWorkDiff: (cwd: string) => void;
+  onOpenCommit: (cwd: string, hash: string) => void;
   // 面板宽度（持久化于 config.filePanelWidth），可拖拽右缘调整。
   width: number;
   onResize: (w: number) => void;
 }
 
-export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }: Props) {
+export function FilePanel({ addedDirs, activeCwd, onOpenFile, onOpenWorkDiff, onOpenCommit, width, onResize }: Props) {
   const [tab, setTab] = useState<Tab>('files');
   // Root directory: default to the active session's cwd; otherwise empty
   // (file tree shows “未选择工作目录”). User can still pick an added dir via
@@ -144,7 +147,7 @@ export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }:
         ) : tab === 'files' ? (
           <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
         ) : (
-          <GitView cwd={effectiveRoot} />
+          <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} />
         )}
       </div>
 
