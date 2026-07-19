@@ -1,20 +1,18 @@
 // Right-side slide-out drawer for single-file preview / editing.
 // • Overlay (semi-transparent) over the terminal area, click to dismiss.
 // • Resizable from the left edge (initial 45% window width, clamped).
-// • Per-type rendering: images → ImagePreview, pdf → PdfPreview,
-//   text/code → CodePreview.
+// • Per-type rendering: images → ImagePreview, text/code → CodePreview.
+//   二进制/无内置预览器的文件（pdf/exe/zip/docx…）直接交系统默认程序打开。
 // • Dirty tracking + explicit save (fs:writeFile) + close-confirm when dirty.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pi } from '../ipc';
 import { CodePreview } from './CodePreview';
 import { ImagePreview } from './ImagePreview';
-import { PdfPreview } from './PdfPreview';
 import { ConfirmDialog } from './ConfirmDialog';
 
 export interface DrawerFile {
   root: string;
   path: string; // relative path within root
-  absPath?: string;
 }
 
 interface Props {
@@ -29,6 +27,13 @@ function basename(p: string): string {
   return idx >= 0 ? p.slice(idx + 1) : p;
 }
 
+// 由 root + 相对路径算出绝对路径（渲染进程无 Node 集成，用纯字符串拼接；
+// file:// 对 / 与 \\ 均接受）。
+function toAbsolutePath(root: string, relPath: string): string {
+  if (!root) return relPath;
+  return `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[\\/]+/, '')}`;
+}
+
 function countLines(s: string): number {
   if (!s) return 0;
   return s.split(/\r\n|\r|\n/).length;
@@ -39,7 +44,7 @@ export function FileDrawer({ file, onClose, onOpenFile }: Props) {
   const [dirty, setDirty] = useState(false);
   const [initialContent, setInitialContent] = useState('');
   const [currentContent, setCurrentContent] = useState('');
-  const [kind, setKind] = useState<'code' | 'image' | 'pdf' | 'binary' | 'loading'>('loading');
+  const [kind, setKind] = useState<'code' | 'image' | 'binary' | 'loading'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -58,9 +63,16 @@ export function FileDrawer({ file, onClose, onOpenFile }: Props) {
       try {
         const res = await pi.fsReadFile(file.root, file.path);
         if (cancelled) return;
+        // 二进制 / 过大文件：无内置预览器，交系统默认程序打开（等同双击文件），然后关闭抽屉。
+        if (res.isBinary) {
+          const abs = toAbsolutePath(file.root, file.path);
+          const ok = await pi.fsOpenWithSystem(abs);
+          if (!cancelled) setKind('binary');
+          if (!ok && !cancelled) setError('无法用系统程序打开该文件');
+          if (!cancelled) onClose();
+          return;
+        }
         if (res.isImage) setKind('image');
-        else if (res.isPdf) setKind('pdf');
-        else if (res.isBinary) setKind('binary');
         else {
           setKind('code');
           setInitialContent(res.content);
@@ -138,7 +150,7 @@ export function FileDrawer({ file, onClose, onOpenFile }: Props) {
 
   if (!file) return null;
 
-  const fileName = basename(file.path) || file.path || basename(file.absPath ?? '') || '未命名文件';
+  const fileName = basename(file.path) || file.path || '未命名文件';
 
   return (
     <>
@@ -182,10 +194,8 @@ export function FileDrawer({ file, onClose, onOpenFile }: Props) {
             />
           )}
           {kind === 'image' && <ImagePreview root={file.root} path={file.path} />}
-          {kind === 'pdf' && file.absPath && <PdfPreview absPath={file.absPath} />}
-          {kind === 'pdf' && !file.absPath && <div className="preview-error">PDF 预览需要本地绝对路径。</div>}
           {kind === 'binary' && !error && (
-            <div className="preview-error">该文件为二进制或过大，无法预览。</div>
+            <div className="preview-error">该文件为二进制或过大，已用系统默认程序打开。</div>
           )}
         </div>
       </div>

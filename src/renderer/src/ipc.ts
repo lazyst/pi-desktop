@@ -39,7 +39,7 @@ export interface PiApi {
   setConfig(partial: Partial<AppConfig>): Promise<void>;
   // ── 文件管理器 / 预览（A + B）──
   fsListDir(root: string, dir: string): Promise<Array<{ name: string; isDir: boolean; size: number; mtime: number }>>;
-  fsReadFile(root: string, path: string, maxBytes?: number): Promise<{ content: string; language: string; size: number; isBinary: boolean; isImage: boolean; isPdf: boolean; dataUrl?: string }>;
+  fsReadFile(root: string, path: string, maxBytes?: number): Promise<{ content: string; language: string; size: number; isBinary: boolean; isImage: boolean; dataUrl?: string }>;
   fsWriteFile(root: string, path: string, content: string): Promise<void>;
   fsStat(root: string, path: string): Promise<{ size: number; mtime: number; isDir: boolean }>;
   // ── 文件管理写操作（新建 / 重命名 / 删除 / 复制 / 移动）──
@@ -57,8 +57,13 @@ export interface PiApi {
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone(): void;
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。
-  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（见 PdfPreview）。
+  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（本地文件走 fsOpenWithSystem）。
   openExternal(url: string): Promise<boolean>;
+  // 用系统默认程序打开本地文件（二进制/无内置预览器的文件，如 pdf/exe/zip/docx 等）。
+  // 等效于在系统文件管理器双击该文件，不走 openExternal 的协议白名单。
+  fsOpenWithSystem(absPath: string): Promise<boolean>;
+  // 在系统文件管理器中打开文件/目录所在位置并选中（资源管理器“打开所在文件夹”）。
+  fsShowInFolder(absPath: string): Promise<boolean>;
   // ── 集成终端（抽屉内嵌的真实 shell）──
   listTerminalProfiles(): Promise<TerminalProfile[]>;
   createTerminal(req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo>;
