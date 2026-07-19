@@ -100,3 +100,38 @@ export function IconTerminal({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+// 文件预览 Tab 图标（文档风格）。
+export function IconFile({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+    </svg>
+  );
+}
+
+// Git diff Tab 图标（分支分叉风格）。
+export function IconGitDiff({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="6" cy="18" r="2.5" />
+      <circle cx="18" cy="9" r="2.5" />
+      <path d="M6 8.5v7" />
+      <path d="M6 6c0-1.5 1-2.5 3-2.5h6" />
+      <path d="M18 11.5V15" />
+    </svg>
+  );
+}
+
+// 终端会话 Tab 图标（复用现有 IconTerminal 的视觉）。
+export function IconSession({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9l3 3-3 3" />
+      <path d="M13 15h4" />
+    </svg>
+  );
+}

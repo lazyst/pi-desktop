@@ -23,6 +23,7 @@ export function defaultConfig(): AppConfig {
     window: { maximized: false, bounds: { x: 0, y: 0, width: 1100, height: 720 } },
     sidebarWidth: 280,
     filePanelWidth: 260,
+    rightPanelWidth: 280,
     closeBehavior: 'minimize-to-tray',
     fontSize: 13,
     // 集成终端：默认 profile（null = 探测到的第一个 / 平台默认）。

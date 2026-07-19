@@ -6,16 +6,14 @@ import { TitleBar } from './components/TitleBar';
 import { TerminalDrawer } from './components/TerminalDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
-import { FilePanel } from './components/FilePanel';
-import { FileDrawer, type DrawerFile } from './components/FileDrawer';
-import { GitDiffDrawer } from './components/GitDiffDrawer';
+import { CenterPane } from './components/CenterPane';
+import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { defaultConfig } from '../../main/config';
-import type { SessionInfo, SessionStatus, AppConfig, IntegratedTerminalInfo, TerminalProfile } from './types';
+import type { SessionStatus, AppConfig, IntegratedTerminalInfo, TerminalProfile, AnyTab, SessionTab, PreviewTab, DiffTab } from './types';
 
-interface OpenSession extends SessionInfo { key: string; cwd: string; name: string; status: SessionStatus; }
 interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
 
 function readPinned(cfg: AppConfig): string[] {
@@ -28,8 +26,9 @@ function toDisk(groups: { cwd: string; sessions: Array<{ key: string; name: stri
 }
 
 export default function App() {
-  const [open, setOpen] = useState<OpenSession[]>([]);
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+  // 中间区通用 Tab 模型（重构阶段 3E）：单一状态源，App 持有所有 tab，CenterPane 仅渲染。
+  const [tabs, setTabs] = useState<AnyTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [statusMap, setStatusMap] = useState<Record<string, SessionStatus>>({});
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
@@ -40,8 +39,8 @@ export default function App() {
   const [appWorkDir, setAppWorkDir] = useState<string>('');
   // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
-  // 文件管理器面板宽度（持久化于 config.filePanelWidth）。
-  const [filePanelWidth, setFilePanelWidth] = useState<number>(defaultConfig().filePanelWidth);
+  // 右栏（文件树 / Git）宽度（持久化于 config.rightPanelWidth）。
+  const [rightPanelWidth, setRightPanelWidth] = useState<number>(defaultConfig().rightPanelWidth);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
@@ -56,10 +55,13 @@ export default function App() {
   // 镜像 terminals 到 ref，供 onTerminalExit 等只订阅一次的回调读取最新值（避免闭包陈旧）。
   const terminalsRef = useRef<IntegratedTerminalInfo[]>([]);
   terminalsRef.current = terminals;
-  // 当前激活会话（供集成终端 cwd 默认取值）。提前计算，供 handler 的依赖数组使用。
-  const active = open.find((s) => s.key === activeKey);
-  const activeStatus = activeKey ? statusMap[activeKey] : undefined;
-  const activeCwd = active?.cwd ?? null;
+  // 镜像 tabs 到 ref，供 handleCloseCenterTab 切换 active 时读取最新值（避免闭包陈旧）。
+  const tabsRef = useRef<AnyTab[]>([]);
+  tabsRef.current = tabs;
+  // 当前激活会话（从 tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
+  const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
+  const activeCwd = activeSession?.cwd ?? null;
+  const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
   // 文件预览抽屉：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
   // Same mapping held in a ref so the `onRelink` handler (which fires right after
   const liveToDiskRef = useRef<Record<string, string>>({});
@@ -68,7 +70,8 @@ export default function App() {
     const offStatus = pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
     const offExit = pi.onExit((key) => {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
-      setOpen((list) => list.filter((s) => s.key !== key));
+      // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）。
+      setTabs((prev) => prev.filter((t) => !(t.kind === 'session' && t.key === key)));
     });
     // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
     // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
@@ -94,14 +97,15 @@ export default function App() {
       // Promote the display name of a live session once pi writes its `.jsonl`:
       // the header should show the real session name (first user message) instead of
       // the placeholder “new-session”.
-      setOpen((list) => {
+      setTabs((list) => {
         let changed = false;
-        const next = list.map((s) => {
-          const dk = map[s.key];
-          if (!dk) return s;
+        const next = list.map((t) => {
+          if (t.kind !== 'session') return t;
+          const dk = map[t.key];
+          if (!dk) return t;
           const d = diskList.find((x) => x.key === dk);
-          if (d && d.name && d.name !== s.name) { changed = true; return { ...s, name: d.name }; }
-          return s;
+          if (d && d.name && d.name !== t.name) { changed = true; return { ...t, name: d.name, title: d.name }; }
+          return t;
         });
         return changed ? next : list;
       });
@@ -111,7 +115,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then((diskList) => {
@@ -174,9 +178,9 @@ export default function App() {
   // 不会出现在 liveToDisk 映射里——若只用 !promoted[key] 判定，会把已存在
   // 的磁盘会话误当成“未保存”的 live 会话重复显示并打上“未保存”徽标（见修复）。
   const isLiveKey = (k: string) => k.startsWith('live-');
-  const liveUnsaved: DiskSession[] = open
-    .filter((s) => isLiveKey(s.key) && !promoted[s.key])
-    .map((s) => ({ key: s.key, cwd: s.cwd, name: s.name, unsaved: true }));
+  const liveUnsaved: DiskSession[] = tabs
+    .filter((t): t is SessionTab => t.kind === 'session' && isLiveKey(t.key) && !promoted[t.key])
+    .map((t) => ({ key: t.key, cwd: t.cwd, name: t.name, unsaved: true }));
   // 左侧栏只展示用户“添加目录”显式注册的目录下的会话（含未升级的 live 会话）。
   // 「应用工作目录」(appWorkDir) 也作为隐式允许的目录纳入——它虽不写在 addedDirs 里，
   // 但其下同样会产生会话（如在该分组新建会话），必须能显示在左栏（见 issue：在
@@ -217,8 +221,10 @@ export default function App() {
     setError(null);
     try {
       const info = await pi.openSession(req.key ? { key: req.key } : { cwd: req.cwd, name: req.name });
-      setOpen((list) => list.some((s) => s.key === info.key) ? list : [...list, info as OpenSession]);
-      setActiveKey(info.key);
+      const id = info.key;
+      // 新增或激活 session tab：已存在同 key 的 session tab 则不重复添加。
+      setTabs((prev) => prev.some((t) => t.kind === 'session' && t.key === id) ? prev : [...prev, { id, kind: 'session', title: info.name, key: info.key, cwd: info.cwd, name: info.name } as SessionTab]);
+      setActiveTabId(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -259,20 +265,24 @@ export default function App() {
     });
   };
 
-  // 点击文件树中的文件 → 打开右侧预览抽屉（单文件）。
-  const [drawerFile, setDrawerFile] = useState<DrawerFile | null>(null);
-  const handleOpenFile = (relPath: string, _fileName: string, root: string) => {
-    setDrawerFile({ root, path: relPath });
+  // 点击文件树中的文件 → 中间区新增/激活预览 tab（单文件），而非旧式右下抽屉。
+  const handleOpenFile = (relPath: string, fileName: string, root: string) => {
+    const id = 'preview:' + root + '//' + relPath;
+    setTabs((prev) => prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'preview', title: fileName || relPath.split('/').pop() || relPath, root, path: relPath } as PreviewTab]);
+    setActiveTabId(id);
   };
 
-  // 点击 Git 面板的「工作区改动」或某次提交 → 打开右侧 Git diff 抽屉。
+  // 点击 Git 面板的「工作区改动」或某次提交 → 中间区新增/激活 diff tab（替代旧式 GitDiffDrawer）。
   // commitHash 为 null 时显示工作区 diff；为某 hash 时显示该提交 diff。
-  const [gitDiffDrawer, setGitDiffDrawer] = useState<{ cwd: string; commitHash: string | null } | null>(null);
   const openWorkDiff = useCallback((cwd: string) => {
-    setGitDiffDrawer({ cwd, commitHash: null });
+    const id = 'diff:' + cwd + '//work';
+    setTabs((prev) => prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'diff', title: '工作区改动', cwd, commitHash: null } as DiffTab]);
+    setActiveTabId(id);
   }, []);
   const openCommitDiff = useCallback((cwd: string, hash: string) => {
-    setGitDiffDrawer({ cwd, commitHash: hash });
+    const id = 'diff:' + cwd + '//' + hash;
+    setTabs((prev) => prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'diff', title: hash.slice(0, 8), cwd, commitHash: hash } as DiffTab]);
+    setActiveTabId(id);
   }, []);
 
   const handleSidebarResize = (w: number) => {
@@ -280,12 +290,11 @@ export default function App() {
     pi.setConfig({ sidebarWidth: w }).catch(() => {});
   };
 
-  // 文件管理器面板拖拽右缘实时改宽后回写 config 并同步本地 state。
-  const handleFilePanelResize = (w: number) => {
-    setFilePanelWidth(w);
-    pi.setConfig({ filePanelWidth: w }).catch(() => {});
+  // 右栏（文件树 / Git）拖拽右缘实时改宽后回写 config 并同步本地 state。
+  const handleRightPanelResize = (w: number) => {
+    setRightPanelWidth(w);
+    pi.setConfig({ rightPanelWidth: w }).catch(() => {});
   };
-
   // 待确认的危险操作：单条删除 / 清空目录 / 批量删除，统一用一份确认弹窗。
   type PendingDelete =
     | { kind: 'session'; key: string; name: string }
@@ -431,6 +440,19 @@ export default function App() {
     pi.setConfig({ terminalDrawerHeight: h }).catch(() => {});
   }, []);
 
+  // 关闭中间区 tab（session/preview/diff）：仅从 tabs 移除；不杀进程。
+  // 关闭 session tab 不销毁 pty——TerminalPane unmount 只 term.unmount()，pty 销毁唯一
+  // 入口是 pi.terminate/deleteSession（与原「切换不杀」一致）。若关掉的是激活态则切到
+  // 剩余第一个或 null（用 tabsRef 读最新值，避免闭包陈旧）。
+  const handleCloseCenterTab = (id: string) => {
+    setTabs((prev) => prev.filter((t) => t.id !== id));
+    setActiveTabId((prev) => {
+      if (prev !== id) return prev;
+      const remaining = tabsRef.current.filter((t) => t.id !== id);
+      return remaining.length ? remaining[0].id : null;
+    });
+  };
+
   return (
     <div className="app">
       <TitleBar onOpenSettings={() => setSettingsOpen(true)} onToggleTerminal={() => setDrawerOpen((o) => !o)} terminalOpen={drawerOpen} />
@@ -438,7 +460,7 @@ export default function App() {
       <Sidebar
         sessions={sessions}
         statusMap={statusMap}
-        activeKey={activeKey}
+        activeKey={activeSession?.key ?? null}
         pinned={pinned}
         onOpen={handleOpen}
         onTerminate={handleTerminate}
@@ -462,42 +484,30 @@ export default function App() {
         onNewTerminalInAppWorkDir={handleNewTerminalInAppWorkDir}
         onNewTerminalInCwd={handleNewTerminalInCwd}
       />
-      <FilePanel
+      <CenterPane
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onSelectTab={setActiveTabId}
+        onCloseTab={handleCloseCenterTab}
+        drawerOpen={drawerOpen}
+        drawerHeight={drawerHeight}
+        terminals={terminals}
+        activeTermId={activeTermId}
+        onSelectTermTab={setActiveTermId}
+        onCloseTermTab={handleCloseTab}
+        onNewTerminal={handleNewTerminal}
+        onResizeDrawer={handleResizeDrawer}
+        onOpenFile={handleOpenFile}
+      />
+      <RightPanel
         addedDirs={Array.from(visibleDirs)}
         activeCwd={activeCwd}
         onOpenFile={handleOpenFile}
         onOpenWorkDiff={openWorkDiff}
         onOpenCommit={openCommitDiff}
-        width={filePanelWidth}
-        onResize={handleFilePanelResize}
+        width={rightPanelWidth}
+        onResize={handleRightPanelResize}
       />
-      <main className="main">
-        <div className="header">
-          <span className="header-title" title={active ? `${active.name} · ${active.cwd}` : undefined}>{active ? `${active.name} · ${active.cwd}` : '—'}</span>
-          <span className={`header-status ${activeStatus === 'running' ? 'running' : ''}`}>
-            {activeStatus === 'running' ? '● 运行中' : '空闲'}
-          </span>
-          {error && <span className="header-error">⚠ {error}</span>}
-        </div>
-        <div className="terminal-area">
-          {open.map((s) => (
-            <TerminalPane key={s.key} sessionKey={s.key} active={s.key === activeKey} />
-          ))}
-          {!active && <div className="empty-state">从左侧选择一个会话，或新建会话。</div>}
-        </div>
-        {drawerOpen && (
-          <TerminalDrawer
-            open={drawerOpen}
-            height={drawerHeight}
-            tabs={terminals.map((t) => ({ id: t.id, title: t.title }))}
-            activeId={activeTermId}
-            onSelectTab={setActiveTermId}
-            onCloseTab={handleCloseTab}
-            onNewTerminal={handleNewTerminal}
-            onResizeHeight={handleResizeDrawer}
-          />
-        )}
-      </main>
       </div>
       {confirm && (
         <ConfirmDialog
@@ -515,14 +525,6 @@ export default function App() {
       )}
       <WindowResizeZones />
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
-      <FileDrawer file={drawerFile} onClose={() => setDrawerFile(null)} onOpenFile={handleOpenFile} />
-      {gitDiffDrawer && (
-        <GitDiffDrawer
-          cwd={gitDiffDrawer.cwd}
-          commitHash={gitDiffDrawer.commitHash}
-          onClose={() => setGitDiffDrawer(null)}
-        />
-      )}
     </div>
   );
 }

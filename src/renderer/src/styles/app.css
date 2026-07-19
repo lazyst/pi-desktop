@@ -21,17 +21,35 @@ html, body, #root {
   color: var(--text);
   font-family: var(--font-mono);
 }
-.main {
+.center-pane {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;       /* 允许在 flex 列中收缩，防止子内容把外壳撑出滚动条 */
 }
+/* 中间区 tab 内容区：flex:1，相对定位，承载所有 tab 内容（keep-alive 都挂载）。 */
+.center-pane-body {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+/* keep-alive：所有 tab 内容都渲染，非 active 的 display:none（切换不重建、不闪首帧）。 */
+.tab-content {
+  display: none;
+  position: absolute;
+  inset: 0;
+}
+.tab-content.active {
+  display: block;
+}
 
-/* 集成终端底部抽屉：作为 .main 纵向 flex 的第二行（位于 .terminal-area 之下），
-   固定高度（由内联 style 控制），只挤压 .terminal-area（会话终端区），
-   不影响左侧 Sidebar / 文件面板（它们在 .app-shell 行内，独立于 main）。 */
+/* 集成终端底部抽屉：渲染在 .center-pane 内（.center-pane 是纵向 flex 列，
+   TabBar 在上、.center-pane-body 在中、.terminal-drawer 在底部），天然只跨中栏、不跨右栏；
+   固定高度（由内联 style 控制），只挤压 .center-pane-body（中间 tab 内容区），
+   不影响 .app-shell 行内的左栏（Sidebar / 文件面板）与右栏（.right-panel）。 */
 .terminal-drawer {
   flex: none;
   display: flex;
@@ -1468,5 +1486,74 @@ html, body, #root {
 }
 .image-preview-toolbar button:hover { background: var(--bg-selected); }
 .image-preview-zoom { font-size: var(--fs-xs); color: var(--text-muted); min-width: 42px; text-align: center; }
+/* ── 预览 tab 内容 ── */
+.preview-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-app); }
+.preview-tab-header {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+.preview-tab-title { font-weight: var(--fw-semibold); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.preview-tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── diff tab 内容 ── */
+.diff-tab { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-app); }
+.diff-tab-header {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex: none;
+}
+.diff-tab-title { font-weight: var(--fw-semibold); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.diff-tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+/* ── 右栏（文件树 / Git）Tab 容器 ── */
+.right-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  position: relative;
+}
+.right-panel-resizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  cursor: ew-resize;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--transition);
+}
+.right-panel-resizer:hover { background: var(--accent-soft); }
+.right-panel-resizer:active { background: var(--accent); }
+.right-panel-body { flex: 1; min-height: 0; overflow: auto; }
+.rp-root-select {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  max-width: 160px;
+  background: var(--bg-app);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 4px;
+  cursor: pointer;
+}
+.rp-root-select:focus { outline: none; border-color: var(--border); box-shadow: none; }
+
+/* ── TabBar 前缀图标包裹层 ── */
+.terminal-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  opacity: 0.85;
+}
+
 .preview-empty, .preview-error { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); }
 .preview-error { color: #f87171; }
