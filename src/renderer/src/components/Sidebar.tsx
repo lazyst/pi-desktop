@@ -179,11 +179,11 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
               </div>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
-                // UX 兜底：状态未知（undefined，多半是状态推送尚未到达/竞态）时
-                // 也允许显示「终止进程」——侧边栏里的会话基本都是运行中的 pi 进程，
-                // 隐藏按钮反而让用户“连终止的机会都没有”（尤其 terminate 修复前那种
-                // 点了没反应的体感）。仅当状态明确为 'dead' 时才隐藏（进程已退出）。
-                const canTerminate = running || statusMap[s.key] === undefined;
+                // 仅当会话明确处于 'running' 时才显示「终止进程」。磁盘历史/未启动会话
+                // 在渲染层初始化（listSessions / onIndex）时已被补为 'dead'，故不会误显
+                // 按钮；极早期首屏（statusMap 尚未就绪、该 key 为 undefined）也按不可终止
+                // 处理，避免对“根本没有进程”的会话提供无意义的终止入口。
+                const canTerminate = running;
                 const isActive = s.key === effectiveActive;
                 const selected = !!selectedKeys?.has(s.key);
                 // 未晋升（live 未落盘）会话：无文件可删，仅允许终止；因此不显示右键删除菜单。

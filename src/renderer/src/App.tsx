@@ -72,6 +72,20 @@ export default function App() {
     const offIndex = pi.onIndex((groups) => {
       const diskList = toDisk(groups);
       setDisk(diskList);
+      // 磁盘会话默认标记为 'dead'（历史/未启动会话没有存活进程），只有主进程
+      // 经 onStatus（reconcile 把 live 进程关联到磁盘 key 时推送 'running'）覆盖为
+      // running。这样左侧栏的「终止进程」按钮只对真正运行中的会话显示，而不是
+      // 对从未启动/已退出的 .jsonl 历史会话误显（见 issue：未启动会话 hover 也显示
+      // 「终止进程」）。仅填充 undefined 项，保留已有的 'running' / 'dead' 状态。
+      const diskKeys = diskList.map((d) => d.key);
+      setStatusMap((m) => {
+        let changed = false;
+        const next = { ...m };
+        for (const k of diskKeys) {
+          if (next[k] === undefined) { next[k] = 'dead'; changed = true; }
+        }
+        return changed ? next : m;
+      });
       const map = liveToDiskRef.current;
       // Promote the display name of a live session once pi writes its `.jsonl`:
       // the header should show the real session name (first user message) instead of
@@ -96,7 +110,14 @@ export default function App() {
     pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
-    pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
+    pi.listSessions().then(toDisk).then((diskList) => {
+      setDisk(diskList);
+      // 初次加载磁盘会话时同样补 'dead' 默认值（同 onIndex 逻辑），避免历史会话
+      // 因 statusMap 中无记录（undefined）而在左侧栏误显「终止进程」按钮。
+      const init: Record<string, SessionStatus> = {};
+      for (const d of diskList) init[d.key] = 'dead';
+      setStatusMap((m) => ({ ...init, ...m }));
+    }).catch(() => setDisk([]));
     // 启动动画：首屏（App 挂载）即视为就绪（见 docs/adr/0003 决策⑤a）。
     // 下一帧给 #splash 加 .splash--hidden 触发 CSS 淡出，并通知主进程 show() 窗口。
     // 用 rAF 确保过渡生效（避免同帧加 class 被合并为无过渡）；reduced-motion 下 CSS
