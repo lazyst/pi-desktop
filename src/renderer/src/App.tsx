@@ -337,6 +337,8 @@ export default function App() {
 
   // —— 集成终端抽屉逻辑 ——
   // 新建终端：打开抽屉 → 取 profile（缓存）→ 选 profile（config.defaultTerminalProfile 或第一个）→ 创建。
+  // cwd 语义：当前有激活会话时，落在该会话 cwd（项目分组）；否则统一归入「应用工作目录」
+  // 分组（config.appWorkDir），而非传空 cwd 让主进程回退到 process.cwd()（即项目根，语义错乱）。
   const handleNewTerminal = useCallback(async () => {
     setDrawerOpen(true);
     try {
@@ -348,13 +350,14 @@ export default function App() {
       const defaultId = cfg.defaultTerminalProfile;
       const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
       if (!profile) return; // 无可用 shell（极罕见）
-      // 3. cwd：当前激活会话 cwd，否则空（主进程侧已 fallback）
-      const cwd = activeCwd ?? '';
-      // 注意：不在此处本地 setTerminals 追加——主进程 terminal:create 后会经
+      // 注意：不在此处本地 setTerminals 追加——主进程创建后会经
       // onTerminalList 主动推送完整列表（单一事实来源，见下方订阅）。若此处再
       // 追加一次，会与推送的整表合并成同一 id 出现两次 → 面板出现两个相同 tab。
       // 此处只负责触发创建 + 设定激活态（激活态由返回 info 直接确定）。
-      const info = await pi.createTerminal({ profile, cwd });
+      const info = activeCwd
+        ? await pi.createTerminal({ profile, cwd: activeCwd })
+        // 无激活会话：归入「应用工作目录」分组（主进程确保目录存在，cwd 取 config.appWorkDir）。
+        : await pi.createTerminalInAppWorkDir({ profile });
       setActiveTermId(info.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
