@@ -62,8 +62,10 @@ it('group “移除目录” action calls onRemoveDir with that cwd', () => {
 
 it('renders a group for an added directory even when it has no sessions', () => {
   const { onOpen } = renderSidebar({ addedDirs: ['C:\\Users\\hcz\\empty-dir'] });
-  const title = screen.getByText(/C:\\Users\\hcz\\empty-dir/);
+  // 分组标题只显示目录名（完整绝对路径见 title 悬停提示，见 ce6f7c5）
+  const title = screen.getByText(/empty-dir/);
   expect(title).toBeInTheDocument();
+  expect(title.closest('.group-name')).toHaveAttribute('title', 'C:\\Users\\hcz\\empty-dir');
   const newBtn = screen.getByLabelText('在 C:\\Users\\hcz\\empty-dir 新建会话');
   fireEvent.click(newBtn);
   expect(onOpen).toHaveBeenCalledWith({ cwd: 'C:\\Users\\hcz\\empty-dir' });
@@ -118,7 +120,8 @@ describe('Sidebar', () => {
 
   it('renders cwd groups and sessions from the sessions prop', async () => {
     renderSidebar();
-    expect(await screen.findByText(/C:\\Users\\hcz\\.pi-agent/)).toBeInTheDocument();
+    // 分组标题只显示目录名（完整绝对路径见 title 悬停提示，见 ce6f7c5）
+    expect(await screen.findByText(/\.pi-agent/)).toBeInTheDocument();
     expect(screen.getByText('e2e-session')).toBeInTheDocument();
     expect(screen.getByText('other-session')).toBeInTheDocument();
   });
@@ -140,8 +143,11 @@ describe('Sidebar', () => {
     const groups = container.querySelectorAll('.group');
     expect(groups.length).toBe(2);
     expect(groups[0]).toHaveClass('pinned');
-    expect(groups[0].textContent).toContain('C:\\Users\\hcz\\project');
-    expect(groups[1].textContent).toContain('C:\\Users\\hcz\\.pi-agent');
+    // 分组标题只显示目录名；完整路径在 title 上（见 ce6f7c5）
+    expect(groups[0].querySelector('.group-name')).toHaveAttribute('title', 'C:\\Users\\hcz\\project');
+    expect(groups[0].textContent).toContain('project');
+    expect(groups[1].querySelector('.group-name')).toHaveAttribute('title', 'C:\\Users\\hcz\\.pi-agent');
+    expect(groups[1].textContent).toContain('.pi-agent');
   });
 
   it('clicking a session opens it by key', async () => {
@@ -198,8 +204,10 @@ describe('Sidebar', () => {
     const item = screen.getByText('new-session').closest('.session-item')!;
     expect(item).toHaveClass('unsaved');
     expect(item.querySelector('.unsaved-badge')).toHaveTextContent('未保存');
-    // 仍按 cwd 分组显示
-    expect(screen.getByText(/C:\\Users\\hcz\\live-dir/)).toBeInTheDocument();
+    // 仍按 cwd 分组显示（标题只显示目录名，完整路径见 title，见 ce6f7c5）
+    const name = screen.getByText(/live-dir/);
+    expect(name).toBeInTheDocument();
+    expect(name.closest('.group-name')).toHaveAttribute('title', 'C:\\Users\\hcz\\live-dir');
   });
 
   it('unsaved session has no right-click 删除会话 menu (only terminate allowed)', async () => {
