@@ -114,8 +114,12 @@ contextBridge.exposeInMainWorld('pi', {
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone: () => ipcRenderer.send('splash:done'),
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。
-  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（见 PdfPreview）。
+  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（本地文件走 fsOpenWithSystem）。
   openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('app:openExternal', url),
+  // 用系统默认程序打开本地文件（二进制/无内置预览器的文件），等效双击文件。
+  fsOpenWithSystem: (absPath: string): Promise<boolean> => ipcRenderer.invoke('fs:openWithSystem', absPath),
+  // 在系统文件管理器中打开文件/目录所在位置并选中。
+  fsShowInFolder: (absPath: string): Promise<boolean> => ipcRenderer.invoke('fs:showInFolder', absPath),
   // ── 集成终端（抽屉内嵌的真实 shell）──
   listTerminalProfiles: (): Promise<TerminalProfile[]> => ipcRenderer.invoke('terminal:listProfiles'),
   createTerminal: (req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:create', req),

@@ -577,6 +577,7 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     items.push({ label: '📋 复制', onClick: () => doCopy(targets) });
     if (hasClip) items.push({ label: '📋 粘贴', onClick: () => void doPaste(relPath) });
     items.push({ label: '✏️ 重命名', onClick: () => startRename(relPath) });
+    items.push({ label: '📂 在文件管理器打开', onClick: () => { void pi.fsShowInFolder(toAbsolutePath(root, relPath)); } });
     items.push({ label: '🗑️ 删除', danger: true, onClick: () => requestDelete(targets) });
     return items;
   }, [menu, selection, clipboard, root, startNew, startRename, doCut, doCopy, doPaste, requestDelete]);

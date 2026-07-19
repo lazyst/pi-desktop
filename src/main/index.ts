@@ -347,7 +347,7 @@ function createWindow() {
   ipcMain.handle('terminal:destroy', (_e, id: string) => termPool.destroy(id));
 
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
-  // file:// 不走此通道，永远由 PdfPreview 的隔离 <webview> + fsBridge bounds-check 处理，
+  // file:// 不走此通道，二进制/本地文件由 fs:openWithSystem（shell.openPath）以系统程序打开。
   // 以免绕过路径越界保护。自用工具，不打扰确认，直接开。
   ipcMain.handle('app:openExternal', (_e, url: string): boolean => {
     if (typeof url !== 'string' || !url) return false;
@@ -358,6 +358,24 @@ function createWindow() {
     }
     shell.openExternal(url).catch(() => {});
     return true;
+  });
+
+  // 用系统默认程序打开本地文件（二进制/无内置预览器的文件，如 pdf/exe/zip/docx 等）。
+  // 走 shell.openPath（等同于在系统文件管理器双击文件），不走 app:openExternal
+  // 的协议白名单（那里 file:// 被拒）。路径由渲染层以绝对路径传入，已受 fsBridge
+  // 的 root bounds-check 约束（fsReadFile 同根），不存在越界风险。
+  ipcMain.handle('fs:openWithSystem', async (_e, absPath: string): Promise<boolean> => {
+    if (typeof absPath !== 'string' || !absPath) return false;
+    try { await shell.openPath(absPath); return true; }
+    catch { return false; }
+  });
+
+  // 在系统文件管理器中打开文件/目录所在位置并选中（等同资源管理器“打开所在文件夹”）。
+  // 文件：打开父目录并高亮该文件；目录：直接打开该目录。
+  ipcMain.handle('fs:showInFolder', async (_e, absPath: string): Promise<boolean> => {
+    if (typeof absPath !== 'string' || !absPath) return false;
+    try { shell.showItemInFolder(absPath); return true; }
+    catch { return false; }
   });
 
   // 记住窗口几何与最大化状态（见 docs/adr/0001 决策②）：maximize / unmaximize /

@@ -71,7 +71,7 @@ describe('app:openExternal whitelist', () => {
     expect(openExternalSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('拒绝 file:// —— 该协议不走通用通道（由 PdfPreview webview 隔离处理）', async () => {
+  it('拒绝 file:// —— 该协议不走通用通道（本地文件走 fs:openWithSystem）', async () => {
     openExternalSpy.mockClear();
     const ok = await ipcHandlers['app:openExternal'](null, 'file:///etc/passwd');
     expect(ok).toBe(false);

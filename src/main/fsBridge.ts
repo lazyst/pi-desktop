@@ -61,7 +61,6 @@ const TEXT_EXTS = new Set([
 ]);
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svg']);
-const PDF_EXTS = new Set(['pdf']);
 
 /** Max size we will load into memory as text (1 MB). */
 const MAX_TEXT_BYTES = 1024 * 1024;
@@ -72,7 +71,6 @@ export interface ReadResult {
   size: number;
   isBinary: boolean;
   isImage: boolean;
-  isPdf: boolean;
   /** base64 data URI for images, when the file is an image and within size cap. */
   dataUrl?: string;
 }
@@ -129,32 +127,28 @@ export async function readFile(
     // Images: return as base64 data URL if within a generous cap (8 MB).
     const cap = 8 * 1024 * 1024;
     if (stat.size > cap) {
-      return { content: '', language: 'image', size: stat.size, isBinary: false, isImage: true, isPdf: false };
+      return { content: '', language: 'image', size: stat.size, isBinary: false, isImage: true };
     }
     const buf = await fsp.readFile(abs);
     const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
     return {
-      content: '', language: 'image', size: stat.size, isBinary: false, isImage: true, isPdf: false,
+      content: '', language: 'image', size: stat.size, isBinary: false, isImage: true,
       dataUrl: `data:${mime};base64,${buf.toString('base64')}`,
     };
-  }
-
-  if (PDF_EXTS.has(ext)) {
-    return { content: '', language: 'pdf', size: stat.size, isBinary: false, isImage: false, isPdf: true };
   }
 
   // 已知文本扩展名：直接读。未知扩展名（含无后缀文件）先读内容，再用 NUL 字节
   // 检测是否真二进制——避免把无后缀的纯文本文件误判为二进制无法预览。
   if (stat.size > maxBytes) {
     // 文件过大 → 不读取内容，直接按二进制处理（预览会提示无法预览）。
-    return { content: '', language: languageOf(name) || 'text', size: stat.size, isBinary: true, isImage: false, isPdf: false };
+    return { content: '', language: languageOf(name) || 'text', size: stat.size, isBinary: true, isImage: false };
   }
 
   const buf = await fsp.readFile(abs);
   if (TEXT_EXTS.has(ext)) {
     const isBinary = looksBinary(buf);
     if (isBinary) {
-      return { content: '', language: 'text', size: stat.size, isBinary: true, isImage: false, isPdf: false };
+      return { content: '', language: 'text', size: stat.size, isBinary: true, isImage: false };
     }
     return {
       content: buf.toString('utf-8'),
@@ -162,14 +156,13 @@ export async function readFile(
       size: stat.size,
       isBinary: false,
       isImage: false,
-      isPdf: false,
     };
   }
 
   // 未知扩展名 / 无后缀：用内容探测是否为二进制；纯文本则可正常预览。
   const isBinary = looksBinary(buf);
   if (isBinary) {
-    return { content: '', language: 'text', size: stat.size, isBinary: true, isImage: false, isPdf: false };
+    return { content: '', language: 'text', size: stat.size, isBinary: true, isImage: false };
   }
   return {
     content: buf.toString('utf-8'),
@@ -177,7 +170,6 @@ export async function readFile(
     size: stat.size,
     isBinary: false,
     isImage: false,
-    isPdf: false,
   };
 }
 

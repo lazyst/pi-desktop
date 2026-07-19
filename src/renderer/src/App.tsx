@@ -261,10 +261,7 @@ export default function App() {
   // 点击文件树中的文件 → 打开右侧预览抽屉（单文件）。
   const [drawerFile, setDrawerFile] = useState<DrawerFile | null>(null);
   const handleOpenFile = (relPath: string, _fileName: string, root: string) => {
-    // 渲染进程是 sandbox（无 Node 集成），不能用 node:path；用纯字符串拼出
-    // 本地绝对路径（仅 PDF webview 需要）。file:// 对 / 与 \\ 均接受。
-    const absPath = root ? `${root.replace(/[\\/]+$/, '')}/${relPath.replace(/^[/\\]+/, '')}` : relPath;
-    setDrawerFile({ root, path: relPath, absPath });
+    setDrawerFile({ root, path: relPath });
   };
 
   const handleSidebarResize = (w: number) => {
