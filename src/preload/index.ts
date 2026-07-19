@@ -92,6 +92,21 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('fs:writeFile', { root, path: filePath, content }),
   fsStat: (root: string, filePath: string): Promise<any> =>
     ipcRenderer.invoke('fs:stat', { root, path: filePath }),
+  // ── 文件管理写操作（新建 / 重命名 / 删除 / 复制 / 移动）──
+  fsMkdir: (root: string, dir: string): Promise<void> =>
+    ipcRenderer.invoke('fs:mkdir', { root, dir }),
+  fsCreateFile: (root: string, filePath: string, content?: string): Promise<void> =>
+    ipcRenderer.invoke('fs:createFile', { root, path: filePath, content }),
+  fsRename: (root: string, from: string, to: string): Promise<void> =>
+    ipcRenderer.invoke('fs:rename', { root, from, to }),
+  fsRemove: (root: string, filePath: string): Promise<void> =>
+    ipcRenderer.invoke('fs:remove', { root, path: filePath }),
+  fsCopy: (root: string, from: string, to: string): Promise<void> =>
+    ipcRenderer.invoke('fs:copy', { root, from, to }),
+  fsListNames: (root: string, dir: string): Promise<string[]> =>
+    ipcRenderer.invoke('fs:listNames', { root, dir }),
+  fsUniqueName: (base: string, existing: string[]): Promise<string> =>
+    ipcRenderer.invoke('fs:uniqueName', { base, existing }),
   // ── Git 只读查看（D）──
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),

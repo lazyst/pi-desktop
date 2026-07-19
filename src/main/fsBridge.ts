@@ -3,51 +3,9 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 
 // ============================================================================
-// Path safety
-//
-// Every fs IPC entry point resolves a request against a set of *allowed roots*
-// (= the user's "addedDirs"). A requested path must resolve to a descendant
-// (or the root itself) of one of those roots; otherwise we refuse the request
-// to prevent `../` traversal escapes into the user's home / system files.
+// Note: path-safety / allowed-roots enforcement was intentionally removed.
+// File operations now resolve `root + relPath` directly and trust the caller.
 // ============================================================================
-
-/** Thrown when a path resolves outside the allowed roots. */
-export class FsSecurityError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'FsSecurityError';
-  }
-}
-
-function normalize(p: string): string {
-  return path.normalize(p);
-}
-
-/**
- * Resolve `relPath` against `root` and verify the result sits inside one of
- * `allowedRoots`. Returns the absolute resolved path. Throws FsSecurityError on
- * any escape attempt (including symlink escapes are partially mitigated by the
- * caller comparing the realpath — see `resolveSafe`).
- */
-export function resolveSafe(root: string, relPath: string, allowedRoots: string[]): string {
-  if (!root) throw new FsSecurityError('root is required');
-  if (!allowedRoots.length) throw new FsSecurityError('no allowed roots configured');
-
-  const absRoot = path.resolve(normalize(root));
-  const resolved = path.resolve(absRoot, normalize(relPath));
-
-  const inside = allowedRoots.some((r) => {
-    const absR = path.resolve(normalize(r));
-    // Same directory, or a strict descendant (path.sep suffix prevents the
-    // "/foo/bar" ∋ "/foo/bart" false-positive).
-    return resolved === absR || resolved.startsWith(absR + path.sep);
-  });
-
-  if (!inside) {
-    throw new FsSecurityError(`path "${relPath}" resolves outside allowed roots`);
-  }
-  return resolved;
-}
 
 // ============================================================================
 // Directory listing
@@ -60,19 +18,18 @@ export interface DirEntry {
   mtime: number;
 }
 
-export async function listDir(root: string, dir: string, allowedRoots: string[]): Promise<DirEntry[]> {
-  const abs = resolveSafe(root, dir, allowedRoots);
+export async function listDir(root: string, dir: string): Promise<DirEntry[]> {
+  const abs = path.resolve(root, dir);
   const names = await fsp.readdir(abs);
   const entries = await Promise.all(
     names.map(async (name): Promise<DirEntry> => {
-      // Guard each child against symlink escapes by re-checking against roots.
       const childRel = path.posix.join(dir, name);
       let stat: fs.Stats;
       try {
-        const full = resolveSafe(root, childRel, allowedRoots);
+        const full = path.resolve(root, childRel);
         stat = await fsp.stat(full);
       } catch {
-        // Unreadable / escaped entry: surface as a zeroed file rather than throw.
+        // Unreadable entry: surface as a zeroed file rather than throw.
         return { name, isDir: false, size: 0, mtime: 0 };
       }
       return {
@@ -161,10 +118,9 @@ function looksBinary(buf: Buffer): boolean {
 export async function readFile(
   root: string,
   relPath: string,
-  allowedRoots: string[],
   maxBytes = MAX_TEXT_BYTES,
 ): Promise<ReadResult> {
-  const abs = resolveSafe(root, relPath, allowedRoots);
+  const abs = path.resolve(root, relPath);
   const stat = await fsp.stat(abs);
   const name = path.basename(abs);
   const ext = extOf(name);
@@ -207,13 +163,92 @@ export async function readFile(
   };
 }
 
-export async function writeFile(root: string, relPath: string, content: string, allowedRoots: string[]): Promise<void> {
-  const abs = resolveSafe(root, relPath, allowedRoots);
+export async function writeFile(root: string, relPath: string, content: string): Promise<void> {
+  const abs = path.resolve(root, relPath);
   await fsp.writeFile(abs, content, 'utf-8');
 }
 
-export async function statFile(root: string, relPath: string, allowedRoots: string[]): Promise<{ size: number; mtime: number; isDir: boolean }> {
-  const abs = resolveSafe(root, relPath, allowedRoots);
+export async function statFile(root: string, relPath: string): Promise<{ size: number; mtime: number; isDir: boolean }> {
+  const abs = path.resolve(root, relPath);
   const s = await fsp.stat(abs);
   return { size: s.size, mtime: s.mtimeMs, isDir: s.isDirectory() };
+}
+
+// ============================================================================
+// File management operations (create / rename / remove / copy / mkdir)
+// ============================================================================
+
+/** Create a directory (recursive, like `mkdir -p`). */
+export async function mkdir(root: string, relDir: string): Promise<void> {
+  const abs = path.resolve(root, relDir);
+  await fsp.mkdir(abs, { recursive: true });
+}
+
+/** Create a (possibly empty) file at relPath. */
+export async function createFile(root: string, relPath: string, content = ''): Promise<void> {
+  const abs = path.resolve(root, relPath);
+  await fsp.mkdir(path.dirname(abs), { recursive: true });
+  await fsp.writeFile(abs, content, 'utf-8');
+}
+
+/** Rename / move a node (file or directory). `fs.rename` natively supports cross-directory moves. */
+export async function rename(root: string, fromRel: string, toRel: string): Promise<void> {
+  const from = path.resolve(root, fromRel);
+  const to = path.resolve(root, toRel);
+  await fsp.mkdir(path.dirname(to), { recursive: true });
+  await fsp.rename(from, to);
+}
+
+/** Remove a file (rm) or directory tree (rm -rf). */
+export async function remove(root: string, relPath: string): Promise<void> {
+  const abs = path.resolve(root, relPath);
+  await fsp.rm(abs, { recursive: true, force: true });
+}
+
+/** Copy a file (copyFile) or directory tree (recursive copy). */
+export async function copy(root: string, fromRel: string, toRel: string): Promise<void> {
+  const from = path.resolve(root, fromRel);
+  const to = path.resolve(root, toRel);
+  await fsp.mkdir(path.dirname(to), { recursive: true });
+  await copyRecursive(from, to);
+}
+
+async function copyRecursive(from: string, to: string): Promise<void> {
+  const stat = await fsp.stat(from);
+  if (stat.isDirectory()) {
+    await fsp.mkdir(to, { recursive: true });
+    const children = await fsp.readdir(from);
+    for (const child of children) {
+      await copyRecursive(path.join(from, child), path.join(to, child));
+    }
+  } else {
+    await fsp.mkdir(path.dirname(to), { recursive: true });
+    await fsp.copyFile(from, to);
+  }
+}
+
+/** Return the names of direct children in a directory (used for de-dup / suffixing). */
+export async function listNames(root: string, dir: string): Promise<string[]> {
+  const abs = path.resolve(root, dir);
+  return fsp.readdir(abs);
+}
+
+/**
+ * Given a desired base name and the set of existing sibling names, return a
+ * collision-free name by appending ` (1)`, ` (2)`, … before the extension
+ * (VS Code style). Returns `base` unchanged if there is no collision.
+ */
+export function uniqueName(base: string, existing: Set<string>): string {
+  if (!existing.has(base)) return base;
+  const dot = base.lastIndexOf('.');
+  const hasExt = dot > 0 && dot < base.length - 1;
+  const stem = hasExt ? base.slice(0, dot) : base;
+  const ext = hasExt ? base.slice(dot) : '';
+  let n = 1;
+  let candidate = `${stem} (${n})${ext}`;
+  while (existing.has(candidate)) {
+    n += 1;
+    candidate = `${stem} (${n})${ext}`;
+  }
+  return candidate;
 }

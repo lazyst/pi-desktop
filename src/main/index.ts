@@ -6,7 +6,7 @@ import * as crypto from 'node:crypto';
 import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
-import { listDir, readFile, writeFile, statFile, FsSecurityError } from './fsBridge';
+import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName } from './fsBridge';
 import { gitStatus, gitLog, gitDiff } from './gitBridge';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -477,25 +477,33 @@ function createWindow() {
   ipcMain.on('session:ack', (_e, m: { key: string; bytes: number }) => pool.acknowledgeDataEvent(m.key, m.bytes));
 
   // ── 文件管理器（A + B 预览）只读/写 IPC ──
-  // 所有 fs 通道统一在主进程做路径安全校验：请求的 root + relPath 必须落在
-  // config.addedDirs（allowedRoots）之内，防止越界读写用户目录（见 docs/plan-file-manager-preview-git.md）。
-  // 「应用工作目录」(config.appWorkDir) 也作为隐式允许根并入——文件树需要以它为 root 浏览
-  // （例如用户在应用工作目录分组下操作、或启动时无已添加项目目录），否则会抛
-  // FsSecurityError: path ... resolves outside allowed roots（见 issue：文件树报错）。
-  const allowedRoots = (): string[] => {
-    const cfg = getConfig();
-    const dirs = Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((d) => typeof d === 'string') : [];
-    if (cfg.appWorkDir && typeof cfg.appWorkDir === 'string') dirs.push(cfg.appWorkDir);
-    return dirs;
-  };
+  // 注意：路径越权校验（allowedRoots / resolveSafe）已按产品决策整体移除，
+  // 文件操作直接信任渲染端传入的 root + relPath。
   ipcMain.handle('fs:listDir', (_e, req: { root: string; dir: string }) =>
-    listDir(req.root, req.dir, allowedRoots()));
+    listDir(req.root, req.dir));
   ipcMain.handle('fs:readFile', (_e, req: { root: string; path: string; maxBytes?: number }) =>
-    readFile(req.root, req.path, allowedRoots(), req.maxBytes));
+    readFile(req.root, req.path, req.maxBytes));
   ipcMain.handle('fs:writeFile', (_e, req: { root: string; path: string; content: string }) =>
-    writeFile(req.root, req.path, req.content, allowedRoots()));
+    writeFile(req.root, req.path, req.content));
   ipcMain.handle('fs:stat', (_e, req: { root: string; path: string }) =>
-    statFile(req.root, req.path, allowedRoots()));
+    statFile(req.root, req.path));
+
+  // ── 文件管理写操作（新建 / 重命名 / 删除 / 复制 / 移动）──
+  ipcMain.handle('fs:mkdir', (_e, req: { root: string; dir: string }) =>
+    mkdir(req.root, req.dir));
+  ipcMain.handle('fs:createFile', (_e, req: { root: string; path: string; content?: string }) =>
+    createFile(req.root, req.path, req.content ?? ''));
+  ipcMain.handle('fs:rename', (_e, req: { root: string; from: string; to: string }) =>
+    rename(req.root, req.from, req.to));
+  ipcMain.handle('fs:remove', (_e, req: { root: string; path: string }) =>
+    remove(req.root, req.path));
+  ipcMain.handle('fs:copy', (_e, req: { root: string; from: string; to: string }) =>
+    copy(req.root, req.from, req.to));
+  ipcMain.handle('fs:listNames', (_e, req: { root: string; dir: string }) =>
+    listNames(req.root, req.dir));
+  // 计算不重名的名字（重名时自动加 (1) 后缀），纯计算、无需落盘。
+  ipcMain.handle('fs:uniqueName', (_e, req: { base: string; existing: string[] }) =>
+    uniqueName(req.base, new Set(req.existing)));
 
   // ── Git 只读查看（D）── 非 git 目录优雅降级（见 gitBridge，永不抛错）。
   ipcMain.handle('git:status', (_e, req: { cwd: string }) => gitStatus(req.cwd));
