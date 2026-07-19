@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { TerminalPane } from './components/TerminalPane';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { TitleBar } from './components/TitleBar';
+import { TerminalDrawer } from './components/TerminalDrawer';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
 import { FilePanel } from './components/FilePanel';
@@ -11,7 +12,7 @@ import { pi } from './ipc';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { defaultConfig } from '../../main/config';
-import type { SessionInfo, SessionStatus, AppConfig } from './types';
+import type { SessionInfo, SessionStatus, AppConfig, IntegratedTerminalInfo, TerminalProfile } from './types';
 
 interface OpenSession extends SessionInfo { key: string; cwd: string; name: string; status: SessionStatus; }
 interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
@@ -41,6 +42,20 @@ export default function App() {
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 集成终端抽屉（底部抽屉）：开关、已开终端列表、当前激活 tab、抽屉高度。
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [terminals, setTerminals] = useState<IntegratedTerminalInfo[]>([]);
+  const [activeTermId, setActiveTermId] = useState<string | null>(null);
+  const [drawerHeight, setDrawerHeight] = useState<number>(defaultConfig().terminalDrawerHeight);
+  // 缓存探测到的 profile 列表，避免每次新建都探测。
+  const profilesRef = useRef<TerminalProfile[] | null>(null);
+  // 镜像 terminals 到 ref，供 onTerminalExit 等只订阅一次的回调读取最新值（避免闭包陈旧）。
+  const terminalsRef = useRef<IntegratedTerminalInfo[]>([]);
+  terminalsRef.current = terminals;
+  // 当前激活会话（供集成终端 cwd 默认取值）。提前计算，供 handler 的依赖数组使用。
+  const active = open.find((s) => s.key === activeKey);
+  const activeStatus = activeKey ? statusMap[activeKey] : undefined;
+  const activeCwd = active?.cwd ?? null;
   // 文件预览抽屉：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
   // Same mapping held in a ref so the `onRelink` handler (which fires right after
   const liveToDiskRef = useRef<Record<string, string>>({});
@@ -78,7 +93,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setFilePanelWidth(cfg.filePanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then(setDisk).catch(() => setDisk([]));
@@ -93,10 +108,19 @@ export default function App() {
       // 淡出结束后从 DOM 移除，避免遮挡后续交互（pointer-events 已在 CSS 置 none）。
       setTimeout(() => splash?.remove(), 400);
     });
-    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
+    // 订阅集成终端进程退出（用户 exit / kill）：移除对应 tab，若其为激活态则切到剩余第一个或 null。
+    // 注意：用户点 × 关闭 tab 也会触发 destroyTerminal → 主进程可能再发 exit；用函数式更新 + 存在性
+    // 判断即可（重复移除无害）。
+    const offTermExit = pi.onTerminalExit?.((id) => {
+      setTerminals((prev) => prev.filter((t) => t.id !== id));
+      setActiveTermId((prev) => {
+        if (prev !== id) return prev;
+        const remaining = terminalsRef.current.filter((t) => t.id !== id);
+        return remaining.length ? remaining[0].id : null;
+      });
+    });
+    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); };
   }, []);
-
-  // 全局 Ctrl/Cmd + 滚轮缩放字体大小：在 window 捕获阶段拦截，先于 xterm 的
   // passive wheel 监听器执行，调用 preventDefault 阻止浏览器原生页面缩放。
   // 滚轮向上（deltaY<0）放大、向下缩小，步长 ±1px，夹在 [FONT_SIZE_MIN, FONT_SIZE_MAX]。
   useEffect(() => {
@@ -256,13 +280,57 @@ export default function App() {
 
   const handleTerminate = (key: string) => { pi.terminate(key); };
 
-  const active = open.find((s) => s.key === activeKey);
-  const activeStatus = activeKey ? statusMap[activeKey] : undefined;
-  const activeCwd = active?.cwd ?? null;
+  // —— 集成终端抽屉逻辑 ——
+  // 新建终端：打开抽屉 → 取 profile（缓存）→ 选 profile（config.defaultTerminalProfile 或第一个）→ 创建。
+  const handleNewTerminal = useCallback(async () => {
+    setDrawerOpen(true);
+    try {
+      // 1. 取 profile 列表（缓存）
+      if (!profilesRef.current) profilesRef.current = await pi.listTerminalProfiles();
+      const profiles = profilesRef.current;
+      // 2. 选 profile：config.defaultTerminalProfile 指定的 id，否则第一个
+      const cfg = await pi.getConfig();
+      const defaultId = cfg.defaultTerminalProfile;
+      const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
+      if (!profile) return; // 无可用 shell（极罕见）
+      // 3. cwd：当前激活会话 cwd，否则空（主进程侧已 fallback）
+      const cwd = activeCwd ?? '';
+      const info = await pi.createTerminal({ profile, cwd });
+      setTerminals((prev) => [...prev, info]);
+      setActiveTermId(info.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [activeCwd]);
+
+  // 关闭 tab：移除本地列表 + 通知主进程销毁；若关掉的是激活态则切到剩余第一个或 null；
+  // 关掉最后一个则自动收起抽屉。
+  const handleCloseTab = useCallback((id: string) => {
+    setTerminals((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      // 关掉最后一个则自动收起抽屉（在函数式更新内判断，避免读到陈旧 ref）
+      if (next.length === 0) setDrawerOpen(false);
+      return next;
+    });
+    pi.destroyTerminal(id).catch(() => {});
+    setActiveTermId((prev) => {
+      if (prev !== id) return prev;
+      const remaining = terminalsRef.current.filter((t) => t.id !== id);
+      return remaining.length ? remaining[0].id : null;
+    });
+    // 若关掉最后一个，自动收起抽屉
+    if (terminalsRef.current.length <= 1) setDrawerOpen(false);
+  }, []);
+
+  // 抽屉高度拖拽：实时改 state 并回写 config。
+  const handleResizeDrawer = useCallback((h: number) => {
+    setDrawerHeight(h);
+    pi.setConfig({ terminalDrawerHeight: h }).catch(() => {});
+  }, []);
 
   return (
     <div className="app">
-      <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
+      <TitleBar onOpenSettings={() => setSettingsOpen(true)} onToggleTerminal={() => setDrawerOpen((o) => !o)} terminalOpen={drawerOpen} />
       <div className="app-shell">
       <Sidebar
         sessions={sessions}
@@ -308,7 +376,20 @@ export default function App() {
           ))}
           {!active && <div className="empty-state">从左侧选择一个会话，或新建会话。</div>}
         </div>
+        {drawerOpen && (
+          <TerminalDrawer
+            open={drawerOpen}
+            height={drawerHeight}
+            tabs={terminals.map((t) => ({ id: t.id, title: t.title }))}
+            activeId={activeTermId}
+            onSelectTab={setActiveTermId}
+            onCloseTab={handleCloseTab}
+            onNewTerminal={handleNewTerminal}
+            onResizeHeight={handleResizeDrawer}
+          />
+        )}
       </main>
+      </div>
       {confirm && (
         <ConfirmDialog
           title={confirm.kind === 'directory' ? '清空目录' : '删除会话'}
@@ -326,7 +407,6 @@ export default function App() {
       <WindowResizeZones />
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
       <FileDrawer file={drawerFile} onClose={() => setDrawerFile(null)} onOpenFile={handleOpenFile} />
-    </div>
     </div>
   );
 }

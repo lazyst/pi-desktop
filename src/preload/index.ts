@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig } from '../renderer/src/types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo } from '../renderer/src/types';
 
 // 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
 // 即确定，无需等待异步 IPC），供渲染进程首屏零闪烁地拿到主题等初始值。
@@ -101,4 +101,20 @@ contextBridge.exposeInMainWorld('pi', {
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。
   // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（见 PdfPreview）。
   openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('app:openExternal', url),
+  // ── 集成终端（抽屉内嵌的真实 shell）──
+  listTerminalProfiles: (): Promise<TerminalProfile[]> => ipcRenderer.invoke('terminal:listProfiles'),
+  createTerminal: (req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:create', req),
+  destroyTerminal: (id: string): Promise<void> => ipcRenderer.invoke('terminal:destroy', id),
+  terminalInput: (id: string, data: string) => ipcRenderer.send('terminal:input', { id, data }),
+  terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
+  onTerminalData: (cb: (id: string, data: string) => void) => {
+    const handler = (_e: unknown, m: { id: string; data: string }) => cb(m.id, m.data);
+    ipcRenderer.on('term:data', handler);
+    return () => ipcRenderer.removeListener('term:data', handler);
+  },
+  onTerminalExit: (cb: (id: string) => void) => {
+    const handler = (_e: unknown, m: { id: string }) => cb(m.id);
+    ipcRenderer.on('term:exit', handler);
+    return () => ipcRenderer.removeListener('term:exit', handler);
+  },
 });

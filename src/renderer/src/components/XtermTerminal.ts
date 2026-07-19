@@ -43,6 +43,8 @@ import { TerminalDataBufferer } from './terminalDataBufferer';
 import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
 import { DecorationAddon } from './decorationAddon';
 import { MarkNavigationAddon } from './markNavigationAddon';
+import { SessionChannel } from './terminalChannel';
+import type { TerminalChannel } from './terminalChannel';
 import type { PiApi } from '../ipc';
 import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
@@ -65,7 +67,14 @@ const WRITE_DEBOUNCE_MS = 5;
 const SMOOTH_SCROLL_DURATION = 125;
 
 export interface XtermTerminalOptions {
+  // 数据通道抽象：PTY 输出订阅 / 退出订阅 / 键盘输入 / 尺寸通知全部走 channel，
+  // XtermTerminal 不再直接引用全局 pi 的会话数据流 API（见 terminalChannel.ts）。
+  // 可选：省略时回退为 SessionChannel(pi, sessionKey)（兼容既有测试 / 旧调用方）。
+  channel?: TerminalChannel;
+  // 仅用于日志/调试标识与数据缓冲 id（保留原 sessionKey 语义，与 channel 对应同一进程）。
   sessionKey: string;
+  // 当 channel 未显式提供时，用于构建默认 SessionChannel；也被保留用于非数据流功能
+  // （saveImage / getPathForFile / acknowledgeDataEvent）。与重构前一致。
   pi: PiApi;
 }
 
@@ -79,6 +88,10 @@ export interface XtermTerminalOptions {
  */
 export class XtermTerminal {
   private readonly sessionKey: string;
+  private readonly channel: TerminalChannel;
+  // 保留 pi 引用仅用于「非会话数据流」功能：剪贴板图片落盘(saveImage)、拖拽文件路径解析
+  // (getPathForFile)、写后背压回传(acknowledgeDataEvent)。所有 PTY 输入/输出/退出/resize
+  // 数据通信均改走 this.channel（见 terminalChannel.ts）。
   private readonly pi: PiApi;
   private term: Terminal | null = null;
   private fit: FitAddon | null = null;
@@ -110,7 +123,7 @@ export class XtermTerminal {
   private _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   // —— 反注册函数 ——
-  private offStatus: (() => void) | null = null;
+  private offExit: (() => void) | null = null;
   private offTheme: (() => void) | null = null;
   // 字体大小变更反注册（订阅全局 fontSize，联动终端字号 + 重测 fit）。
   private offFontSize: (() => void) | null = null;
@@ -134,6 +147,13 @@ export class XtermTerminal {
 
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
+    // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
+    // 数据流行为完全等价）。TerminalPane 等新版调用方显式注入 channel。
+    this.channel =
+      opts.channel ?? new SessionChannel(opts.pi, opts.sessionKey);
+    // 保留 pi 引用仅用于「非会话数据流」功能：剪贴板图片落盘(saveImage)、拖拽文件路径解析
+    // (getPathForFile)、写后背压回传(acknowledgeDataEvent)。所有 PTY 输入/输出/退出/resize
+    // 数据通信均改走 this.channel（见 terminalChannel.ts）。
     this.pi = opts.pi;
   }
 
@@ -163,6 +183,9 @@ export class XtermTerminal {
       // 切回可见：flush 待执行 resize + 立即 resize（对齐 VS Code setVisible）。
       this.resizeDebouncer?.flush();
       this.doResize(true);
+      // 隐藏期（visibility:hidden / display:none）WebGL 上下文可能被浏览器回收，
+      // 切回时强制 refresh 重绘已有缓冲区内容，避免“切回变空白新终端”。
+      try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
     }
   }
 
@@ -183,10 +206,10 @@ export class XtermTerminal {
     this.decorationAddon = null;
     this.markNavigationAddon?.dispose();
     this.markNavigationAddon = null;
-    this.offStatus?.();
+    this.offExit?.();
     this.offTheme?.();
     this.offFontSize?.();
-    this.offStatus = this.offTheme = this.offFontSize = null;
+    this.offExit = this.offTheme = this.offFontSize = null;
     // 键盘快捷键走 xterm attachCustomKeyEventHandler，term.dispose 时随实例清理；
     // 这里只清幂等标记，无需手动 removeEventListener（已不再绑 host）。
     this._keydownHandler = null;
@@ -468,7 +491,7 @@ export class XtermTerminal {
       // 把 LF 当续行收集、CR 才提交，从而在不执行命令的前提下插入换行。
       if (e.key === 'Enter' && e.shiftKey && !mod && !e.altKey) {
         e.preventDefault();
-        this.pi.input(this.sessionKey, '\n');
+        this.channel.send('\n');
         return false; // 阻止 xterm 把 Enter 当 \r 经 onData 再次送出
       }
       if (!mod) return true;
@@ -729,20 +752,23 @@ export class XtermTerminal {
     term.onData((d) => {
       const spy = (window as any).__piOnDataSpy;
       if (typeof spy === 'function') spy(d);
-      this.pi.input(this.sessionKey, d);
+      this.channel.send(d);
     });
 
     // 输出：主进程 pty 数据 → TerminalDataBufferer（5ms 时间窗聚合）→ handleProcessData。
     this.dataBufferer = new TerminalDataBufferer((id, data) => this.handleProcessData(id, data));
     this.stopBuffering = this.dataBufferer.startBuffering(
       this.sessionKey,
-      (handler) => this.pi.onData((key, data) => handler(key, data)),
+      // channel.onData 已按 key 过滤并只回传 (data)；这里补回 sessionKey 作为缓冲 id，
+      // 使 downstream dataBufferer / handleProcessData 的 (id, data) 契约与原实现一致。
+      (handler) => this.channel.onData((data) => handler(this.sessionKey, data)),
       WRITE_DEBOUNCE_MS,
     );
 
-    this.offStatus = this.pi.onStatus((key, status) => {
-      if (key !== this.sessionKey) return;
-      if (status === 'dead') this.doResize(true); // 会话结束时收尾 resize，对齐视口
+    // 进程退出（含会话结束 onStatus('dead')）统一走 channel.onExit：exit 即 dead，语义等价。
+    // 收尾 resize 对齐视口（原 onStatus('dead') 行为）。集成终端 exit 时壳已 unmount，无副作用。
+    this.offExit = this.channel.onExit(() => {
+      this.doResize(true);
     });
     this.offTheme = onThemeChange((t) => {
       if (this.term) this.term.options.theme = TERM_THEMES[t];
@@ -929,7 +955,7 @@ export class XtermTerminal {
     if (cols === this._lastCols && rows === this._lastRows) return;
     this._lastCols = cols;
     this._lastRows = rows;
-    this.pi.resize(this.sessionKey, cols, rows);
+    this.channel.resize(cols, rows);
   }
 
   /** 立即用宿主最新尺寸校准终端并通知 PTY（首挂载 / 切回可见 / 会话结束收尾调用，force=true）。
