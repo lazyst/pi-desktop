@@ -21,6 +21,177 @@
   min-height: 0;       /* 允许在 flex 列中收缩，防止子内容把外壳撑出滚动条 */
 }
 
+/* 集成终端底部抽屉：作为 .main 纵向 flex 的第二行（位于 .terminal-area 之下），
+   固定高度（由内联 style 控制），只挤压 .terminal-area（会话终端区），
+   不影响左侧 Sidebar / 文件面板（它们在 .app-shell 行内，独立于 main）。 */
+.terminal-drawer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}
+.terminal-drawer-resizer {
+  height: 4px;
+  flex: none;
+  cursor: row-resize;
+  background: transparent;
+}
+.terminal-drawer-resizer:hover {
+  background: var(--accent, #4a90d9);
+}
+.terminal-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex: none;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.terminal-drawer-icon {
+  flex: none;
+  opacity: 0.8;
+}
+.terminal-drawer-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.integrated-terminal-slot {
+  position: absolute;
+  inset: 0;
+  /* keep-alive 隐藏非 active 终端：用 visibility:hidden 而非 display:none。
+     visibility:hidden 不把元素移出渲染树，WebGL canvas 上下文与尺寸得以保留，
+     切回可见时内容立即可见；display:none 会销毁 WebGL context，切回后需重建渲染器
+     且易丢失已绘制的屏幕内容（表现为“切回变空白新终端”）。
+     非 active 仍占位(absolute 不影响布局流)，pointer-events:none 防误触。 */
+  visibility: hidden;
+  pointer-events: none;
+}
+.integrated-terminal-slot.active {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+/* ── 集成终端：Tab 栏 / Tab / 新建按钮 / xterm 宿主 ──
+   视觉语言复用 Sidebar 的 --bg-panel / --border / --accent / --bg-hover / --bg-active 体系。 */
+.terminal-tab-bar {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: 28px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.terminal-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px 10px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--transition), color var(--transition);
+}
+.terminal-tab:hover { background: var(--bg-hover); }
+.terminal-tab.active {
+  background: var(--bg-active);
+  color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Tab 上的关闭 ×：默认隐藏，hover 整条或激活态时淡入 */
+.tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition), color var(--transition), background-color var(--transition);
+}
+.tab-close:hover {
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.12);
+}
+.terminal-tab:hover .tab-close,
+.terminal-tab.active .tab-close { opacity: 1; }
+/* Tab 栏右侧「+」新建按钮：对齐 .tab-close 视觉语言 */
+.terminal-new-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 0;
+  transition: background-color var(--transition), color var(--transition);
+}
+.terminal-new-btn:hover { background: var(--bg-hover); color: var(--text); }
+/* xterm 挂载宿主：父 .integrated-terminal-slot 为 absolute inset:0，
+   此处充满 slot。非 active 的 slot 由 .integrated-terminal-slot 的 visibility:hidden
+   隐藏（而非 display:none）——visibility:hidden 不销毁 WebGL canvas 上下文、
+   保留渲染尺寸，切回可见时内容立即可见，避免“切回变空白新终端”。 */
+.integrated-terminal-host {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-app);
+  overflow: hidden;
+}
+.integrated-terminal-host.active { display: block; }
+.integrated-terminal-host .xterm,
+.integrated-terminal-host .xterm-viewport,
+.integrated-terminal-host .xterm-screen {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* ── 标题栏终端按钮激活态（抽屉打开时高亮）── */
+.titlebar-btn.active {
+  background: var(--bg-active);
+  color: var(--accent);
+}
+.titlebar-btn.active:hover { background: var(--bg-active); color: var(--accent-hover); }
+
+/* ── 设置面板：终端设置容器（T7 新增）── */
+.terminal-settings {
+  display: flex;
+  flex-direction: column;
+}
+.terminal-settings .settings-row + .settings-row { margin-top: var(--sp-3); }
+.custom-terminal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-panel);
+}
+
 /* Sidebar */
 .sidebar {
   width: 280px;

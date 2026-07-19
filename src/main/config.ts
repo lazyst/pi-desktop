@@ -11,6 +11,12 @@ export function defaultConfig(): AppConfig {
     filePanelWidth: 260,
     closeBehavior: 'minimize-to-tray',
     fontSize: 13,
+    // 集成终端：默认 profile（null = 探测到的第一个 / 平台默认）。
+    defaultTerminalProfile: null,
+    // 集成终端抽屉高度（像素）。
+    terminalDrawerHeight: 220,
+    // 用户自定义终端 profile 覆盖（key 为 profile id）。
+    terminalProfiles: {},
   };
 }
 

@@ -1,4 +1,4 @@
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds } from './types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo } from './types';
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
@@ -51,6 +51,14 @@ export interface PiApi {
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。
   // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（见 PdfPreview）。
   openExternal(url: string): Promise<boolean>;
+  // ── 集成终端（抽屉内嵌的真实 shell）──
+  listTerminalProfiles(): Promise<TerminalProfile[]>;
+  createTerminal(req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo>;
+  destroyTerminal(id: string): Promise<void>;
+  terminalInput(id: string, data: string): void;
+  terminalResize(id: string, cols: number, rows: number): void;
+  onTerminalData(cb: (id: string, data: string) => void): () => void;
+  onTerminalExit(cb: (id: string) => void): () => void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at

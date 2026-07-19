@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback, type MouseEvent } from 'react';
 import { pi } from '../ipc';
 import { XtermTerminal } from './XtermTerminal';
+import { SessionChannel } from './terminalChannel';
 
 interface Props {
   sessionKey: string;
@@ -33,7 +34,7 @@ export function TerminalPane({ sessionKey, active }: Props) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || termRef.current) return;
-    const term = new XtermTerminal({ sessionKey, pi });
+    const term = new XtermTerminal({ sessionKey, channel: new SessionChannel(pi, sessionKey), pi });
     // 视口贴底状态变化 → 驱动浮钮显隐（仅在状态翻转时回调，见 XtermTerminal.notifyScrollState）。
     term.onScrollState = (bottom) => setAtBottom(bottom);
     termRef.current = term;

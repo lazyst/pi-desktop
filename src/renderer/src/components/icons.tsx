@@ -90,3 +90,13 @@ export function IconClose({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+// 集成终端提示符风格（>_），用于抽屉 / TabBar 的终端标识。
+export function IconTerminal({ size = 16, className }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" className={className} aria-hidden="true">
+      <path d="M4 5l3 3-3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8.5 11.5h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}

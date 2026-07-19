@@ -22,7 +22,9 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
 import { defaultConfig, parseConfig, mergeConfig } from './config';
 import { snapshotWindowState, initialBoundsOptions } from './windowState';
-import type { AppConfig } from '../renderer/src/types';
+import { IntegratedTerminalPool } from './integratedTerminalPool';
+import { detectTerminalProfiles } from './shellProfiles';
+import type { AppConfig, TerminalProfile } from '../renderer/src/types';
 
 const configPath = () => path.join(app.getPath('userData'), 'config.json');
 let configState: AppConfig | undefined;
@@ -262,8 +264,31 @@ function createWindow() {
 
   const pool = createPool(win);
 
+  // 集成终端池：独立运行的真实用户 shell 进程池，与 SessionPool（跑 pi 会话、写 .jsonl）
+  // 完全解耦（不写盘、不进会话索引），用于渲染层内嵌的集成终端抽屉。
+  const termPool = new IntegratedTerminalPool({
+    cols: 80, rows: 24,
+    onData: (id, data) => { if (!win.isDestroyed()) win.webContents.send('term:data', { id, data }); },
+    onExit: (id) => { if (!win.isDestroyed()) win.webContents.send('term:exit', { id }); },
+  });
+
+  // 列出当前平台可用的终端 profile（供设置面板下拉 + 新建终端默认选择）
+  ipcMain.handle('terminal:listProfiles', () => detectTerminalProfiles());
+  // 用指定 profile 在 cwd 创建集成终端；profile 由渲染端从 listProfiles 结果传入（只需 id/path/args/platform），
+  // 或从 config 读取 defaultTerminalProfile 解析。此处直接接收完整 profile 对象即可。
+  ipcMain.handle('terminal:create', (_e, req: { profile: TerminalProfile; cwd: string }) => {
+    try {
+      return termPool.create(req.profile, req.cwd);
+    } catch (err) {
+      console.error('[terminal:create] failed:', err);
+      throw new Error('无法启动集成终端，请确认所选 shell 可用');
+    }
+  });
+  ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => termPool.write(m.id, m.data));
+  ipcMain.on('terminal:resize', (_e, m: { id: string; cols: number; rows: number }) => termPool.resize(m.id, m.cols, m.rows));
+  ipcMain.handle('terminal:destroy', (_e, id: string) => termPool.destroy(id));
+
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
-  // 主进程集中校验协议白名单（仅放行 http(s) 与 mailto:），其余一律拒绝——
   // file:// 不走此通道，永远由 PdfPreview 的隔离 <webview> + fsBridge bounds-check 处理，
   // 以免绕过路径越界保护。自用工具，不打扰确认，直接开。
   ipcMain.handle('app:openExternal', (_e, url: string): boolean => {
@@ -448,6 +473,7 @@ function createWindow() {
   app.on('before-quit', () => {
     quitting = true;
     pool.killAll();
+    termPool.killAll();
   });
 
   // 启动动画（splash）：窗口以 show:false 创建，避免无边框窗口先闪白框。

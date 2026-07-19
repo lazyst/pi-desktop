@@ -3,14 +3,14 @@ import { getTheme, setTheme } from '../theme';
 import { pi } from '../ipc';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconTrash } from './icons';
-import type { Theme, CloseBehavior, SessionGroup } from '../types';
+import type { Theme, CloseBehavior, SessionGroup, TerminalProfile } from '../types';
 import { getFontSize, bumpFontSize, onFontSizeChange, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../fontSize';
 
 interface Props {
   onClose: () => void;
 }
 
-type NavKey = 'general' | 'sessions';
+type NavKey = 'general' | 'sessions' | 'terminal';
 
 // Modal settings panel with a left-hand navigation:
 //  - 常规：主题、关闭按钮行为（原有设置项迁移至此）。
@@ -45,9 +45,17 @@ export function SettingsPanel({ onClose }: Props) {
             >
               会话管理
             </button>
+            <button
+              type="button"
+              className={`nav-item${nav === 'terminal' ? ' active' : ''}`}
+              aria-current={nav === 'terminal'}
+              onClick={() => setNav('terminal')}
+            >
+              终端
+            </button>
           </nav>
           <div className="settings-content">
-            {nav === 'general' ? <GeneralSettings /> : <SessionManagement />}
+            {nav === 'general' ? <GeneralSettings /> : nav === 'sessions' ? <SessionManagement /> : <TerminalSettings />}
           </div>
         </div>
       </div>
@@ -332,6 +340,114 @@ function SessionManagement() {
           onCancel={() => setConfirm(null)}
         />
       )}
+    </div>
+  );
+}
+
+function TerminalSettings() {
+  const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
+  const [defaultId, setDefaultId] = useState<string | null>(null);
+  const [customPath, setCustomPath] = useState('');
+  const [customArgs, setCustomArgs] = useState('');
+  const [customError, setCustomError] = useState<string | null>(null);
+
+  useEffect(() => {
+    pi.getConfig()
+      .then((cfg) => setDefaultId(cfg.defaultTerminalProfile))
+      .catch(() => {});
+    pi.listTerminalProfiles()
+      .then(setProfiles)
+      .catch(() => setProfiles([]));
+  }, []);
+
+  // 下拉选中值：'' 表示使用探测到的第一个 / 平台默认。
+  const selected = defaultId ?? '';
+
+  const ensureCustom = (path: string, args: string[]) => {
+    setProfiles((prev) => {
+      const exists = prev.some((p) => p.id === 'custom');
+      if (exists) return prev;
+      return [
+        ...prev,
+        { id: 'custom', label: '自定义', path, args, platform: 'all', isCustom: true },
+      ];
+    });
+  };
+
+  const onSelect = (value: string) => {
+    if (value === 'custom') {
+      // 仅切换到自定义视图，不立即保存；具体 path/args 由“保存为默认”落盘。
+      setDefaultId('custom');
+      return;
+    }
+    setDefaultId(value);
+    pi.setConfig({ defaultTerminalProfile: value }).catch(() => {});
+  };
+
+  const saveCustom = () => {
+    if (!customPath.trim()) {
+      setCustomError('请填写 shell 路径');
+      return;
+    }
+    setCustomError(null);
+    const args = customArgs.split(/\s+/).filter(Boolean);
+    ensureCustom(customPath, args);
+    setDefaultId('custom');
+    pi.setConfig({
+      defaultTerminalProfile: 'custom',
+      terminalProfiles: { custom: { path: customPath, args } },
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="terminal-settings">
+      <div className="settings-row">
+        <span className="settings-label">默认终端</span>
+        <select
+          className="profile-select"
+          aria-label="默认终端"
+          value={selected}
+          onChange={(e) => onSelect(e.target.value)}
+        >
+          <option value="">（使用探测到的默认终端）</option>
+          {profiles.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.label}
+            </option>
+          ))}
+          <option value="custom">其他（自定义路径）</option>
+        </select>
+      </div>
+
+      {selected === 'custom' && (
+        <div className="custom-terminal">
+          <div className="settings-row">
+            <span className="settings-label">shell 路径</span>
+            <input
+              type="text"
+              className="custom-path-input"
+              aria-label="shell 路径"
+              placeholder={'C:\\Program Files\\Git\\bin\\bash.exe'}
+              value={customPath}
+              onChange={(e) => setCustomPath(e.target.value)}
+            />
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">启动参数</span>
+            <input
+              type="text"
+              className="custom-args-input"
+              aria-label="启动参数"
+              placeholder="--login -i"
+              value={customArgs}
+              onChange={(e) => setCustomArgs(e.target.value)}
+            />
+          </div>
+          {customError && <p className="settings-hint error">{customError}</p>}
+          <button type="button" className="btn" onClick={saveCustom}>保存为默认</button>
+        </div>
+      )}
+      <p className="settings-hint">提示：新建集成终端时会使用此处选择的默认终端。</p>
     </div>
   );
 }

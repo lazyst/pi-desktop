@@ -34,6 +34,13 @@ describe('config (pure)', () => {
     expect(defaultConfig().fontSize).toBe(13);
   });
 
+  it('defaultConfig includes integrated terminal fields with correct defaults', () => {
+    const c = defaultConfig();
+    expect(c.defaultTerminalProfile).toBeNull();
+    expect(c.terminalDrawerHeight).toBe(220);
+    expect(c.terminalProfiles).toEqual({});
+  });
+
   it('parseConfig clamps out-of-range / invalid fontSize to defaults or bounds', () => {
     // 合法值透传
     expect(parseConfig(JSON.stringify({ fontSize: 20 })).fontSize).toBe(20);

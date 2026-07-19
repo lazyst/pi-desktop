@@ -41,4 +41,30 @@ export interface AppConfig {
   // 全局字体大小（UI + 终端统一基准，单位 px）。持久化于主进程 config，
   // 与主题同构：单一根属性驱动整个 UI 与终端字号。范围 8–28，默认 13。
   fontSize: number;
+  // 集成终端：默认终端 profile 的 id；null 表示用探测到的第一个 / 平台默认。
+  defaultTerminalProfile: string | null;
+  // 集成终端抽屉的高度（像素）。
+  terminalDrawerHeight: number;
+  // 用户自定义的终端 profile 覆盖（key 为 profile id，如 'custom'），覆盖探测到的 profile。
+  terminalProfiles: Record<string, { path: string; args: string[] }>;
+}
+
+export type Platform = 'windows' | 'macos' | 'linux';
+
+// 一个可用的终端 profile（shell 描述）。id 稳定（如 'pwsh' / 'cmd' / 'git-bash' / 'default' / 'custom'）。
+export interface TerminalProfile {
+  id: string;
+  label: string;       // 展示名，如 'PowerShell' / 'Command Prompt' / 'Git Bash'
+  path: string;        // shell 可执行文件绝对路径
+  args: string[];      // 启动参数，如 git-bash 用 ['--login','-i']
+  platform: Platform | 'all';
+  isCustom?: boolean;  // 用户自定义的「其他」路径
+}
+
+// 一个已创建的集成终端实例信息。
+export interface IntegratedTerminalInfo {
+  id: string;          // 形如 'term-<uuid>'
+  profileId: string;
+  cwd: string;
+  title: string;       // 展示标题（profile label 或 cwd 末段）
 }
