@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback, type MouseEvent } from 'react';
 import type { SessionStatus } from '../types';
-import { IconNewSession, IconPin, IconTrash, IconRemoveDir } from './icons';
+import { IconNewSession, IconPin, IconTrash, IconRemoveDir, IconTerminal } from './icons';
 import { ContextMenu } from './ContextMenu';
 import { clampSidebarWidth } from './sidebarGeometry';
 import { defaultConfig } from '../../../main/config';
@@ -42,11 +42,13 @@ interface Props {
   terminalsByCwd?: Map<string, number>;
   // 在「应用工作目录」分组下新建集成终端的入口。
   onNewTerminalInAppWorkDir?: () => void;
+  // 在各项目分组（cwd）下新建集成终端的入口，传入具体目录。
+  onNewTerminalInCwd?: (cwd: string) => void;
 }
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
-  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir }: Props) {
+  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -155,22 +157,10 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
             <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}`}>
               <div className="group-title">
                 <span className="group-name" title={g.cwd}>
-                  {g.isAppWorkDir ? '📁 应用工作目录' : `📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
+                  {`📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
                   {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>{termCount} Terminal</span>}
                 </span>
                 <span className="group-actions">
-                  {g.isAppWorkDir ? (
-                    <button
-                      className="icon-btn"
-                      title="在应用工作目录新建集成终端"
-                      aria-label="在应用工作目录新建集成终端"
-                      data-action="new-app-terminal"
-                      onClick={() => onNewTerminalInAppWorkDir?.()}
-                    >
-                      <IconNewSession />
-                    </button>
-                  ) : (
-                    <>
                   <button
                     className="icon-btn"
                     title={`置顶 ${g.cwd}`}
@@ -191,13 +181,26 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   </button>
                   <button
                     className="icon-btn"
-                    title={`从侧边栏移除目录 ${g.cwd}（不会删除会话文件）`}
-                    aria-label={`移除目录 ${g.cwd}`}
-                    data-action="remove-directory"
-                    onClick={() => onRemoveDir(g.cwd)}
+                    title={`在 ${g.cwd} 新建集成终端`}
+                    aria-label={`在 ${g.cwd} 新建集成终端`}
+                    data-action="new-terminal"
+                    onClick={() => g.isAppWorkDir ? onNewTerminalInAppWorkDir?.() : onNewTerminalInCwd?.(g.cwd)}
                   >
-                    <IconRemoveDir />
+                    <IconTerminal />
                   </button>
+                  {g.isAppWorkDir ? (
+                    <></>
+                  ) : (
+                    <button
+                      className="icon-btn"
+                      title={`从侧边栏移除目录 ${g.cwd}（不会删除会话文件）`}
+                      aria-label={`移除目录 ${g.cwd}`}
+                      data-action="remove-directory"
+                      onClick={() => onRemoveDir(g.cwd)}
+                    >
+                      <IconRemoveDir />
+                    </button>
+                  )}
                   <button
                     className="icon-btn"
                     title={`清空 ${g.cwd} 下的所有会话`}
@@ -207,8 +210,6 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   >
                     <IconTrash />
                   </button>
-                    </>
-                  )}
                 </span>
               </div>
               {visible.map((s) => {

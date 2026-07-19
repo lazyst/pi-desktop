@@ -177,8 +177,16 @@ export default function App() {
     .filter((s) => isLiveKey(s.key) && !promoted[s.key])
     .map((s) => ({ key: s.key, cwd: s.cwd, name: s.name, unsaved: true }));
   // 左侧栏只展示用户“添加目录”显式注册的目录下的会话（含未升级的 live 会话）。
-  // 其余磁盘会话不再出现在左侧栏，只可在设置面板“会话管理”中查看与管理。
-  const addedSet = new Set(addedDirs);
+  // 「应用工作目录」(appWorkDir) 也作为隐式允许的目录纳入——它虽不写在 addedDirs 里，
+  // 但其下同样会产生会话（如在该分组新建会话），必须能显示在左栏（见 issue：在
+  // 应用工作目录新建会话后左侧栏看不到）。其余磁盘会话不出现，仅在设置面板“会话管理”。
+  // 注：appWorkDir 可能为空串（配置未就绪），空串不会匹配任何会话 cwd，安全跳过。
+  const visibleDirs = useMemo(() => {
+    const set = new Set(addedDirs);
+    if (appWorkDir) set.add(appWorkDir);
+    return set;
+  }, [addedDirs, appWorkDir]);
+  const addedSet = visibleDirs;
   const sessions: DiskSession[] = [
     ...disk.filter((d) => addedSet.has(d.cwd)),
     ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
@@ -370,6 +378,23 @@ export default function App() {
     }
   }, []);
 
+  // 在指定项目目录（cwd）分组下新建集成终端：cwd 取该分组目录。
+  const handleNewTerminalInCwd = useCallback(async (cwd: string) => {
+    setDrawerOpen(true);
+    try {
+      if (!profilesRef.current) profilesRef.current = await pi.listTerminalProfiles();
+      const profiles = profilesRef.current;
+      const cfg = await pi.getConfig();
+      const defaultId = cfg.defaultTerminalProfile;
+      const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
+      if (!profile) return;
+      const info = await pi.createTerminal({ profile, cwd });
+      setActiveTermId(info.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   // 关闭 tab：移除本地列表 + 通知主进程销毁；若关掉的是激活态则切到剩余第一个或 null；
   // 关掉最后一个则自动收起抽屉。
   const handleCloseTab = useCallback((id: string) => {
@@ -424,9 +449,10 @@ export default function App() {
         appWorkDir={appWorkDir}
         terminalsByCwd={terminalsByCwd}
         onNewTerminalInAppWorkDir={handleNewTerminalInAppWorkDir}
+        onNewTerminalInCwd={handleNewTerminalInCwd}
       />
       <FilePanel
-        addedDirs={addedDirs}
+        addedDirs={Array.from(visibleDirs)}
         activeCwd={activeCwd}
         onOpenFile={handleOpenFile}
         width={filePanelWidth}

@@ -479,9 +479,14 @@ function createWindow() {
   // ── 文件管理器（A + B 预览）只读/写 IPC ──
   // 所有 fs 通道统一在主进程做路径安全校验：请求的 root + relPath 必须落在
   // config.addedDirs（allowedRoots）之内，防止越界读写用户目录（见 docs/plan-file-manager-preview-git.md）。
+  // 「应用工作目录」(config.appWorkDir) 也作为隐式允许根并入——文件树需要以它为 root 浏览
+  // （例如用户在应用工作目录分组下操作、或启动时无已添加项目目录），否则会抛
+  // FsSecurityError: path ... resolves outside allowed roots（见 issue：文件树报错）。
   const allowedRoots = (): string[] => {
-    const dirs = getConfig().addedDirs;
-    return Array.isArray(dirs) ? dirs.filter((d) => typeof d === 'string') : [];
+    const cfg = getConfig();
+    const dirs = Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((d) => typeof d === 'string') : [];
+    if (cfg.appWorkDir && typeof cfg.appWorkDir === 'string') dirs.push(cfg.appWorkDir);
+    return dirs;
   };
   ipcMain.handle('fs:listDir', (_e, req: { root: string; dir: string }) =>
     listDir(req.root, req.dir, allowedRoots()));
