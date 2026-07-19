@@ -1169,6 +1169,23 @@ html, body, #root {
   border-top: 1px solid var(--border);
   margin-top: var(--sp-1);
 }
+/* 可点击的小节标题（点击在右侧抽屉打开 diff） */
+.git-section-clickable {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+.git-section-clickable:hover { background: var(--bg-hover); color: var(--accent); }
+.git-open-hint {
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  font-weight: var(--fw-normal);
+}
+.git-section-clickable:hover .git-open-hint { color: var(--accent); }
 .git-log { overflow-y: auto; max-height: 30vh; flex: none; }
 .git-log-item {
   display: flex;
@@ -1185,29 +1202,60 @@ html, body, #root {
 .git-log-meta { font-size: var(--fs-xs); color: var(--text-faint); }
 .git-diff { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 
-/* ── 双栏 diff 渲染 ── */
+/* ── Git diff 右侧抽屉 ── */
+.git-diff-drawer .drawer-body { padding: 0; }
+.git-diff-back {
+  flex: none;
+  font-size: var(--fs-xs);
+  padding: 2px 8px;
+}
+
+/* ── 单栏 diff 渲染（unified）── */
 .diff-scroll { overflow: auto; flex: 1; min-height: 0; font-family: var(--font-mono); font-size: calc(12px * var(--font-scale)); line-height: 1.55; background: var(--bg-app); }
 .diff-file + .diff-file { border-top: 1px solid var(--border); }
+/* 可点击的文件头：折叠/展开该文件 diff，并显示文件名与 +N/-M 统计。 */
 .diff-file-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 6px 10px;
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
 }
-.diff-header-cell {
-  padding: 5px 10px;
+.diff-file-header:hover { background: var(--bg-hover); }
+.diff-file-header-clickable { color: var(--text); }
+.diff-collapse-arrow {
+  flex: none;
+  font-size: 9px;
   color: var(--text-muted);
+  transition: transform var(--transition);
+  transform: rotate(90deg);
+}
+.diff-collapse-arrow.collapsed { transform: rotate(0deg); }
+.diff-file-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: var(--fw-medium);
 }
-.diff-header-left { border-right: 1px solid var(--border); }
-.diff-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-.diff-cell { display: flex; min-width: 0; border-right: 1px solid var(--border); }
-.diff-cell-right { border-right: none; }
+.diff-file-stats {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+/* 单栏行容器：删除/新增/上下文各占一行，垂直堆叠。 */
+.diff-rows { display: flex; flex-direction: column; }
+.diff-row { display: flex; min-width: 0; border-left: 2px solid transparent; }
+.diff-row:hover { background: var(--bg-hover); }
 .diff-lineno {
   width: 42px;
   padding: 0 6px;
@@ -1224,9 +1272,13 @@ html, body, #root {
   background: rgba(96, 165, 250, 0.12);
   color: var(--accent);
   padding: 0 10px;
-  white-space: pre;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+/* 文件元数据 / hunk 头整行显示（长路径可折行，不挤出横向滚动条） */
+.diff-hunk-full {
+  border-bottom: 1px solid var(--border);
 }
 .diff-line { display: flex; background: var(--bg-app); }
 .diff-line .diff-lineno { background: var(--bg-panel); }

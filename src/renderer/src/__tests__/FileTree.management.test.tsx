@@ -36,7 +36,7 @@ describe('FileTree 文件管理：根目录新建', () => {
   });
 
   it('右键空白区 → 新建文件 → 输入回车 → fsCreateFile 被调用且树刷新显示新文件', async () => {
-    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} width={260} onResize={vi.fn()} />);
+    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} onOpenWorkDiff={vi.fn()} onOpenCommit={vi.fn()} width={260} onResize={vi.fn()} />);
 
     // 初始树渲染
     expect(await screen.findByText('README.md')).toBeInTheDocument();

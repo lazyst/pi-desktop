@@ -1,11 +1,11 @@
-// Read-only Git viewer. Shows branch + dirty status, recent commit log (click a
-// commit to see its diff), and the working-tree diff (unstaged + staged).
+// Read-only Git viewer. Shows branch + change counts, recent commit log (click a
+// commit to open its diff in the right-side drawer), and a "工作区改动" header
+// (click to open the working-tree diff in the right-side drawer).
 // All data comes from the `git:status` / `git:log` / `git:diff` IPC channels,
 // which degrade gracefully for non-git directories. Ported concept from plan
 // M5 (G1). No push / commit / checkout — read only.
 import { useCallback, useEffect, useState } from 'react';
 import { pi } from '../ipc';
-import { SplitDiffView } from './SplitDiffView';
 
 interface LogEntry {
   hash: string;
@@ -16,15 +16,15 @@ interface LogEntry {
 
 interface Props {
   cwd: string;
+  /** Open the working-tree diff in the right-side drawer. */
+  onOpenWorkDiff: (cwd: string) => void;
+  /** Open a single commit's diff in the right-side drawer. */
+  onOpenCommit: (cwd: string, hash: string) => void;
 }
 
-export function GitView({ cwd }: Props) {
+export function GitView({ cwd, onOpenWorkDiff, onOpenCommit }: Props) {
   const [status, setStatus] = useState<{ isGit: boolean; branch: string | null; additions: number; deletions: number; ahead: number; behind: number } | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [selectedHash, setSelectedHash] = useState<string | null>(null);
-  const [commitDiff, setCommitDiff] = useState<string>('');
-  const [workDiff, setWorkDiff] = useState<string>('');
-  const [loadingDiff, setLoadingDiff] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!cwd) { setStatus(null); setLog([]); return; }
@@ -34,37 +34,18 @@ export function GitView({ cwd }: Props) {
       if (s.isGit) {
         const l = await pi.gitLog(cwd, 100);
         setLog(l);
-        const wd = await pi.gitDiff(cwd);
-        setWorkDiff(wd);
       } else {
         setLog([]);
-        setWorkDiff('');
       }
     } catch {
       setStatus({ isGit: false, branch: null, additions: 0, deletions: 0, ahead: 0, behind: 0 });
       setLog([]);
-      setWorkDiff('');
     }
   }, [cwd]);
 
   useEffect(() => {
-    setSelectedHash(null);
-    setCommitDiff('');
     void refresh();
   }, [refresh]);
-
-  const onSelectCommit = useCallback(async (hash: string) => {
-    setSelectedHash(hash);
-    setLoadingDiff(true);
-    try {
-      const d = await pi.gitDiff(cwd, hash);
-      setCommitDiff(d);
-    } catch {
-      setCommitDiff('');
-    } finally {
-      setLoadingDiff(false);
-    }
-  }, [cwd]);
 
   if (!status) {
     return <div className="git-empty">加载中…</div>;
@@ -97,9 +78,9 @@ export function GitView({ cwd }: Props) {
         {log.map((e) => (
           <div
             key={e.hash}
-            className={`git-log-item ${selectedHash === e.hash ? 'active' : ''}`}
-            onClick={() => void onSelectCommit(e.hash)}
-            title={`${e.hash}\n${e.author} · ${e.date}`}
+            className="git-log-item"
+            onClick={() => onOpenCommit(cwd, e.hash)}
+            title={`${e.hash}\n${e.author} · ${e.date}\n点击在右侧抽屉查看改动`}
           >
             <span className="git-log-msg">{e.message}</span>
             <span className="git-log-meta">{e.author}</span>
@@ -107,15 +88,19 @@ export function GitView({ cwd }: Props) {
         ))}
       </div>
 
-      <div className="git-section-title">工作区改动</div>
-      <div className="git-diff">
-        {loadingDiff ? (
-          <div className="git-empty">加载 diff…</div>
-        ) : selectedHash ? (
-          <SplitDiffView text={commitDiff} />
-        ) : (
-          (workDiff.trim() ? <SplitDiffView text={workDiff} /> : <div className="git-empty">无改动</div>)
+      <div
+        className="git-section-title git-section-clickable"
+        onClick={() => onOpenWorkDiff(cwd)}
+        title="在右侧抽屉查看工作区改动"
+      >
+        工作区改动
+        {(status.additions > 0 || status.deletions > 0) && (
+          <span className="git-changes" title="工作区改动行数">
+            {status.additions > 0 && <span className="git-add">+{status.additions}</span>}
+            {status.deletions > 0 && <span className="git-del">−{status.deletions}</span>}
+          </span>
         )}
+        <span className="git-open-hint">查看 →</span>
       </div>
     </div>
   );

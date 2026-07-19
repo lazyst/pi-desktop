@@ -8,6 +8,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
 import { FilePanel } from './components/FilePanel';
 import { FileDrawer, type DrawerFile } from './components/FileDrawer';
+import { GitDiffDrawer } from './components/GitDiffDrawer';
 import { pi } from './ipc';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
@@ -264,6 +265,16 @@ export default function App() {
     setDrawerFile({ root, path: relPath });
   };
 
+  // 点击 Git 面板的「工作区改动」或某次提交 → 打开右侧 Git diff 抽屉。
+  // commitHash 为 null 时显示工作区 diff；为某 hash 时显示该提交 diff。
+  const [gitDiffDrawer, setGitDiffDrawer] = useState<{ cwd: string; commitHash: string | null } | null>(null);
+  const openWorkDiff = useCallback((cwd: string) => {
+    setGitDiffDrawer({ cwd, commitHash: null });
+  }, []);
+  const openCommitDiff = useCallback((cwd: string, hash: string) => {
+    setGitDiffDrawer({ cwd, commitHash: hash });
+  }, []);
+
   const handleSidebarResize = (w: number) => {
     setSidebarWidth(w);
     pi.setConfig({ sidebarWidth: w }).catch(() => {});
@@ -455,6 +466,8 @@ export default function App() {
         addedDirs={Array.from(visibleDirs)}
         activeCwd={activeCwd}
         onOpenFile={handleOpenFile}
+        onOpenWorkDiff={openWorkDiff}
+        onOpenCommit={openCommitDiff}
         width={filePanelWidth}
         onResize={handleFilePanelResize}
       />
@@ -503,6 +516,13 @@ export default function App() {
       <WindowResizeZones />
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
       <FileDrawer file={drawerFile} onClose={() => setDrawerFile(null)} onOpenFile={handleOpenFile} />
+      {gitDiffDrawer && (
+        <GitDiffDrawer
+          cwd={gitDiffDrawer.cwd}
+          commitHash={gitDiffDrawer.commitHash}
+          onClose={() => setGitDiffDrawer(null)}
+        />
+      )}
     </div>
   );
 }
