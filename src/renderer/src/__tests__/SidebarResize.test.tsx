@@ -43,10 +43,12 @@ describe('Sidebar terminate button visibility', () => {
     expect(container.querySelector('.terminate')).toBeTruthy();
   });
 
-  it('shows 终止进程 when status is unknown (undefined) as a UX fallback', () => {
-    // 状态推送尚未到达/竞态时，会话仍在运行，隐藏按钮会使用户“无法终止”。
+  it('hides 终止进程 when status is unknown (undefined)', () => {
+    // 与 Sidebar.test.tsx 的“未启动会话不误显终止进程”回归一致：
+    // 历史/未启动会话在 statusMap 中无记录时不显示「终止进程」（见 ffb6609）。
+    // 仅在状态明确为 'running' 时显示，避免对“无进程”的会话提供无意义终止入口。
     const { container } = renderWithResize({ statusMap: {} });
-    expect(container.querySelector('.terminate')).toBeTruthy();
+    expect(container.querySelector('.terminate')).toBeNull();
   });
 
   it('hides 终止进程 when status is dead', () => {
