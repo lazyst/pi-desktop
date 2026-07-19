@@ -8,6 +8,13 @@ import { clampFilePanelWidth } from './sidebarGeometry';
 
 type Tab = 'files' | 'git';
 
+// 跨平台取目录名（最后一段路径），用于下拉框只显示目录名而非完整绝对路径。
+// 渲染进程为 sandbox，不能 import node:path，故自行实现（与 FileTree.basename 一致）。
+function basename(p: string): string {
+  const idx = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+  return idx >= 0 ? p.slice(idx + 1) : p;
+}
+
 // 下拉框中“自动（跟随会话）”选项的特殊 value，不与任何真实目录冲突。
 const AUTO_ROOT = '__auto__';
 
@@ -123,7 +130,7 @@ export function FilePanel({ addedDirs, activeCwd, onOpenFile, width, onResize }:
           >
             <option value={AUTO_ROOT}>（自动 · 跟随会话）</option>
             {candidates.map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>{basename(c)}</option>
             ))}
           </select>
         )}
