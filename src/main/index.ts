@@ -20,8 +20,7 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 // 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
-import { defaultConfig, parseConfig, mergeConfig } from './config';
-import { DEFAULT_APP_WORK_DIR } from './config';
+import { defaultConfig, parseConfig, mergeConfig, getDefaultAppWorkDir } from './config';
 import { snapshotWindowState, initialBoundsOptions } from './windowState';
 import { IntegratedTerminalPool } from './integratedTerminalPool';
 import { detectTerminalProfiles } from './shellProfiles';
@@ -51,7 +50,7 @@ function ensureAppWorkDir(): string {
   ensureLoaded();
   const cfg = configState!;
   // 旧配置/损坏时补全默认 ~/piDesktop，并写回持久化（对齐 ADR §3 A1「自动填默认并写回」）。
-  const dir = cfg.appWorkDir || DEFAULT_APP_WORK_DIR;
+  const dir = cfg.appWorkDir || getDefaultAppWorkDir();
   if (!cfg.appWorkDir) {
     configState = mergeConfig(cfg, { appWorkDir: dir });
     writeConfigNow();
