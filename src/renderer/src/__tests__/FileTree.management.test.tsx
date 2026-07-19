@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { FilePanel } from '../components/FilePanel';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { FileTree } from '../components/FileTree';
 
 // 可变目录清单：模拟文件树在新建后重新拉取能看到新文件。
 function makePi() {
@@ -36,7 +36,7 @@ describe('FileTree 文件管理：根目录新建', () => {
   });
 
   it('右键空白区 → 新建文件 → 输入回车 → fsCreateFile 被调用且树刷新显示新文件', async () => {
-    render(<FilePanel addedDirs={['C:\\work']} activeCwd={'C:\\work'} onOpenFile={vi.fn()} onOpenWorkDiff={vi.fn()} onOpenCommit={vi.fn()} width={260} onResize={vi.fn()} />);
+    render(<FileTree root={'C:\\work'} onOpenFile={vi.fn()} />);
 
     // 初始树渲染
     expect(await screen.findByText('README.md')).toBeInTheDocument();

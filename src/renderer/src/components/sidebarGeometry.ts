@@ -22,3 +22,12 @@ export function clampSidebarWidth(width: number, windowWidth: number): number {
   const max = Math.max(SIDEBAR_MIN_WIDTH, Math.floor(windowWidth * SIDEBAR_MAX_RATIO));
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(Math.round(width), max));
 }
+
+// 右栏（文件树 / Git）拖拽宽度约束，与文件面板同思路。
+export const RIGHT_PANEL_MIN_WIDTH = 200;
+export const RIGHT_PANEL_MAX_RATIO = 0.5;
+
+export function clampRightPanelWidth(width: number, windowWidth: number): number {
+  const max = Math.max(RIGHT_PANEL_MIN_WIDTH, Math.floor(windowWidth * RIGHT_PANEL_MAX_RATIO));
+  return Math.max(RIGHT_PANEL_MIN_WIDTH, Math.min(Math.round(width), max));
+}

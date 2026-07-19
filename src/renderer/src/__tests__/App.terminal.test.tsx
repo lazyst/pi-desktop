@@ -44,6 +44,12 @@ function makeApi(overrides: Record<string, unknown> = {}) {
       (api as any)._termListCb?.([info]);
       return info;
     }),
+    // 无激活会话时 App.handleNewTerminal 走「应用工作目录」分支，需有对应桩。
+    createTerminalInAppWorkDir: vi.fn(async () => {
+      const info = { id: 't-1', profileId: 'pwsh', cwd: '/app', title: 'PowerShell' };
+      (api as any)._termListCb?.([info]);
+      return info;
+    }),
     destroyTerminal: vi.fn(async (id: string) => {
       // 模拟主进程 destroy 后广播 term:list（清空），对齐真实运行时。
       (api as any)._termListCb?.([]);
@@ -90,11 +96,13 @@ describe('App 集成终端抽屉（T6）', () => {
     const newBtn = screen.getByLabelText('新建终端') as HTMLButtonElement;
     fireEvent.click(newBtn);
 
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
-    // createTerminal 被传入 profile 与 cwd。
-    const call = api.createTerminal.mock.calls[0] as unknown as [{ profile: { id: string }; cwd: string }];
-    const req = call[0];
-    expect(req.profile.id).toBe(CONFIG.defaultTerminalProfile ?? 'pwsh');
+    await waitFor(() => expect(api.createTerminal.mock.calls.length + api.createTerminalInAppWorkDir.mock.calls.length).toBeGreaterThan(0));
+    // createTerminal 被传入 profile 与 cwd（无激活会话时走 createTerminalInAppWorkDir 分支，同样校验 profile）。
+    const createCalls = api.createTerminal.mock.calls;
+    const createAppCalls = api.createTerminalInAppWorkDir.mock.calls;
+    expect(createCalls.length + createAppCalls.length).toBe(1);
+    const req = (createCalls.length ? createCalls : createAppCalls)[0] as unknown as [{ profile: { id: string }; cwd?: string }];
+    expect(req[0].profile.id).toBe(CONFIG.defaultTerminalProfile ?? 'pwsh');
     expect(api.listTerminalProfiles).toHaveBeenCalled();
     // 关键回归点：新建一次终端，抽屉里应「恰好一个」PowerShell tab，
     // 不会因「本地追加 + onTerminalList 推送」双路径而渲染出两个重复 tab。
@@ -107,8 +115,8 @@ describe('App 集成终端抽屉（T6）', () => {
     render(<App />);
     fireEvent.click(screen.getByLabelText('终端'));
     fireEvent.click(screen.getByLabelText('新建终端'));
-    // 等到终端创建
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    // 等到终端创建（无激活会话时走 createTerminalInAppWorkDir 分支）。
+    await waitFor(() => expect(api.createTerminal.mock.calls.length + api.createTerminalInAppWorkDir.mock.calls.length).toBeGreaterThan(0));
 
     // 抽屉内应有一个终端 tab 的关闭按钮
     const closeBtn = screen.getByLabelText('关闭终端') as HTMLButtonElement;
@@ -124,7 +132,7 @@ describe('App 集成终端抽屉（T6）', () => {
     render(<App />);
     fireEvent.click(screen.getByLabelText('终端'));
     fireEvent.click(screen.getByLabelText('新建终端'));
-    await waitFor(() => expect(api.createTerminal).toHaveBeenCalled());
+    await waitFor(() => expect(api.createTerminal.mock.calls.length + api.createTerminalInAppWorkDir.mock.calls.length).toBeGreaterThan(0));
 
     const resizer = document.querySelector('.terminal-drawer-resizer') as HTMLElement;
     expect(resizer).toBeTruthy();

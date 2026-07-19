@@ -24,6 +24,7 @@ vi.mock('electron', () => ({
     loadFile = loadFileSpy;
     loadURL = vi.fn();
     show = showSpy;
+    setOpacity = vi.fn();
     maximize = vi.fn();
     isDestroyed = () => false;
     isVisible = () => false;

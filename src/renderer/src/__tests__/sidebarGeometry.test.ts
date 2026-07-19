@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { clampSidebarWidth, SIDEBAR_MIN_WIDTH } from '../components/sidebarGeometry';
+import { clampSidebarWidth, SIDEBAR_MIN_WIDTH, clampRightPanelWidth, RIGHT_PANEL_MIN_WIDTH } from '../components/sidebarGeometry';
 
 describe('clampSidebarWidth', () => {
   it('floors at the absolute 200px minimum', () => {
@@ -23,5 +23,30 @@ describe('clampSidebarWidth', () => {
     // 300px 窗口 → 60% = 180 → max(200, 180) = 200；夹取后仍是 200
     expect(clampSidebarWidth(500, 300)).toBe(SIDEBAR_MIN_WIDTH);
     expect(clampSidebarWidth(100, 300)).toBe(SIDEBAR_MIN_WIDTH);
+  });
+});
+
+describe('clampRightPanelWidth', () => {
+  it('floors at the absolute 200px minimum', () => {
+    expect(clampRightPanelWidth(100, 1000)).toBe(RIGHT_PANEL_MIN_WIDTH);
+    expect(clampRightPanelWidth(0, 1000)).toBe(RIGHT_PANEL_MIN_WIDTH);
+    expect(clampRightPanelWidth(-50, 1000)).toBe(RIGHT_PANEL_MIN_WIDTH);
+  });
+
+  it('caps at 50% of the window width', () => {
+    expect(clampRightPanelWidth(800, 1000)).toBe(500);
+    expect(clampRightPanelWidth(501, 1000)).toBe(500); // 501 > 500 → clamp to ceiling
+    expect(clampRightPanelWidth(600, 1000)).toBe(500);
+  });
+
+  it('passes through in-range widths', () => {
+    expect(clampRightPanelWidth(280, 1000)).toBe(280);
+    expect(clampRightPanelWidth(400, 1000)).toBe(400);
+  });
+
+  it('never lets the floor exceed the ceiling on a tiny window', () => {
+    // 300px 窗口 → 50% = 150 → max(200, 150) = 200；夹取后仍是 200
+    expect(clampRightPanelWidth(500, 300)).toBe(RIGHT_PANEL_MIN_WIDTH);
+    expect(clampRightPanelWidth(100, 300)).toBe(RIGHT_PANEL_MIN_WIDTH);
   });
 });
