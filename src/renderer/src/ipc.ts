@@ -42,6 +42,14 @@ export interface PiApi {
   fsReadFile(root: string, path: string, maxBytes?: number): Promise<{ content: string; language: string; size: number; isBinary: boolean; isImage: boolean; isPdf: boolean; dataUrl?: string }>;
   fsWriteFile(root: string, path: string, content: string): Promise<void>;
   fsStat(root: string, path: string): Promise<{ size: number; mtime: number; isDir: boolean }>;
+  // ── 文件管理写操作（新建 / 重命名 / 删除 / 复制 / 移动）──
+  fsMkdir(root: string, dir: string): Promise<void>;
+  fsCreateFile(root: string, path: string, content?: string): Promise<void>;
+  fsRename(root: string, from: string, to: string): Promise<void>;
+  fsRemove(root: string, path: string): Promise<void>;
+  fsCopy(root: string, from: string, to: string): Promise<void>;
+  fsListNames(root: string, dir: string): Promise<string[]>;
+  fsUniqueName(base: string, existing: string[]): Promise<string>;
   // ── Git 只读查看（D）──
   gitStatus(cwd: string): Promise<{ isGit: boolean; branch: string | null; dirty: boolean; ahead: number; behind: number; porcelain: string }>;
   gitLog(cwd: string, limit?: number): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;

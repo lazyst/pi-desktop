@@ -338,11 +338,24 @@ export class XtermTerminal {
       const types = Array.from(e.dataTransfer.types);
       const dt = e.dataTransfer as DataTransfer & { getData?: (t: string) => string };
       // 优先处理内部文件树拖入：直接读绝对路径（已归一化，无需再解析）。
+      // 现承载 JSON 数组（多选拖拽）以空白分隔拼接；兼容旧版单字符串。
       // 用可选调用兜底：部分测试/旧环境注入的 dataTransfer 可能无 getData 方法。
       const piFile = typeof dt.getData === 'function' ? dt.getData(PI_FILE_DRAG_MIME) : '';
       if (piFile) {
         e.preventDefault();
-        this.pasteText(this._shellQuote(piFile));
+        let paths: string[] = [];
+        try {
+          const parsed = JSON.parse(piFile);
+          if (Array.isArray(parsed)) paths = parsed.filter((p) => typeof p === 'string');
+          else if (typeof parsed === 'string') paths = [parsed];
+        } catch {
+          // 非 JSON：视为单路径（旧版格式）
+          paths = [piFile];
+        }
+        if (paths.length) {
+          const joined = paths.map((p) => this._shellQuote(p)).join(' ');
+          this.pasteText(joined);
+        }
         return;
       }
       // 回退到系统文件管理器拖入（Files）。
