@@ -342,8 +342,11 @@ export default function App() {
       if (!profile) return; // 无可用 shell（极罕见）
       // 3. cwd：当前激活会话 cwd，否则空（主进程侧已 fallback）
       const cwd = activeCwd ?? '';
+      // 注意：不在此处本地 setTerminals 追加——主进程 terminal:create 后会经
+      // onTerminalList 主动推送完整列表（单一事实来源，见下方订阅）。若此处再
+      // 追加一次，会与推送的整表合并成同一 id 出现两次 → 面板出现两个相同 tab。
+      // 此处只负责触发创建 + 设定激活态（激活态由返回 info 直接确定）。
       const info = await pi.createTerminal({ profile, cwd });
-      setTerminals((prev) => [...prev, info]);
       setActiveTermId(info.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -361,7 +364,6 @@ export default function App() {
       const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
       if (!profile) return;
       const info = await pi.createTerminalInAppWorkDir({ profile });
-      setTerminals((prev) => [...prev, info]);
       setActiveTermId(info.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

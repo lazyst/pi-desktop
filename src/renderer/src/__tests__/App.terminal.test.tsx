@@ -20,6 +20,13 @@ function makeApi(overrides: Record<string, unknown> = {}) {
     onIndex: vi.fn(() => () => {}),
     onRelink: vi.fn(() => () => {}),
     onTerminalExit: vi.fn(() => () => {}),
+    // 主进程在 createTerminal/destroyTerminal 后会经 term:list 主动推送完整列表
+    // （单一事实来源，见 App 的 onTerminalList 订阅）。preload 的解构为 cb(m.list)，
+    // 故桩也按 m.list 解构，对齐真实契约（避免 setTerminals 收到非数组而崩溃）。
+    onTerminalList: vi.fn((cb: (list: any[]) => void) => {
+      (api as any)._termListCb = cb;
+      return () => { (api as any)._termListCb = null; };
+    }),
     pickDirectory: vi.fn(),
     debug: vi.fn(),
     getConfig: vi.fn().mockResolvedValue(CONFIG),
@@ -31,8 +38,17 @@ function makeApi(overrides: Record<string, unknown> = {}) {
       { id: 'pwsh', name: 'PowerShell', shell: 'pwsh', args: [] },
       { id: 'bash', name: 'bash', shell: 'bash', args: [] },
     ]),
-    createTerminal: vi.fn(async () => ({ id: 't-1', profileId: 'pwsh', cwd: '/x', title: 'PowerShell' })),
-    destroyTerminal: vi.fn().mockResolvedValue(undefined),
+    createTerminal: vi.fn(async () => {
+      const info = { id: 't-1', profileId: 'pwsh', cwd: '/x', title: 'PowerShell' };
+      // 模拟主进程 create 后广播 term:list（含新实例），对齐真实运行时。
+      (api as any)._termListCb?.([info]);
+      return info;
+    }),
+    destroyTerminal: vi.fn(async (id: string) => {
+      // 模拟主进程 destroy 后广播 term:list（清空），对齐真实运行时。
+      (api as any)._termListCb?.([]);
+      return undefined;
+    }),
     terminalInput: vi.fn(),
     terminalResize: vi.fn(),
     onTerminalData: vi.fn(() => () => {}),
@@ -66,7 +82,7 @@ describe('App 集成终端抽屉（T6）', () => {
     expect(btn.className).toContain('active');
   });
 
-  it('handleNewTerminal → createTerminal 被调用、terminals 增加、activeTermId 设置', async () => {
+  it('handleNewTerminal → createTerminal 被调用、经 onTerminalList 推送渲染恰好一个 tab、activeTermId 设置', async () => {
     const api = makeApi();
     render(<App />);
     // 先打开抽屉，再点「新建终端」按钮（位于抽屉 tab 条右侧）。
@@ -80,8 +96,10 @@ describe('App 集成终端抽屉（T6）', () => {
     const req = call[0];
     expect(req.profile.id).toBe(CONFIG.defaultTerminalProfile ?? 'pwsh');
     expect(api.listTerminalProfiles).toHaveBeenCalled();
-    // 抽屉内出现一个 integrated terminal host（keep-alive 渲染）。
-    expect(screen.getAllByText('PowerShell').length).toBeGreaterThan(0);
+    // 关键回归点：新建一次终端，抽屉里应「恰好一个」PowerShell tab，
+    // 不会因「本地追加 + onTerminalList 推送」双路径而渲染出两个重复 tab。
+    expect(api.onTerminalList).toHaveBeenCalled();
+    await waitFor(() => expect(screen.getAllByText('PowerShell').length).toBe(1));
   });
 
   it('关闭 tab → destroyTerminal 被调用、terminals 减少，且自动收起（最后一个）', async () => {
