@@ -1059,7 +1059,8 @@
 .fp-root-select {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
-  max-width: 110px;
+  /* 放宽以便显示目录名（不再截断完整路径）；目录名通常较短。 */
+  max-width: 160px;
   background: var(--bg-app);
   color: var(--text);
   border: 1px solid var(--border);
@@ -1067,7 +1068,12 @@
   padding: 2px 4px;
   cursor: pointer;
 }
-.fp-root-select:focus { outline: none; border-color: var(--border-strong); box-shadow: var(--focus-ring); }
+/* 去掉聚焦时的边框高亮（与常态一致，避免突兀的亮色描边）。 */
+.fp-root-select:focus {
+  outline: none;
+  border-color: var(--border);
+  box-shadow: none;
+}
 .file-panel-body { flex: 1; min-height: 0; overflow: auto; padding: var(--sp-1) 0; }
 .file-panel-empty { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.6; }
 
@@ -1103,14 +1109,23 @@
 .file-rename-input {
   font-size: calc(12px * var(--font-scale));
   color: var(--text);
-  background: var(--bg-input, #1e1e2a);
-  border: 1px solid var(--accent, #6366f1);
+  /* 背景贴近行背景、仅略亮，融入行内而非突兀的“深灰块”（对齐 VS Code 行内编辑）。 */
+  background: var(--bg-input, #23232f);
+  border: 1px solid transparent;
   border-radius: 3px;
-  padding: 0 3px;
-  height: 18px;
+  padding: 0 4px;
+  height: 20px;
+  box-sizing: border-box;
   flex: 1;
   min-width: 40px;
   outline: none;
+  /* 与 .file-name 同基线，避免垂直偏移导致的“错位感”。 */
+  font-family: inherit;
+}
+/* 聚焦：克制的蓝色 focus ring（对齐 VS Code focusBorder，复用项目 --focus-ring token）。 */
+.file-rename-input:focus {
+  border-color: var(--accent, #7c9cff);
+  box-shadow: var(--focus-ring);
 }
 
 /* 文件面板右缘拖拽条：复用侧边栏拖拽条的视觉语言。 */
