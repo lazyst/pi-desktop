@@ -1158,7 +1158,9 @@ html, body, #root {
 .git-ahead-behind { display: inline-flex; gap: 4px; }
 .git-ahead { color: var(--success); font-size: var(--fs-xs); }
 .git-behind { color: var(--text-muted); font-size: var(--fs-xs); }
-.git-dirty { color: #f0a020; font-size: var(--fs-xs); }
+.git-changes { display: inline-flex; gap: 6px; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.git-add { color: var(--success); font-weight: var(--fw-semibold); }
+.git-del { color: var(--danger); font-weight: var(--fw-semibold); }
 .git-section-title {
   font-size: var(--fs-xs);
   color: var(--text-muted);
