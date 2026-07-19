@@ -130,10 +130,24 @@ function resolveTrayIcon(): string {
 }
 
 // 显示并聚焦窗口（托盘「显示」/双击触发）。
+// 白闪根因：Windows 无边框窗口从隐藏到显示时，DWM 会在合成首帧前先用纯白填充
+// 客户区，Electron 的 backgroundColor 时序上有时来不及，导致「最小化后再打开」出现一瞬白屏。
+// 解法（透明桥接）：先以 opacity:0 显示，让白色首帧在不可见状态下绘制，
+// 待下一帧（rAF）暗色内容已合成后再 setOpacity(1) 淡入——用户全程看不到白帧。
 function showWindow(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
-  if (win.isVisible()) win.focus();
-  else { win.show(); win.focus(); }
+  // 冷启动(initial show:false)与恢复(hide 后 show)在此路径汇合：isVisible 均为 false。
+  if (win.isVisible()) { win.focus(); return; }
+  // 透明桥接：先以 opacity:0 显示，让 Windows DWM 在 show() 瞬间绘制的纯白首帧
+  // 发生在不可见状态；待下一帧(~20ms)暗色 DOM 已合成后再 setOpacity(1) 淡入，
+  // 用户全程看不到白帧。主进程是 Node 环境，无 requestAnimationFrame，故用 setTimeout。
+  win.setOpacity(0);
+  win.show();
+  setTimeout(() => {
+    if (win.isDestroyed()) return;
+    win.setOpacity(1);
+    win.focus();
+  }, 20);
 }
 
 // 创建常驻系统托盘：右键「显示 / 退出」，双击显示并聚焦（见 issue 01）。
@@ -246,10 +260,15 @@ function createWindow() {
   // 还原上次窗口几何（最大化状态单独存标志，bounds 永远是非最大化尺寸）。
   // show:false —— 启动动画（splash）由 renderer 首屏就绪后经 splash:done IPC 触发
   // show()，避免在「无边框窗口 + 内容异步加载」下先闪白框再显示内容（见 docs/adr/0003）。
+  // backgroundColor 必须跟随主题设置：无边框窗口不指定时 OS 合成器默认给纯白背景，
+  // 最小化为 hide() 后再 show() 会先闪一下亮白再被 React 暗色 DOM 覆盖（托盘恢复路径
+  // 不经过 splash 遮挡）。取值与 index.html 的 --bg-app 回退色、theme.ts 的静态等价色一致，
+  // 三处同源，杜绝亮闪。
   const win = new BrowserWindow({
     ...initialBoundsOptions(cfg.window.bounds),
     show: false,
     frame: false, // 无边框：原生菜单与标题条随之消失（任务 2），标题条改由渲染进程自建（任务 3）
+    backgroundColor: cfg.theme === 'light' ? '#ffffff' : '#0d1117',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       sandbox: true,
@@ -399,6 +418,11 @@ function createWindow() {
   ipcMain.handle('config:get', () => getConfig());
   ipcMain.handle('config:set', (_e, partial: Partial<AppConfig>) => {
     setConfig(partial);
+    // 主题切换时同步窗口合成背景色，使最小化/托盘恢复（hide→show）不再闪亮
+    // （backgroundColor 与 --bg-app / theme.ts 静态色同源）。
+    if (partial.theme && (partial.theme === 'light' || partial.theme === 'dark')) {
+      if (!win.isDestroyed()) win.setBackgroundColor(partial.theme === 'light' ? '#ffffff' : '#0d1117');
+    }
     if (!win.isDestroyed()) win.webContents.send('config:change', getConfig());
   });
 
@@ -570,6 +594,18 @@ function createWindow() {
   });
   win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', true); });
   win.on('unmaximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', false); });
+  // 任务栏最小化→点任务栏图标恢复（OS 原生 restore，绕过 showWindow 的透明桥接）
+  // 同样会触发 DWM 白首帧，故在 restore 瞬间用 opacity 0→1 桥接吃掉白闪。
+  // 仅当窗口确实刚从隐藏恢复时才桥接（isVisible 在 restore 事件触发时已为 true，
+  // 故用 'restore' 事件本身即代表发生了隐藏→显示，直接桥接一次即可）。
+  win.on('restore', () => {
+    if (win.isDestroyed()) return;
+    win.setOpacity(0);
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      win.setOpacity(1);
+    }, 20);
+  });
 
   // 关闭语义（见 issue 03 / docs/adr/0001 决策③）：
   //  - minimize-to-tray（默认）：拦截关闭、隐藏窗口、进程继续跑（托盘可恢复）。
@@ -596,13 +632,14 @@ function createWindow() {
 
   // 启动动画（splash）：窗口以 show:false 创建，避免无边框窗口先闪白框。
   // renderer 首屏（App 挂载）后发 splash:done → 切淡出并 show()。
-  // 仅「真冷启动」走此路径；托盘恢复走 showWindow()（win.show()），不经过此处。
+  // 仅「真冷启动」走此路径；托盘恢复走 showWindow()。两处都经 showWindow 的
+  // 透明(opacity 0→1)桥接，统一吞掉 show() 瞬间的 OS 合成白首帧（见 showWindow）。
   // 兜底：若渲染进程未在 3s 内通知（异常/未挂载），强制显示，避免窗口永远不可见。
   let splashDismissed = false;
   const dismissSplash = () => {
     if (splashDismissed) return;
     splashDismissed = true;
-    if (!win.isDestroyed()) win.show();
+    if (!win.isDestroyed()) showWindow(win);
   };
   ipcMain.on('splash:done', () => dismissSplash());
   const splashFallback = setTimeout(dismissSplash, 3000);

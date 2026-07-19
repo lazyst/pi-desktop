@@ -6,6 +6,11 @@
     <title>Pi Desktop</title>
     <style>
       html, body, #root { height: 100%; margin: 0; }
+      /* 关键：html/body 也要铺暗色背景。Chromium 默认白底，无边框窗口在
+         show()/最小化后恢复的那一帧若 html/body 透明，白色会透出造成闪屏
+         （托盘恢复路径不经过 splash 遮挡）。用与 --bg-app 同源的回退色，
+         即使外部 tokens.css 尚未加载也不白。主题切到 light 时 --bg-app 随之变亮。 */
+      html, body { background: var(--bg-app, #0d1117); }
       /* 启动动画 splash：纯静态 HTML/CSS，浏览器解析即渲染，无需等待 React 挂载
          （见 docs/adr/0003）。splash:done 后由 renderer 切 .splash--hidden 淡出；
          prefers-reduced-motion 下直接隐藏，不播动画（复用全局无障碍规则）。 */

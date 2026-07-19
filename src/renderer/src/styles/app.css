@@ -1,3 +1,11 @@
+/* 根元素背景：消除无边框窗口 show()/最小化恢复瞬间的白闪。
+   Chromium 默认白底，html/body 透明时会透出白帧；此处铺 --bg-app，
+   与 --bg-app（tokens.css）、splash（index.html）同源。data-theme 切到
+   light 时 --bg-app 随之变亮，整页背景自动跟随主题。 */
+html, body, #root {
+  background: var(--bg-app);
+}
+
 /* App shell */
 .app {
   display: flex;
