@@ -50,6 +50,8 @@ export interface PiApi {
   fsCopy(root: string, from: string, to: string): Promise<void>;
   fsListNames(root: string, dir: string): Promise<string[]>;
   fsUniqueName(base: string, existing: string[]): Promise<string>;
+  // 目录监听（外部变更自动刷新，对齐 VS Code FileWatcher）：订阅某目录，返回取消订阅函数。
+  fsWatch(root: string, dir: string, cb: () => void): () => void;
   // ── Git 只读查看（D）──
   gitStatus(cwd: string): Promise<{ isGit: boolean; branch: string | null; dirty: boolean; ahead: number; behind: number; porcelain: string }>;
   gitLog(cwd: string, limit?: number): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;

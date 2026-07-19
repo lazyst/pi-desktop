@@ -6,7 +6,7 @@ import * as crypto from 'node:crypto';
 import { SessionPool } from './sessionPool';
 import type { IPtyLike } from './sessionPool';
 import nodePty from 'node-pty';
-import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName } from './fsBridge';
+import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir } from './fsBridge';
 import { gitStatus, gitLog, gitDiff } from './gitBridge';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -499,6 +499,35 @@ function createWindow() {
   // 文件操作直接信任渲染端传入的 root + relPath。
   ipcMain.handle('fs:listDir', (_e, req: { root: string; dir: string }) =>
     listDir(req.root, req.dir));
+  // ╌╌ 目录监听（外部变更自动刷新，对齐 VS Code FileWatcher）╌╌
+  // 渲染端请求监控某个目录（root + dir），主进程起 fs.watch；该目录的直接子项
+  // 发生增删时，经 'fs:change' 通道推送 { dir } 给渲染端，由其刷新对应目录。
+  // 同一目录可能被渲染端多次订阅（多个 TreeNode 共享父目录）；用计数实现引用计数，
+  // 最后一处取消时才真正关闭底层 watcher，避免重复句柄。
+  const dirWatchers = new Map<string, { stop: () => void; refs: number }>();
+  const watchKey = (root: string, dir: string) => `${root} ${dir}`;
+  ipcMain.on('fs:watch', (_e, req: { root: string; dir: string }) => {
+    const key = watchKey(req.root, req.dir);
+    const existing = dirWatchers.get(key);
+    if (existing) {
+      existing.refs += 1;
+      return;
+    }
+    const stop = watchDir(req.root, req.dir, () => {
+      if (!win.isDestroyed()) win.webContents.send('fs:change', { dir: req.dir });
+    });
+    dirWatchers.set(key, { stop, refs: 1 });
+  });
+  ipcMain.on('fs:unwatch', (_e, req: { root: string; dir: string }) => {
+    const key = watchKey(req.root, req.dir);
+    const entry = dirWatchers.get(key);
+    if (!entry) return;
+    entry.refs -= 1;
+    if (entry.refs <= 0) {
+      entry.stop();
+      dirWatchers.delete(key);
+    }
+  });
   ipcMain.handle('fs:readFile', (_e, req: { root: string; path: string; maxBytes?: number }) =>
     readFile(req.root, req.path, req.maxBytes));
   ipcMain.handle('fs:writeFile', (_e, req: { root: string; path: string; content: string }) =>
