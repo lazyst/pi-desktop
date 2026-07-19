@@ -138,7 +138,7 @@ export function FileDrawer({ file, onClose, onOpenFile }: Props) {
 
   if (!file) return null;
 
-  const fileName = basename(file.path);
+  const fileName = basename(file.path) || file.path || basename(file.absPath ?? '') || '未命名文件';
 
   return (
     <>
