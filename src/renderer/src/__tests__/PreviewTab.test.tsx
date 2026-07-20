@@ -3,11 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { PreviewTab } from '../components/PreviewTab';
 
-// 把 CodePreview 替换成可控桩：渲染一个 textarea，onChange 把值回传给 PreviewTab，
-// 从而精确控制 dirty 状态（无需在 jsdom 下驱动真实 CodeMirror）。
-vi.mock('../components/CodePreview', () => ({
-  CodePreview: ({ onChange }: any) => {
-    // 用按钮直接触发 onChange 使 dirty（不依赖 jsdom 下驱动真实 textarea 输入）。
+// 把 MonacoCodeEditor 替换成可控桩：渲染一个按钮，onChange 把值回传给 PreviewTab，
+// 从而精确控制 dirty 状态（无需在 jsdom 下驱动真实 Monaco）。
+vi.mock('../components/editor/MonacoCodeEditor', () => ({
+  MonacoCodeEditor: ({ onChange }: any) => {
+    // 用按钮直接触发 onChange 使 dirty（不依赖 jsdom 下驱动真实编辑器输入）。
     return <button data-testid="make-dirty" onClick={() => onChange('edited content')}>make dirty</button>;
   },
 }));

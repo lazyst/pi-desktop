@@ -3,13 +3,13 @@
 // 改为占满 tab 内容的形态。关闭由统一 Tab 条的 × 负责；dirty 时由 tab 条/父组件
 // 负责确认（本组件通过 onClose 语义外的 tab 条处理，这里保留 ConfirmDialog 兜底）。
 // key 行为完全等价于原抽屉：
-//   • 文本/代码 → CodePreview，dirty 跟踪 + 显式保存（fsWriteFile）
+//   • 文本/代码 → MonacoCodeEditor，dirty 跟踪 + 显式保存（fsWriteFile）
 //   • 图片 → ImagePreview
 //   • 二进制/过大 → 系统默认程序打开（fsOpenWithSystem）
 //   • 预览内相对链接点击 → onOpenFile（在应用内切到目标文件）
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { pi } from '../ipc';
-import { CodePreview } from './CodePreview';
+import { MonacoCodeEditor } from './editor/MonacoCodeEditor';
 import { ImagePreview } from './ImagePreview';
 import { ConfirmDialog } from './ConfirmDialog';
 
@@ -51,6 +51,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
   const [initialContent, setInitialContent] = useState('');
   const [currentContent, setCurrentContent] = useState('');
   const [kind, setKind] = useState<'code' | 'image' | 'binary' | 'loading'>('loading');
+  const [language, setLanguage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
@@ -78,6 +79,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
         if (res.isImage) setKind('image');
         else {
           setKind('code');
+          setLanguage(res.language);
           setInitialContent(res.content);
           setCurrentContent(res.content);
         }
@@ -103,21 +105,6 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       setSaving(false);
     }
   }, [root, path, currentContent]);
-
-  // Ctrl/Cmd+S → save (when there are unsaved changes).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        // Only intercept when this tab is the active file editor and there is something to save.
-        if (active && kind === 'code' && dirty && !saving) {
-          e.preventDefault();
-          void doSave();
-        }
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [active, kind, dirty, saving, doSave]);
 
   // 关闭请求：dirty 时先弹确认（防止静默丢弃未保存改动，对齐原 FileDrawer 抽屉语义）；
   // 非 dirty 或确认通过后，才真正关闭 tab（调父组件传入的 onClose）。
@@ -161,14 +148,16 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
 
       <div className="preview-tab-body">
         {kind === 'code' && (
-          <CodePreview
+          <MonacoCodeEditor
             root={root}
             path={path}
+            language={language}
+            content={currentContent}
             onChange={(c) => {
               setCurrentContent(c);
               setDirty(c !== initialContent);
             }}
-            onOpenFile={onOpenFile ? (relPath, name) => onOpenFile(relPath, name, root) : undefined}
+            onSave={dirty ? doSave : undefined}
           />
         )}
         {kind === 'image' && <ImagePreview root={root} path={path} />}

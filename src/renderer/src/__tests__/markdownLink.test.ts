@@ -1,7 +1,7 @@
-// markdown 相对/外链解析纯函数测试（CodePreview 链接路由，见 grilling 会话）。
+// markdown 相对/外链解析纯函数测试（linkUtils 链接路由，见 grilling 会话）。
 // 不依赖 React/CodeMirror，仅验证 isExternalHref 与 resolveRelativeLink 的判定与解析。
 import { describe, it, expect } from 'vitest';
-import { isExternalHref, resolveRelativeLink } from '../components/CodePreview';
+import { isExternalHref, resolveRelativeLink } from '../linkUtils';
 
 describe('isExternalHref', () => {
   it('识别绝对外链协议（http/https/mailto）', () => {
