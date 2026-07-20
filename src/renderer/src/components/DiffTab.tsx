@@ -29,6 +29,9 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
   // Fetch the right diff whenever the target (cwd / commit) changes.
   // 工作区 diff（commitHash 为 null）额外订阅该仓库的实时变更，文件改动即时刷新；
   // 提交 diff（历史快照）无需订阅。
+  // 注意：setDiff 仅在内容真正变化时更新，避免 gitWatch 的重复 change 事件（Windows
+  // 上 recursive fs.watch 极易连发）或相同字符串新引用导致无谓重渲染——否则每次
+  // 刷新都会让 MonacoDiffEditor 销毁/重建模型、闪一帧。
   useEffect(() => {
     if (!cwd) return;
     let cancelled = false;
@@ -38,7 +41,7 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
     (async () => {
       try {
         const d = await pi.gitDiff(cwd, commitHash ?? undefined);
-        if (!cancelled) setDiff(d);
+        if (!cancelled) setDiff((prev) => (prev === d ? prev : d));
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -53,8 +56,9 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
           timer = null;
-          setLoading(true);
-          pi.gitDiff(cwd).then((d) => { if (!cancelled) setDiff(d); }).catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); }).finally(() => { if (!cancelled) setLoading(false); });
+          // 静默刷新：仅当内容真正变化时更新（setDiff 内部已去重），不切 loading 态，
+          // 避免 Windows 上 recursive fs.watch 的密集 change 事件造成「加载中↔diff」闪。
+          pi.gitDiff(cwd).then((d) => { if (!cancelled) setDiff((prev) => (prev === d ? prev : d)); }).catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
         }, 250);
       });
     }
@@ -93,7 +97,12 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
           <div className="git-empty">{commitHash ? '该提交无改动' : '无改动'}</div>
         )}
         {!loading && !error && !empty && (
-          <MonacoDiffEditor original={original} modified={modified} language="plaintext" />
+          <MonacoDiffEditor
+            key={commitHash ?? 'worktree'}
+            original={original}
+            modified={modified}
+            language="plaintext"
+          />
         )}
       </div>
     </div>
