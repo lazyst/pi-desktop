@@ -21,4 +21,18 @@ function copyAsset(from, to) {
   console.log(`[copy-assets] ${from} -> ${to}`);
 }
 
+// 递归拷贝一个目录（用于 shell-integration 脚本，运行时由主进程 fs 读取注入到 shell）。
+function copyDir(from, to) {
+  const src = path.join(root, from);
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.isDirectory()) copyDir(path.join(from, entry.name), path.join(to, entry.name));
+    else fs.copyFileSync(path.join(src, entry.name), path.join(to, entry.name));
+  }
+  console.log(`[copy-assets] ${from}/ -> ${to}/`);
+}
+
+copyDir('src/main/shell-integration', 'out/main/shell-integration');
+
 for (const a of assets) copyAsset(a.from, a.to);

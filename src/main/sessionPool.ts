@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { BackpressureController } from './backpressure';
 
 export type SessionStatus = 'running' | 'dead';
 export interface SessionInfo {
@@ -19,6 +20,9 @@ export interface IPtyLike {
   write(d: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
+  // 原生 pause/resume（node-pty IPty 接口），用于源头背压反压（对齐 VS Code ptyProcess.pause/resume）。
+  pause(): void;
+  resume(): void;
   on(event: 'data' | 'exit', cb: (d?: any) => void): void;
   pid?: number;
 }
@@ -39,7 +43,7 @@ export interface SessionPoolOptions {
   acknowledgeDataEvent?: (key: string, bytes: number) => void;
 }
 
-interface Entry { pty: IPtyLike; info: SessionInfo; linked: boolean; diskKey?: string; existingDiskKeys?: Set<string>; }
+interface Entry { pty: IPtyLike; info: SessionInfo; linked: boolean; diskKey?: string; existingDiskKeys?: Set<string>; bp: BackpressureController; }
 
 // 主进程端数据缓冲（对齐 VS Code ptyService 的 TerminalDataBufferer）：每会话 5ms 时间窗
 // 聚合 pty 小块输出，窗口结束一次性 emit，避免高频小块直达渲染端造成的中间帧闪烁。
@@ -54,8 +58,6 @@ export class SessionPool {
   private alias = new Map<string, string>();
   // 每会话聚合缓冲（key 为 emit key：live key 或 disk key）。
   private dataBuffers = new Map<string, DataBuffer>();
-  // 每会话累计已下发字节数（经 acknowledgeDataEvent 回传的渲染端消费进度，仅记账）。
-  private ackedBytes = new Map<string, number>();
   constructor(private ptyFactory: PtyFactory, private opts: SessionPoolOptions) {}
 
   /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。 */
@@ -74,6 +76,9 @@ export class SessionPool {
       b.chunks = [];
       b.timer = null;
       this.dataBuffers.delete(key);
+      // 经背压计数：累加未确认字符；超高水位由 BackpressureController 调 pty.pause() 源头反压。
+      this.entries.get(key)?.bp.onData(joined.length);
+      // 数据照常发往渲染端（pause 只掐断 PTY 后续输出，已读出的这块照发）。
       this.opts.onData(key, joined);
     }, DATA_BUFFER_MS);
   }
@@ -103,7 +108,7 @@ export class SessionPool {
   private spawn(args: string[], cwd: string, name: string, infoKey: string, mapKey: string): SessionInfo {
     const pty = this.ptyFactory('pi', args, { cwd, cols: this.opts.cols, rows: this.opts.rows, name: 'pi' });
     const info: SessionInfo = { key: infoKey, cwd, name, status: 'running' };
-    const e: Entry = { pty, info, linked: infoKey.endsWith('.jsonl'), existingDiskKeys: infoKey.endsWith('.jsonl') ? undefined : this.diskKeysForCwd(cwd) };
+    const e: Entry = { pty, info, linked: infoKey.endsWith('.jsonl'), existingDiskKeys: infoKey.endsWith('.jsonl') ? undefined : this.diskKeysForCwd(cwd), bp: new BackpressureController(() => e.pty.pause(), () => e.pty.resume()) };
     // Emit events using the live entry key. For a newly-created session this is
     // `live-<uuid>`; after the session file is written it is linked to the on-disk
     // `.jsonl` path (see reconcile), and `e.info.key` is read dynamically so both
@@ -124,15 +129,14 @@ export class SessionPool {
     if (b?.timer) clearTimeout(b.timer);
     this.dataBuffers.delete(key);
   }
-  /** 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端消费进度记账。
-   * 不改写 PTY 行为（node-pty 内核缓冲已天然流控），仅累计字节数并透传给 opts 钩子，
-   * 供诊断/后续流控。disk key 与 live key 共享同一进程，故同时更新别名映射。 */
+  /** 背压回传（对齐 VS Code acknowledgeDataEvent 的源头流控）：渲染端每消费 N 字符即调用，
+   * 本方法推进该会话的水位；水位降到低水位以下时 BackpressureController 调 pty.resume() 恢复。
+   * disk key 与 live key 共享同一进程，故同时更新别名映射后驱动同一控制器。 */
   acknowledgeDataEvent(key: string, bytes: number): void {
     const live = this.liveKeyFor(key);
     const k = this.entries.has(live) ? live : key;
-    const next = (this.ackedBytes.get(k) ?? 0) + Math.max(0, bytes | 0);
-    this.ackedBytes.set(k, next);
-    this.opts.acknowledgeDataEvent?.(k, next);
+    this.entries.get(k)?.bp.acknowledge(Math.max(0, bytes | 0));
+    this.opts.acknowledgeDataEvent?.(k, bytes);
   }
   write(key: string, data: string) { this.entries.get(key)?.pty.write(data); }
   resize(key: string, cols: number, rows: number) {
@@ -210,8 +214,8 @@ export class SessionPool {
     this.entries.delete(liveKey);
     // 清掉该 key 的待发聚合缓冲，避免 kill 后迟到数据发往已销毁的渲染实例。
     this.clearDataBuffer(liveKey);
-    this.ackedBytes.delete(liveKey);
-    if (e.diskKey) { this.clearDataBuffer(e.diskKey); this.ackedBytes.delete(e.diskKey); }
+    this.entries.get(liveKey)?.bp.dispose();
+    if (e.diskKey) { this.clearDataBuffer(e.diskKey); this.entries.get(e.diskKey)?.bp.dispose(); }
     // Update status AND notify the UI that the session ended. We call onExit
     // explicitly (not only via the pty 'exit' event) so the renderer updates
     // reliably even if the killed process does not emit a clean 'exit'. The

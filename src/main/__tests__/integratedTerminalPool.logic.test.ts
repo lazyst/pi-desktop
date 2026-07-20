@@ -71,21 +71,27 @@ afterEach(() => {
 });
 
 describe('IntegratedTerminalPool (logic, mocked node-pty)', () => {
-  it('create calls nodePty.spawn with the profile and merges env (TERM/COLORTERM, no TERM_PROGRAM override)', () => {
+  it('create calls nodePty.spawn and injects shell integration (aligned with VS Code getShellIntegrationInjection)', () => {
     const { pool } = makePool();
     const info = pool.create(profile, cwd);
 
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const [spawnPath, spawnArgs, spawnOpts] = spawnMock.mock.calls[0];
     expect(spawnPath).toBe(profile.path);
-    expect(spawnArgs).toEqual(profile.args);
+    // 注入：pwsh 被改写为 `-noexit -command ". <脚本>"`（脚本已拷到临时目录）。
+    expect(spawnArgs[0]).toBe('-noexit');
+    expect(spawnArgs[1]).toBe('-command');
+    expect(spawnArgs[2]).toMatch(/shellIntegration\.ps1"$/);
     expect(spawnOpts.cwd).toBe(cwd);
     expect(spawnOpts.cols).toBe(80);
     expect(spawnOpts.rows).toBe(24);
     expect(spawnOpts.env.TERM).toBe('xterm-256color');
     expect(spawnOpts.env.COLORTERM).toBe('truecolor');
-    // 不强制 TERM_PROGRAM='vscode'；若 process.env 已有的原值应保留。
-    expect(spawnOpts.env.TERM_PROGRAM).toBe(process.env.TERM_PROGRAM);
+    // 注入路径额外补上 TERM_PROGRAM='vscode' + VSCODE_INJECTION + VSCODE_NONCE，
+    // 使 VS Code 系脚本（fish 靠 TERM_PROGRAM 激活）原样可用。
+    expect(spawnOpts.env.TERM_PROGRAM).toBe('vscode');
+    expect(spawnOpts.env.VSCODE_INJECTION).toBe('1');
+    expect(spawnOpts.env.VSCODE_NONCE).toMatch(/^[0-9a-f-]{36}$/);
     // 关键断言：env 必须保留 process.env 的全部原有键（不丢弃）。
     expect(spawnOpts.env.PATH).toBe(process.env.PATH);
 
