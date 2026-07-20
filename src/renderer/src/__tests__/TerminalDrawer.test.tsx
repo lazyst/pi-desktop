@@ -39,6 +39,10 @@ const tabs = [
 function seedStore(activeId: string) {
   useTabStore.setState({
     terminals: tabs.map((t) => ({ id: t.id, profileId: 'p', cwd: '/', title: t.title })),
+    tabs: tabs.map((t, i) => ({
+      id: t.id, kind: 'integrated-terminal', location: 'panel', title: t.title,
+      hidden: false, order: i, cwd: '/',
+    })),
     activeTermId: activeId,
   });
 }
@@ -146,5 +150,42 @@ describe('TerminalDrawer', () => {
     });
     const last = onResizeHeight.mock.calls[onResizeHeight.mock.calls.length - 1][0];
     expect(last).toBe(120);
+  });
+
+  it('panel 区拖拽重排 → 调 store.reorderTabs("panel", ...) 仅改 order、不动集成终端渲染实例', () => {
+    const api = makeApi();
+    (window as any).pi = api;
+    seedStore('term-1');
+    const { container } = render(
+      <TerminalDrawer
+        open={true}
+        height={200}
+        onSelectTab={vi.fn()}
+        onCloseTab={vi.fn()}
+        onNewTerminal={vi.fn()}
+        onResizeHeight={vi.fn()}
+      />,
+    );
+    // 拖拽前：tabbar 顺序跟随 store.terminals（term-1, term-2）。
+    let els = container.querySelectorAll('.terminal-tabbar .terminal-tab');
+    expect(els[0].textContent).toContain('PowerShell');
+    expect(els[1].textContent).toContain('bash');
+    // 集成终端 host 全部挂载（keep-alive）。
+    expect(container.querySelectorAll('.integrated-terminal-host').length).toBe(2);
+
+    // 模拟父层（TerminalDrawer 的 onReorder）调 store.reorderTabs('panel', 新顺序)。
+    act(() => {
+      useTabStore.getState().reorderTabs('panel', ['term-2', 'term-1']);
+    });
+
+    // 视觉顺序跟随新 order（父层把 terminals 按 order 排序后传入 TerminalTabBar）。
+    els = container.querySelectorAll('.terminal-tabbar .terminal-tab');
+    expect(els[0].textContent).toContain('bash');
+    expect(els[1].textContent).toContain('PowerShell');
+    // 集成终端渲染实例不重建：仍 2 个 host，data-terminal 集合不变。
+    const hosts = container.querySelectorAll('.integrated-terminal-host');
+    expect(hosts.length).toBe(2);
+    const ids = Array.from(hosts).map((h) => h.getAttribute('data-terminal')).sort();
+    expect(ids).toEqual(['term-1', 'term-2']);
   });
 });
