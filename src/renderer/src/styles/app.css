@@ -145,6 +145,8 @@ html, body, #root {
 }
 /* Tab 上的关闭 ×：默认隐藏，hover 整条或激活态时淡入 */
 .tab-close {
+  /* 将关闭按钮固定在 tab 内最右侧，不随标题长度变化而跟随 */
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
