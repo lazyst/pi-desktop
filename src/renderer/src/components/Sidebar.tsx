@@ -80,6 +80,8 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
     document.removeEventListener('mousemove', onResizerMove);
     document.removeEventListener('mouseup', onResizerUp);
     if (onResizeRef.current) onResizeRef.current(widthRef.current);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
   }, [onResizerMove]);
 
   const onResizerDown = useCallback((e: MouseEvent) => {
@@ -89,6 +91,9 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
     resizeStart.current = { startX: e.clientX, startWidth };
     document.addEventListener('mousemove', onResizerMove);
     document.addEventListener('mouseup', onResizerUp);
+    // 拖拽期间锁定光标与文本选择，避免侧边栏长文本被选中导致 mousemove 中断（不跟手）。
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
   }, [onResizerMove, onResizerUp]);
 
   // A new session is keyed `live-<uuid>` in the terminal area but appears in the
@@ -125,6 +130,11 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
   // 取某 cwd 下运行中的集成终端计数（纯终端数）；无则 0。
   const terminalCount = (cwd: string): number => terminalsByCwd?.get(cwd) ?? 0;
 
+  // 组内会话按时间倒序（最新在前）。time 形如 'YYYY-MM-DD HH:MM'，字典序即时间序。
+  // 时间相同时用原始相对顺序兜底（稳定排序依赖数组下标）。
+  const sortedItems = (items: Session[]): Session[] =>
+    [...items].sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''));
+
   return (
     <>
       <aside className="sidebar" ref={sidebarRef} style={{ width }}>
@@ -149,8 +159,9 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
         {groups.map((g) => {
           const isPinned = pinnedSet.has(g.cwd);
           const isOpen = !!expanded[g.cwd];
-          const visible = isOpen ? g.items : g.items.slice(0, 5);
-          const hidden = g.items.length - visible.length;
+          const items = sortedItems(g.items);
+          const visible = isOpen ? items : items.slice(0, 5);
+          const hidden = items.length - visible.length;
           const termCount = terminalCount(g.cwd);
           const showTermBadge = termCount > 0;
           return (
@@ -288,7 +299,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   </div>
                 );
               })}
-              {g.items.length > 5 && (
+              {items.length > 5 && (
                 <div
                   className="group-expand"
                   onClick={() => setExpanded((m) => ({ ...m, [g.cwd]: !isOpen }))}
