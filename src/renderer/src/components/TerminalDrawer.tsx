@@ -3,12 +3,13 @@ import { TerminalTabBar } from './TerminalTabBar';
 import type { TabItem } from './TerminalTabBar';
 import { IntegratedTerminalPane } from './IntegratedTerminalPane';
 import { IconTerminal } from './icons';
+import { useTabStore } from '../store/tabStore';
 
 interface Props {
   open: boolean;
-  height: number; // 抽屉高度（像素），由 App 管理（持久化 config.terminalDrawerHeight）
-  tabs: { id: string; title: string }[];
-  activeId: string | null;
+  height: number; // 抽屉高度（像素），由 store 持有（初始化自 config.terminalDrawerHeight）
+  // 交互回调：终端 tab 的选中 / 关闭由 App 协调（关闭需同时调主进程 destroyTerminal 与 store 状态），
+  // 新建 / 高度拖拽同理。终端列表与激活态改由 store 直接订阅（见下方 useTabStore），不再透传。
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onNewTerminal: () => void;
@@ -27,13 +28,15 @@ const clampHeight = (h: number) => Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, h))
 export function TerminalDrawer({
   open,
   height,
-  tabs,
-  activeId,
   onSelectTab,
   onCloseTab,
   onNewTerminal,
   onResizeHeight,
 }: Props) {
+  // 终端实例列表 / 当前激活终端直接订阅 store（issue 03：App 仅把主进程推送写回 store，
+  // 抽屉组件自行取数，消除 App→CenterPane→TerminalDrawer 的 props 透传）。
+  const terminals = useTabStore((s) => s.terminals);
+  const activeId = useTabStore((s) => s.activeTermId);
   const resizerStart = useRef<{ startY: number; startHeight: number } | null>(null);
   const onResizeRef = useRef(onResizeHeight);
   onResizeRef.current = onResizeHeight;
@@ -76,7 +79,7 @@ export function TerminalDrawer({
       <div className="terminal-drawer-header">
         <IconTerminal size={14} className="terminal-drawer-icon" />
         <TerminalTabBar
-          tabs={tabs as TabItem[]}
+          tabs={terminals.map((t) => ({ id: t.id, title: t.title })) as TabItem[]}
           activeId={activeId}
           onSelect={onSelectTab}
           onClose={onCloseTab}
@@ -84,7 +87,7 @@ export function TerminalDrawer({
         />
       </div>
       <div className="terminal-drawer-body">
-        {tabs.map((t) => (
+        {terminals.map((t) => (
           <div
             key={t.id}
             className={t.id === activeId ? 'integrated-terminal-slot active' : 'integrated-terminal-slot'}

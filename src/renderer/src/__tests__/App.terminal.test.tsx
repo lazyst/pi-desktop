@@ -3,8 +3,23 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import App from '../App';
 import { defaultConfig } from '../../../main/config';
+import { useTabStore } from '../store/tabStore';
 
 const CONFIG = defaultConfig();
+
+// store 是模块级单例，每个用例 render(<App/>) 前重置，保证从干净状态开始
+// （对齐重构前 App 的 useState 每实例独立；见 issue 03 状态收编进 store）。
+beforeEach(() => {
+  useTabStore.setState({
+    tabs: [],
+    activeEditorTabId: null,
+    activePanelTabId: null,
+    terminals: [],
+    drawerOpen: false,
+    drawerHeight: CONFIG.terminalDrawerHeight,
+    activeTermId: null,
+  });
+});
 
 // 构造带集成终端 IPC 桩的 pi，供 App 终端抽屉测试使用。
 function makeApi(overrides: Record<string, unknown> = {}) {
