@@ -2,6 +2,8 @@ import * as fs from 'node:fs';
 import * as nodePty from 'node-pty';
 import { randomUUID } from 'node:crypto';
 import type { TerminalProfile, IntegratedTerminalInfo } from '../renderer/src/types';
+import { getShellIntegrationInjection } from './shell-integration/inject';
+import { BackpressureController } from './backpressure';
 
 // 主进程端数据缓冲（对齐 VS Code ptyService 的 TerminalDataBufferer / SessionPool）：
 // 每实例 5ms 时间窗聚合 pty 小块输出，窗口结束一次性回调 onData，避免高频小块直达
@@ -22,6 +24,8 @@ export interface IntegratedTerminalPoolOptions {
 interface Entry {
   pty: nodePty.IPty;
   info: IntegratedTerminalInfo;
+  // 主进程→渲染端 IPC 投递的背压控制器（对齐 VS Code acknowledgeDataEvent 真流控）。
+  bp: BackpressureController;
 }
 
 /**
@@ -29,8 +33,13 @@ interface Entry {
  * 写 .jsonl）完全解耦：不写盘、不进会话索引。用于渲染层内嵌的集成终端抽屉。
  *
  * 区别要点：
- *  - env 不声明 TERM_PROGRAM='vscode'（那是给 pi-tui 看的，对真实 shell 无意义）。
- *  - 输出走 5ms 聚合窗口后回调 onData，节奏对齐 SessionPool 的双段缓冲设计。
+ *  - env 默认不声明 TERM_PROGRAM='vscode'（那是给 pi-tui 看的，对真实用户 shell 无意义）；
+ *    例外：启用 shell integration 注入时，本池会额外给该实例的 env 补上
+ *    TERM_PROGRAM='vscode' + VSCODE_INJECTION + VSCODE_NONCE——因为 VS Code 系注入脚本
+ *    （fish 等）靠 TERM_PROGRAM 判定激活，注入路径与 pi-tui 路径互不干扰。
+ *  - 输出走 5ms 聚合窗口 + 背压节流后回调 onData，节奏对齐 SessionPool 的双段缓冲设计。
+ *  - 启动真实 shell 时注入 VS Code shell integration 脚本，使 shell 主动发 OSC 633 系序列，
+ *    渲染端据此做命令级分段写入（见 XtermTerminal._segmentByShellIntegration）。
  */
 export class IntegratedTerminalPool {
   private opts: IntegratedTerminalPoolOptions;
@@ -52,15 +61,23 @@ export class IntegratedTerminalPool {
     const id = `term-${randomUUID()}`;
 
     // 像 VS Code / 其他终端模拟器一样，向 pty 显式声明终端类型与真彩色支持。
-    // 注意：不声明 TERM_PROGRAM='vscode'——那是给 pi-tui 看的特殊标记，
-    // 对真实用户 shell 无意义。若 process.env 已携带 TERM_PROGRAM 则保留原值。
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
     };
 
-    const pty = nodePty.spawn(profile.path, profile.args, {
+    // 计算 shell integration 注入（对齐 VS Code getShellIntegrationInjection）：
+    // 改写 args 让 shell 加载注入脚本，混入 nonce/injection 等 env。
+    // 不支持的 shell（如 cmd.exe）返回 undefined，走原始 args / 原始 env。
+    const injection = getShellIntegrationInjection(profile.path, profile.args);
+    let spawnArgs = profile.args;
+    if (injection) {
+      spawnArgs = injection.newArgs;
+      Object.assign(env, injection.envMixin); // 含 TERM_PROGRAM='vscode' / VSCODE_INJECTION / VSCODE_NONCE
+    }
+
+    const pty = nodePty.spawn(profile.path, spawnArgs, {
       cwd: safeCwd,
       cols: this.opts.cols,
       rows: this.opts.rows,
@@ -81,10 +98,16 @@ export class IntegratedTerminalPool {
       title: profile.label,
     };
 
-    const entry: Entry = { pty, info };
+    const entry: Entry = {
+      pty,
+      info,
+      // 源头背压：超高水位 pause PTY、降到低水位 resume PTY（对齐 VS Code ptyProcess.pause/resume）。
+      bp: new BackpressureController(() => pty.pause(), () => pty.resume()),
+    };
     pty.on('data', (d: string) => this.emitData(id, d));
     pty.on('exit', () => {
       this.clearDataBuffer(id);
+      this.entries.get(id)?.bp.dispose();
       this.entries.delete(id);
       this.opts.onExit(id);
     });
@@ -111,6 +134,7 @@ export class IntegratedTerminalPool {
     if (!e) return;
     try { e.pty.kill(); } catch { /* 进程可能已退出 */ }
     this.clearDataBuffer(id);
+    e.bp.dispose();
     this.entries.delete(id);
   }
 
@@ -132,7 +156,16 @@ export class IntegratedTerminalPool {
     return [...this.entries.values()].map((e) => e.info);
   }
 
-  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。 */
+  /** 背压回传：渲染端每消费 N 字节即经 IPC 上报（见 index.ts terminal:ack），
+   * 由本方法推进该实例的水位；水位降到阈值以下时 BackpressureController 自动补推积压数据。
+   * 对齐 VS Code acknowledgeDataEvent 的真流控（而非仅记账）。 */
+  acknowledgeDataEvent(id: string, bytes: number): void {
+    this.entries.get(id)?.bp.acknowledge(bytes);
+  }
+
+  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。
+   * 窗口结束的数据不直接 IPC 推送，而是经 BackpressureController 节流——
+   * 超水位则暂缓投递，等渲染端 ack 追上后再补推。 */
   private emitData(id: string, data: string): void {
     let buf = this.dataBuffers.get(id);
     if (!buf) {
@@ -148,6 +181,9 @@ export class IntegratedTerminalPool {
       b.chunks = [];
       b.timer = null;
       this.dataBuffers.delete(id);
+      // 经背压计数：累加未确认字符；超高水位由 BackpressureController 调 pty.pause() 源头反压。
+      this.entries.get(id)?.bp.onData(joined.length);
+      // 数据照常发往渲染端（pause 只掐断 PTY 后续输出，已读出的这块照发）。
       this.opts.onData(id, joined);
     }, DATA_BUFFER_MS);
   }

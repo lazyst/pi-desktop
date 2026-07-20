@@ -67,8 +67,10 @@ contextBridge.exposeInMainWorld('pi', {
   },
   // 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端每消费 N 字节即通知主进程，
   // 主进程据此对 PTY 做流控/消费进度记账。
+  // 按 key 前缀路由：集成终端 id 形如 'term-<uuid>' → terminal:ack；
+  // 会话 key（'live-<uuid>' / 磁盘 '.jsonl' / '/' 根） → session:ack。
   acknowledgeDataEvent: (key: string, bytes: number) =>
-    ipcRenderer.send('session:ack', { key, bytes }),
+    ipcRenderer.send(key.startsWith('term-') ? 'terminal:ack' : 'session:ack', { key, bytes }),
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.send('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),

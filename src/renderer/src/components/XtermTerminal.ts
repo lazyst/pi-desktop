@@ -895,11 +895,15 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /** 按 shell integration 的 OSC 633 序列切分输入为语义段（对齐 VS Code _onProcessData）。
-   * 匹配 \x1b]633;C / \x1b]633;D / \x1b]633;D;n 等命令开始/结束标记，在标记边界把数据切成多段，
-   * 使命令级输出可被差分写入。无 OSC 633 序列时原样返回单段（零开销）。 */
+  /** 按 shell integration 的 OSC 序列切分输入为语义段（对齐 VS Code TerminalInstance._onProcessData）。
+   * 匹配 VS Code 系 \x1b]633;A/B/C/D/F/G 与 FinalTerm 系 \x1b]133;A/B/C/D（\x1b]([16]33;...），
+   * 在标记边界把数据切成多段，使命令级输出可被差分写入；xterm 原生处理 ?2026 同步输出，
+   * 故无需自研同步帧切分。无 OSC 序列时原样返回单段（零开销）。
+   * 注意：仅做「输出分段」这一层（消除闪烁），不解析命令/cwd/mark 语义——后者本项目无宿主消费。 */
   private _segmentByShellIntegration(data: string): string[] {
-    const re = /\x1b\]633;(?:C|D(?:;\d+)?)\x07/g;
+    // 对齐 VS Code 的 /(?<seq>\x1b\][16]33;(?:C|D(?:;\d+)?)\x07)/：
+    // [16]33 同时覆盖 VS Code(633) 与 FinalTerm/iTerm(133) 两系标记。
+    const re = /\x1b\][16]33;(?:A|B|C|D|F|G)(?:;\d+)?\x07/g;
     const segments: string[] = [];
     let last = 0;
     let m: RegExpExecArray | null;

@@ -363,6 +363,9 @@ function createWindow() {
   });
   ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => termPool.write(m.id, m.data));
   ipcMain.on('terminal:resize', (_e, m: { id: string; cols: number; rows: number }) => termPool.resize(m.id, m.cols, m.rows));
+  // 背压回传：渲染端每消费 N 字节即上报，推进该集成终端实例的背压水位
+  // （对齐 VS Code acknowledgeDataEvent 的真流控，见 integratedTerminalPool.acknowledgeDataEvent）。
+  ipcMain.on('terminal:ack', (_e, m: { id: string; bytes: number }) => termPool.acknowledgeDataEvent(m.id, m.bytes));
   ipcMain.handle('terminal:destroy', (_e, id: string) => termPool.destroy(id));
 
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
