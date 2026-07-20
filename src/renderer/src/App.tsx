@@ -60,7 +60,12 @@ export default function App() {
   tabsRef.current = tabs;
   // 当前激活会话（从 tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
-  const activeCwd = activeSession?.cwd ?? null;
+  const activeCwd = activeSession?.cwd ?? null;  // 跟随当前激活 tab（预览/diff 时为 null）
+  // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次会话的 cwd，
+  // 供右栏文件树/Git 自动模式稳定跟随——修复“打开文件后文件树显示未选择工作目录”
+  // （根因：原右栏自动模式直接绑定 activeCwd，激活 tab 切到预览时 activeCwd 归零）。
+  const [lastSessionCwd, setLastSessionCwd] = useState<string | null>(null);
+  useEffect(() => { if (activeCwd) setLastSessionCwd(activeCwd); }, [activeCwd]);
   const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
   // 文件预览抽屉：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
   // Same mapping held in a ref so the `onRelink` handler (which fires right after
@@ -501,7 +506,7 @@ export default function App() {
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}
-        activeCwd={activeCwd}
+        activeCwd={lastSessionCwd}
         onOpenFile={handleOpenFile}
         onOpenWorkDiff={openWorkDiff}
         onOpenCommit={openCommitDiff}

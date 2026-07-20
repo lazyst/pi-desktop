@@ -24,6 +24,8 @@ type RightTab = 'files' | 'git';
 
 interface Props {
   addedDirs: string[];
+  // 最后活跃会话的工作目录（稳定：即使当前激活 tab 是预览/diff 也不会归零，
+  // 由 App 维护 lastSessionCwd 后传入）。右栏自动模式据此跟随，避免打开文件后丢失根目录。
   activeCwd: string | null;
   // 点击文件 → 中间区新增预览 tab（由 App 处理）；此处仅透传回调。
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
