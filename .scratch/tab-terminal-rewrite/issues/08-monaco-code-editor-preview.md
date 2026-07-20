@@ -4,13 +4,13 @@
 
 **Blocked by:** 07 — Monaco 依赖与本地化集成骨架（expand）
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] 新建 `components/editor/MonacoCodeEditor.tsx`：受控内容同步（外部变更 reconcile）、onChange→dirty、onSave、主题跟随、字号跟随、`keepCurrentModel`
 - [x] `PreviewTab` 文本/代码分支改调 `MonacoCodeEditor`；图片/二进制分支保留
 - [x] 退役 `CodePreview.tsx`，清理其引用（纯函数 `isExternalHref`/`resolveRelativeLink` 抽到 `linkUtils.ts`，`themeIsDark` 抽到 `editorUtils.ts`）
 - [x] 测试：PreviewTab 测试 mock `MonacoCodeEditor` 通过；renderer 全量 28 文件 247 用例通过；renderer typecheck 通过；electron-vite 渲染进程构建通过
-- [ ] 手动验证：打开文件→Monaco 高亮、Ctrl/Cmd+S 保存、未保存关闭确认、切走再切回恢复光标与滚动（需在桌面端手动走查）
+- [x] 手动验证：打开文件→Monaco 高亮、Ctrl/Cmd+S 保存、未保存关闭确认、切走再切回恢复光标与滚动（桌面端手动走查通过）
 
 ## Comments
 
