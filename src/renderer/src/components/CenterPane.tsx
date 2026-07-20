@@ -45,8 +45,10 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
   const closeCenterTab = useTabStore((s) => s.closeCenterTab);
   // 拖拽重排（ADR-0001 TabReorder）：仅改同 location 的 order，不碰渲染实例（keep-alive 不受影响）。
   const reorderTabs = useTabStore((s) => s.reorderTabs);
-  // 集成终端 tab 选中直接用 store action；关闭则需 App 协调主进程销毁（见 onCloseTermTab）。
-  const selectTermTab = useTabStore((s) => s.selectTab);
+  // 中间区 TabBar 选中用 selectTab（写入 activeEditorTabId）；
+  // 集成终端 tab 选中用 setActiveTermId（写入 activeTermId，TerminalDrawer 据此切换）。
+  const selectTab = useTabStore((s) => s.selectTab);
+  const setActiveTermId = useTabStore((s) => s.setActiveTermId);
 
   // 可见 tab = 排除被「关闭隐藏」的（hidden=true）。TabBar 只渲染可见 tab；内容区仍渲染
   // 全部 tab（keep-alive）。tabs 已是 store 状态，按需过滤即可，无需 App 透传 closedTabIds。
@@ -88,7 +90,7 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
           return { id: t.id, title: t.title, kind: t.kind as TabKind, groupKey };
         })}
         activeId={activeTabId}
-        onSelect={selectTermTab}
+        onSelect={selectTab}
         onClose={requestCloseTab}
         onReorder={(orderedIds) => reorderTabs('editor', orderedIds)}
         // 按 groupKey 稳定归并：同 cwd 聚一段、段间插视觉分隔；与拖拽重排互不冲突。
@@ -128,7 +130,7 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
         <TerminalDrawer
           open={drawerOpen}
           height={drawerHeight}
-          onSelectTab={selectTermTab}
+          onSelectTab={setActiveTermId}
           onCloseTab={onCloseTermTab}
           onNewTerminal={onNewTerminal}
           onResizeHeight={onResizeDrawer}
