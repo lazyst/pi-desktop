@@ -9,10 +9,14 @@ import { WindowResizeZones } from './components/WindowResizeZones';
 import { CenterPane } from './components/CenterPane';
 import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
+import { useTabStore } from './store/tabStore';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { defaultConfig } from '../../main/config';
-import type { SessionStatus, AppConfig, IntegratedTerminalInfo, TerminalProfile, AnyTab, SessionTab, PreviewTab, DiffTab } from './types';
+import type { SessionStatus, AppConfig, TerminalProfile } from './types';
+// 中间区 tab 类型统一用 store 的 Tab / SessionTab（含 location / hidden / order 字段），
+// App 不再维护自己的 AnyTab 重复定义（见 issue 03）。
+import type { SessionTab } from './store/tabStore';
 
 interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
 
@@ -26,16 +30,9 @@ function toDisk(groups: { cwd: string; sessions: Array<{ key: string; name: stri
 }
 
 export default function App() {
-  // 中间区通用 Tab 模型（重构阶段 3E）：单一状态源，App 持有所有 tab，CenterPane 仅渲染。
-  const [tabs, setTabs] = useState<AnyTab[]>([]);
-  const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  // 「已关闭但保留实例」的 tab id 集合（仅 session 终端使用）：关闭 session tab 不卸载
-  // TerminalPane，仅隐藏（keep-alive，与切换 tab 行为一致），以彻底规避 WebGL context
-  // 泄漏与重挂载导致的滚动/输出丢失。从侧边栏重新点开同一会话即取消隐藏并恢复。
-  // preview/diff 等其它 tab 仍走真移除逻辑，不进此集合。
-  const [closedTabIds, setClosedTabIds] = useState<string[]>([]);
-  const closedTabIdsRef = useRef<string[]>([]);
-  closedTabIdsRef.current = closedTabIds;
+  // 中间区通用 Tab 模型（重构阶段 3E）：单一状态源已收编进 useTabStore（见 issue 03）。
+  // App 不再持有 tabs / activeTabId / closedTabIds，仅把主进程 IPC 事件写回 store，
+  // 并派生侧边栏 / 集成终端 cwd 所需的本地视图状态（statusMap / disk / liveToDisk 等）。
   const [statusMap, setStatusMap] = useState<Record<string, SessionStatus>>({});
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
@@ -52,20 +49,18 @@ export default function App() {
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // 集成终端抽屉（底部抽屉）：开关、已开终端列表、当前激活 tab、抽屉高度。
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [terminals, setTerminals] = useState<IntegratedTerminalInfo[]>([]);
-  const [activeTermId, setActiveTermId] = useState<string | null>(null);
-  const [drawerHeight, setDrawerHeight] = useState<number>(defaultConfig().terminalDrawerHeight);
+  // 集成终端抽屉的开关 / 实例列表 / 激活终端 / 高度已收编进 useTabStore（see issue 03）。
+  // App 仅保留「终端新建 / 销毁 / 高度拖拽」所需的主进程 IPC 协调逻辑（见下方 handler）。
   // 缓存探测到的 profile 列表，避免每次新建都探测。
   const profilesRef = useRef<TerminalProfile[] | null>(null);
-  // 镜像 terminals 到 ref，供 onTerminalExit 等只订阅一次的回调读取最新值（避免闭包陈旧）。
-  const terminalsRef = useRef<IntegratedTerminalInfo[]>([]);
-  terminalsRef.current = terminals;
-  // 镜像 tabs 到 ref，供 handleCloseCenterTab 切换 active 时读取最新值（避免闭包陈旧）。
-  const tabsRef = useRef<AnyTab[]>([]);
-  tabsRef.current = tabs;
-  // 当前激活会话（从 tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
+  // 当前激活会话（从 store tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
+  // 中间区 tab / 激活指针直接订阅 store（见 issue 03：状态已收编进 useTabStore）。
+  const tabs = useTabStore((s) => s.tabs);
+  const activeTabId = useTabStore((s) => s.activeEditorTabId);
+  // 终端实例列表订阅：仅用于 App 本地的侧边栏分组计数（terminalsByCwd 派生），
+  // 不再作为 props 透传给 CenterPane/TerminalDrawer（见 issue 03）。
+  const terminals = useTabStore((s) => s.terminals);
+  const drawerOpen = useTabStore((s) => s.drawerOpen);
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
   const activeCwd = activeSession?.cwd ?? null;  // 跟随当前激活 tab（预览/diff 时为 null）
   // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次会话的 cwd，
@@ -82,16 +77,10 @@ export default function App() {
     const offStatus = pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
     const offExit = pi.onExit((key) => {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
-      // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）；
-      // 若该 tab 此前被「关闭隐藏」过，也同步从 closedTabIds 清理其 id。
-      setTabs((prev) => prev.filter((t) => !(t.kind === 'session' && t.key === key)));
-      setClosedTabIds((prev) => {
-        const toRemove = prev.filter((id) => {
-          const t = tabsRef.current.find((x) => x.id === id);
-          return t != null && t.kind === 'session' && t.key === key;
-        });
-        return toRemove.length ? prev.filter((id) => !toRemove.includes(id)) : prev;
-      });
+      // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）。
+      // store 的 removeSessionTab 会同步清理「关闭隐藏（keep-alive）」的 session tab，
+      // 不再需要 App 单独维护 closedTabIds 与 ref mirror（见 issue 03）。
+      useTabStore.getState().removeSessionTab(key);
     });
     // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
     // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
@@ -116,26 +105,15 @@ export default function App() {
       const map = liveToDiskRef.current;
       // Promote the display name of a live session once pi writes its `.jsonl`:
       // the header should show the real session name (first user message) instead of
-      // the placeholder “new-session”.
-      setTabs((list) => {
-        let changed = false;
-        const next = list.map((t) => {
-          if (t.kind !== 'session') return t;
-          const dk = map[t.key];
-          if (!dk) return t;
-          const d = diskList.find((x) => x.key === dk);
-          if (d && d.name && d.name !== t.name) { changed = true; return { ...t, name: d.name, title: d.name }; }
-          return t;
-        });
-        return changed ? next : list;
-      });
+      // the placeholder “new-session”. 名称同步收编进 store（promoteTabNames action）。
+      useTabStore.getState().promoteTabNames(diskList);
     });
     const offRelink = pi.onRelink((from, to) => {
       liveToDiskRef.current = { ...liveToDiskRef.current, [from]: to };
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); if (cfg.terminalDrawerHeight) setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); if (cfg.terminalDrawerHeight) useTabStore.getState().setDrawerHeight(cfg.terminalDrawerHeight); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then((diskList) => {
@@ -158,19 +136,15 @@ export default function App() {
       setTimeout(() => splash?.remove(), 400);
     });
     // 订阅集成终端进程退出（用户 exit / kill）：移除对应 tab，若其为激活态则切到剩余第一个或 null。
-    // 注意：用户点 × 关闭 tab 也会触发 destroyTerminal → 主进程可能再发 exit；用函数式更新 + 存在性
-    // 判断即可（重复移除无害）。
+    // store.removeTerminal 已封装「移除 + 切 active」逻辑（见 tabStore.ts），App 不再持有
+    // terminalsRef / activeTermId 与 ref mirror。注意：用户点 × 关闭 tab 也会触发
+    // destroyTerminal → 主进程可能再发 exit；store 用存在性判断去重（重复移除无害）。
     const offTermExit = pi.onTerminalExit?.((id) => {
-      setTerminals((prev) => prev.filter((t) => t.id !== id));
-      setActiveTermId((prev) => {
-        if (prev !== id) return prev;
-        const remaining = terminalsRef.current.filter((t) => t.id !== id);
-        return remaining.length ? remaining[0].id : null;
-      });
+      useTabStore.getState().removeTerminal(id);
     });
     // 订阅主进程主动推送的集成终端实例列表（create/destroy/exit 时），
     // 保证左侧分组计数实时（对齐 ADR §6「主动推送，避免轮询」）。
-    const offTermList = pi.onTerminalList?.((list) => setTerminals(list));
+    const offTermList = pi.onTerminalList?.((list) => useTabStore.getState().setTerminals(list));
     return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); offTermList?.(); };
   }, []);
   // passive wheel 监听器执行，调用 preventDefault 阻止浏览器原生页面缩放。
@@ -241,12 +215,9 @@ export default function App() {
     setError(null);
     try {
       const info = await pi.openSession(req.key ? { key: req.key } : { cwd: req.cwd, name: req.name });
-      const id = info.key;
-      // 新增或激活 session tab：已存在同 key 的 session tab（可见或已关闭隐藏）则不重复添加，
-      // 并取消其隐藏状态（从 closedTabIds 移除），使其重新可见（对齐“关闭=隐藏、重开=恢复”）。
-      setClosedTabIds((prev) => prev.filter((x) => x !== id));
-      setTabs((prev) => prev.some((t) => t.kind === 'session' && t.key === id) ? prev : [...prev, { id, kind: 'session', title: info.name, key: info.key, cwd: info.cwd, name: info.name } as SessionTab]);
-      setActiveTabId(id);
+      // 新增或激活 session tab 统一收编进 store（openSession action 已封装「已存在则
+      // 取消隐藏并激活、不存在则新增并激活」逻辑，与「关闭=隐藏、重开=恢复」语义一致）。
+      useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -289,22 +260,18 @@ export default function App() {
 
   // 点击文件树中的文件 → 中间区新增/激活预览 tab（单文件），而非旧式右下抽屉。
   const handleOpenFile = (relPath: string, fileName: string, root: string) => {
-    const id = 'preview:' + root + '//' + relPath;
-    setTabs((prev) => prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'preview', title: fileName || relPath.split('/').pop() || relPath, root, path: relPath } as PreviewTab]);
-    setActiveTabId(id);
+    // 统一收编进 store（openPreview action 封装「已存在则激活、不存在则新增」）。
+    // title 由 store 按 fileName 或 path 末段计算，对应用户可见的文件名。
+    useTabStore.getState().openPreview(root, relPath, fileName);
   };
 
   // 点击 Git 面板的「工作区改动」或某次提交 → 中间区新增/激活 diff tab（替代旧式 GitDiffDrawer）。
   // commitHash 为 null 时显示工作区 diff；为某 hash 时显示该提交 diff。
   const openWorkDiff = useCallback((cwd: string) => {
-    const id = 'diff:' + cwd + '//work';
-    setTabs((prev) => prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'diff', title: '工作区改动', cwd, commitHash: null } as DiffTab]);
-    setActiveTabId(id);
+    useTabStore.getState().openDiff(cwd, null);
   }, []);
   const openCommitDiff = useCallback((cwd: string, hash: string) => {
-    const id = 'diff:' + cwd + '//' + hash;
-    setTabs((prev) => prev.some((t) => t.id === id) ? prev : [...prev, { id, kind: 'diff', title: hash.slice(0, 8), cwd, commitHash: hash } as DiffTab]);
-    setActiveTabId(id);
+    useTabStore.getState().openDiff(cwd, hash);
   }, []);
 
   const handleSidebarResize = (w: number) => {
@@ -379,7 +346,7 @@ export default function App() {
   // cwd 语义：当前有激活会话时，落在该会话 cwd（项目分组）；否则统一归入「应用工作目录」
   // 分组（config.appWorkDir），而非传空 cwd 让主进程回退到 process.cwd()（即项目根，语义错乱）。
   const handleNewTerminal = useCallback(async () => {
-    setDrawerOpen(true);
+    useTabStore.getState().setDrawerOpen(true);
     try {
       // 1. 取 profile 列表（缓存）
       if (!profilesRef.current) profilesRef.current = await pi.listTerminalProfiles();
@@ -392,12 +359,12 @@ export default function App() {
       // 注意：不在此处本地 setTerminals 追加——主进程创建后会经
       // onTerminalList 主动推送完整列表（单一事实来源，见下方订阅）。若此处再
       // 追加一次，会与推送的整表合并成同一 id 出现两次 → 面板出现两个相同 tab。
-      // 此处只负责触发创建 + 设定激活态（激活态由返回 info 直接确定）。
+      // 此处只负责触发创建 + 设定激活态（激活态由返回 info 直接确定，写入 store）。
       const info = activeCwd
         ? await pi.createTerminal({ profile, cwd: activeCwd })
         // 无激活会话：归入「应用工作目录」分组（主进程确保目录存在，cwd 取 config.appWorkDir）。
         : await pi.createTerminalInAppWorkDir({ profile });
-      setActiveTermId(info.id);
+      useTabStore.getState().setActiveTermId(info.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -405,7 +372,7 @@ export default function App() {
 
   // 在「应用工作目录」分组下新建终端：cwd 取 config.appWorkDir（主进程确保目录存在）。
   const handleNewTerminalInAppWorkDir = useCallback(async () => {
-    setDrawerOpen(true);
+    useTabStore.getState().setDrawerOpen(true);
     try {
       if (!profilesRef.current) profilesRef.current = await pi.listTerminalProfiles();
       const profiles = profilesRef.current;
@@ -414,7 +381,7 @@ export default function App() {
       const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
       if (!profile) return;
       const info = await pi.createTerminalInAppWorkDir({ profile });
-      setActiveTermId(info.id);
+      useTabStore.getState().setActiveTermId(info.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -422,7 +389,7 @@ export default function App() {
 
   // 在指定项目目录（cwd）分组下新建集成终端：cwd 取该分组目录。
   const handleNewTerminalInCwd = useCallback(async (cwd: string) => {
-    setDrawerOpen(true);
+    useTabStore.getState().setDrawerOpen(true);
     try {
       if (!profilesRef.current) profilesRef.current = await pi.listTerminalProfiles();
       const profiles = profilesRef.current;
@@ -431,68 +398,36 @@ export default function App() {
       const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
       if (!profile) return;
       const info = await pi.createTerminal({ profile, cwd });
-      setActiveTermId(info.id);
+      useTabStore.getState().setActiveTermId(info.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
-  // 关闭 tab：移除本地列表 + 通知主进程销毁；若关掉的是激活态则切到剩余第一个或 null；
-  // 关掉最后一个则自动收起抽屉。
+  // 关闭终端 tab：通知主进程销毁 pty，并从 store 移除对应终端实例（store.removeTerminal
+  // 已封装「移除 + 切激活态」逻辑）；关掉最后一个则自动收起抽屉。
   const handleCloseTab = useCallback((id: string) => {
-    setTerminals((prev) => {
-      const next = prev.filter((t) => t.id !== id);
-      // 关掉最后一个则自动收起抽屉（在函数式更新内判断，避免读到陈旧 ref）
-      if (next.length === 0) setDrawerOpen(false);
-      return next;
-    });
     pi.destroyTerminal(id).catch(() => {});
-    setActiveTermId((prev) => {
-      if (prev !== id) return prev;
-      const remaining = terminalsRef.current.filter((t) => t.id !== id);
-      return remaining.length ? remaining[0].id : null;
-    });
-    // 若关掉最后一个，自动收起抽屉
-    if (terminalsRef.current.length <= 1) setDrawerOpen(false);
+    const remaining = useTabStore.getState().terminals.filter((t) => t.id !== id);
+    useTabStore.getState().removeTerminal(id);
+    if (remaining.length === 0) useTabStore.getState().setDrawerOpen(false);
   }, []);
 
-  // 抽屉高度拖拽：实时改 state 并回写 config。
+  // 抽屉高度拖拽：实时写回 store 并回写 config。
   const handleResizeDrawer = useCallback((h: number) => {
-    setDrawerHeight(h);
+    useTabStore.getState().setDrawerHeight(h);
     pi.setConfig({ terminalDrawerHeight: h }).catch(() => {});
   }, []);
 
-  // 关闭中间区 tab。
-  //  - session 终端：仅「隐藏」不卸载（keep-alive，与切换 tab 行为一致）——把 tab 加入
-  //    closedTabIds 保留在 tabs 里（TerminalPane 不销毁，pty 也不杀），并把激活态切到下一个
-  //    可见 tab。这样既能规避 WebGL context 泄漏与重挂载输出/滚动丢失，又符合“关掉只是收起”
-  //    的直觉；从侧边栏重新点开同一会话即取消隐藏并恢复（handleOpen 已处理）。
-  //  - preview / diff：原逻辑真移除（这些 tab 无 keep-alive 需求，关闭即销毁）。
-  // 若关掉的是激活态，则切到剩余第一个「可见（非隐藏）」tab 或 null（用 ref 读最新值，
-  // 避免闭包陈旧）。
-  const handleCloseCenterTab = (id: string) => {
-    const tab = tabsRef.current.find((t) => t.id === id);
-    if (tab?.kind === 'session') {
-      setClosedTabIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-      setActiveTabId((prev) => {
-        if (prev !== id) return prev;
-        const visible = tabsRef.current.filter((t) => t.id !== id && !closedTabIdsRef.current.includes(t.id));
-        return visible.length ? visible[0].id : null;
-      });
-      return;
-    }
-    // preview / diff：真移除
-    setTabs((prev) => prev.filter((t) => t.id !== id));
-    setActiveTabId((prev) => {
-      if (prev !== id) return prev;
-      const remaining = tabsRef.current.filter((t) => t.id !== id);
-      return remaining.length ? remaining[0].id : null;
-    });
-  };
+  // 关闭中间区 tab 的统一入口已收编进 store（closeCenterTab action）：
+  //  - session 终端 → 仅「隐藏」不卸载（keep-alive，store.hideTab 语义，与切换 tab 一致）；
+  //  - preview / diff → 真移除（store.closeTab 语义）。
+  // 中间区 TabBar 的 × 经 CenterPane 的 guard 拦截后直接调 store.closeCenterTab，
+  // 因此 App 不再持有 handleCloseCenterTab（见 issue 03）。
 
   return (
     <div className="app">
-      <TitleBar onOpenSettings={() => setSettingsOpen(true)} onToggleTerminal={() => setDrawerOpen((o) => !o)} terminalOpen={drawerOpen} />
+      <TitleBar onOpenSettings={() => setSettingsOpen(true)} onToggleTerminal={() => useTabStore.getState().toggleDrawer()} terminalOpen={drawerOpen} />
       <div className="app-shell">
       <Sidebar
         sessions={sessions}
@@ -522,19 +457,9 @@ export default function App() {
         onNewTerminalInCwd={handleNewTerminalInCwd}
       />
       <CenterPane
-        tabs={tabs}
-        activeTabId={activeTabId}
-        closedTabIds={closedTabIds}
-        onSelectTab={setActiveTabId}
-        onCloseTab={handleCloseCenterTab}
-        drawerOpen={drawerOpen}
-        drawerHeight={drawerHeight}
-        terminals={terminals}
-        activeTermId={activeTermId}
-        onSelectTermTab={setActiveTermId}
-        onCloseTermTab={handleCloseTab}
         onNewTerminal={handleNewTerminal}
         onResizeDrawer={handleResizeDrawer}
+        onCloseTermTab={handleCloseTab}
         onOpenFile={handleOpenFile}
       />
       <RightPanel

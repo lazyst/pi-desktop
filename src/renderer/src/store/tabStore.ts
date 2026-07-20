@@ -5,6 +5,10 @@
 // （阶段1 后续）时直接消费此处状态即可。
 
 import { create } from 'zustand';
+import type { IntegratedTerminalInfo } from '../types';
+// 抽屉高度默认值取自主进程 config（defaultConfig），与重构前 App 的
+// useState(defaultConfig().terminalDrawerHeight) 行为一致（见 issue 03）。
+import { defaultConfig } from '../../../main/config';
 
 /** Tab 内容类型（对齐 CONTEXT.md TabKind）。 */
 export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal';
@@ -73,9 +77,17 @@ export interface TabStore {
   activeEditorTabId: string | null; // 中间区（editor）激活 tab
   activePanelTabId: string | null; // 底部终端区（panel）激活 tab
 
+  // —— 集成终端抽屉状态（阶段1 后续从 App 收编，见 issue 03） ——
+  // 终端抽屉的实例列表 / 开关 / 高度 / 当前激活终端，统一由 store 持有，
+  // App 仅把主进程推送（onTerminalList / onTerminalExit）写回此处，组件直接订阅。
+  terminals: IntegratedTerminalInfo[]; // 主进程经 onTerminalList 主动推送的完整实例列表
+  drawerOpen: boolean; // 抽屉是否展开
+  drawerHeight: number; // 抽屉高度（像素），持久化于 config.terminalDrawerHeight
+  activeTermId: string | null; // 当前激活的集成终端 tab id
+
   // —— action ——
   openSession: (req: { key?: string; cwd?: string; name?: string }) => void;
-  openPreview: (root: string, path: string) => void;
+  openPreview: (root: string, path: string, fileName?: string) => void;
   openDiff: (cwd: string, commitHash: string | null) => void;
   openTerminal: (cwd: string) => void;
   selectTab: (id: string) => void;
@@ -83,6 +95,28 @@ export interface TabStore {
   hideTab: (id: string) => void;
   reorderTabs: (location: TabLocation, orderedIds: string[]) => void;
   setHidden: (id: string, hidden: boolean) => void;
+
+  // —— 集成终端抽屉 action（issue 03） ——
+  /** 主进程 onTerminalList 推送的完整实例列表写回（单一事实来源）。 */
+  setTerminals: (list: IntegratedTerminalInfo[]) => void;
+  /** 切换 / 设置抽屉展开态（TitleBar 终端按钮调 toggleDrawer）。 */
+  toggleDrawer: () => void;
+  setDrawerOpen: (open: boolean) => void;
+  /** 设置抽屉高度（拖拽或初始化时）。注意：持久化（setConfig）由 App 负责，此处只管状态。 */
+  setDrawerHeight: (h: number) => void;
+  /** 设置当前激活集成终端 tab（用户点选 / 新建后置位）。 */
+  setActiveTermId: (id: string | null) => void;
+  /** 主进程 onTerminalExit 推送：移除对应终端 tab，若其为激活态则切到剩余第一个或 null。 */
+  removeTerminal: (id: string) => void;
+  /** 主进程 onExit 推送：移除所有 kind==='session' 且 key 匹配的 tab（含已隐藏 keep-alive 的）。 */
+  removeSessionTab: (key: string) => void;
+  /** 中间区 tab 关闭统一入口（TabBar × 经 guard 后调用）：
+   *  session 终端 → 仅隐藏不卸载（keep-alive，对齐 hideTab），从侧边栏重开即恢复；
+   *  preview / diff → 真移除（无 keep-alive 需求）。若关掉的是激活态则切到下一个可见 tab。 */
+  closeCenterTab: (id: string) => void;
+  /** 主进程 onIndex 推送：把已晋升 live 会话在 tabs 中的标题同步为磁盘真实名称
+   *  （首条用户消息），使终端标题从 “new-session” 更新为实际会话名。仅改 session tab。 */
+  promoteTabNames: (diskList: { key: string; name: string }[]) => void;
 }
 
 /** 同 location 内为新增 tab 计算下一个 order（当前最大 order + 1）。 */
@@ -102,6 +136,12 @@ export const useTabStore = create<TabStore>((set) => ({
   tabs: [],
   activeEditorTabId: null,
   activePanelTabId: null,
+
+  // —— 集成终端抽屉初始状态 ——
+  terminals: [],
+  drawerOpen: false,
+  drawerHeight: defaultConfig().terminalDrawerHeight, // 默认值（config 异步加载后由 App 覆盖）
+  activeTermId: null,
 
   openSession: ({ key, cwd = '', name = '' }) =>
     set((state) => {
@@ -134,7 +174,7 @@ export const useTabStore = create<TabStore>((set) => ({
       };
     }),
 
-  openPreview: (root, path) =>
+  openPreview: (root, path, fileName) =>
     set((state) => {
       const id = `preview:${root}//${path}`;
       const existing = state.tabs.find((t) => t.kind === 'preview' && t.id === id);
@@ -150,7 +190,8 @@ export const useTabStore = create<TabStore>((set) => ({
         id,
         kind: 'preview',
         location: 'editor',
-        title: path,
+        // 标题优先用文件树传入的文件名，否则取 path 末段（对齐 App 原 handleOpenFile 行为）。
+        title: fileName || path.split('/').pop() || path,
         hidden: false,
         order: nextOrder(state.tabs, 'editor'),
         root,
@@ -178,7 +219,7 @@ export const useTabStore = create<TabStore>((set) => ({
         id,
         kind: 'diff',
         location: 'editor',
-        title: commitHash ? `Diff ${commitHash.slice(0, 7)}` : 'Working Tree',
+        title: commitHash ? commitHash.slice(0, 8) : '工作区改动',
         hidden: false,
         order: nextOrder(state.tabs, 'editor'),
         cwd,
@@ -303,5 +344,84 @@ export const useTabStore = create<TabStore>((set) => ({
         return t;
       });
       return { tabs };
+    }),
+
+  // —— 集成终端抽屉 action ——
+  setTerminals: (list) =>
+    set({ terminals: list }),
+
+  toggleDrawer: () =>
+    set((state) => ({ drawerOpen: !state.drawerOpen })),
+
+  setDrawerOpen: (open) =>
+    set({ drawerOpen: open }),
+
+  setDrawerHeight: (h) =>
+    set({ drawerHeight: h }),
+
+  setActiveTermId: (id) =>
+    set({ activeTermId: id }),
+
+  removeTerminal: (id) =>
+    set((state) => {
+      const remaining = state.terminals.filter((t) => t.id !== id);
+      const patch: Partial<TabStore> = { terminals: remaining };
+      if (state.activeTermId === id) {
+        patch.activeTermId = remaining.length ? remaining[0].id : null;
+      }
+      return patch;
+    }),
+
+  removeSessionTab: (key) =>
+    set((state) => {
+      const remaining = state.tabs.filter(
+        (t) => !(t.kind === 'session' && (t as SessionTab).key === key),
+      );
+      if (remaining.length === state.tabs.length) return {};
+      const patch: Partial<TabStore> = { tabs: remaining };
+      // 若被移除的 session 是当前激活 editor tab，回退到下一个可见 editor tab。
+      if (
+        state.activeEditorTabId &&
+        state.tabs.some(
+          (t) => t.id === state.activeEditorTabId && t.kind === 'session' && (t as SessionTab).key === key,
+        )
+      ) {
+        patch.activeEditorTabId = firstVisibleId(remaining, 'editor');
+      }
+      return patch;
+    }),
+
+  closeCenterTab: (id) =>
+    set((state) => {
+      const tab = state.tabs.find((t) => t.id === id);
+      if (!tab) return {};
+      // session 终端：keep-alive，仅隐藏不卸载（对齐 hideTab 语义）。
+      if (tab.kind === 'session') {
+        return state.tabs.some((t) => t.id === id && t.hidden)
+          ? {}
+          : { tabs: state.tabs.map((t) => (t.id === id ? { ...t, hidden: true } : t)) };
+      }
+      // preview / diff：真移除（closeTab 语义）。
+      const remaining = state.tabs.filter((t) => t.id !== id);
+      const patch: Partial<TabStore> = { tabs: remaining };
+      if (tab.location === 'editor' && state.activeEditorTabId === id) {
+        patch.activeEditorTabId = firstVisibleId(remaining, 'editor');
+      }
+      return patch;
+    }),
+
+  promoteTabNames: (diskList) =>
+    set((state) => {
+      let changed = false;
+      const tabs = state.tabs.map((t) => {
+        if (t.kind !== 'session') return t;
+        const d = diskList.find((x) => x.key === (t as SessionTab).key);
+        if (d && d.name && d.name !== t.name) {
+          changed = true;
+          return { ...t, name: d.name, title: d.name };
+        }
+        return t;
+      });
+      return changed ? { tabs } : {};
     }),
 }));

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import { TerminalDrawer } from '../components/TerminalDrawer';
+import { useTabStore } from '../store/tabStore';
 import type { PiApi } from '../ipc';
 
 // 无头 jsdom 无 WebGL 上下文，真实 WebglAddon 在 mount() 激活时会抛错并污染测试输出。
@@ -33,16 +34,24 @@ const tabs = [
   { id: 'term-2', title: 'bash' },
 ];
 
+// 把测试用的轻量 tab 列表装入 store（issue 03 后 TerminalDrawer 直接从 store 取
+// terminals / activeTermId，不再透传 tabs / activeId props）。
+function seedStore(activeId: string) {
+  useTabStore.setState({
+    terminals: tabs.map((t) => ({ id: t.id, profileId: 'p', cwd: '/', title: t.title })),
+    activeTermId: activeId,
+  });
+}
+
 describe('TerminalDrawer', () => {
   it('does not render when open is false', () => {
     const api = makeApi();
     (window as any).pi = api;
+    seedStore('term-1');
     const { queryByTestId } = render(
       <TerminalDrawer
         open={false}
         height={200}
-        tabs={tabs}
-        activeId="term-1"
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onNewTerminal={vi.fn()}
@@ -55,12 +64,11 @@ describe('TerminalDrawer', () => {
   it('renders the tabbar and at least one integrated terminal pane when open', () => {
     const api = makeApi();
     (window as any).pi = api;
+    seedStore('term-1');
     const { container, getByTestId } = render(
       <TerminalDrawer
         open={true}
         height={200}
-        tabs={tabs}
-        activeId="term-1"
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onNewTerminal={vi.fn()}
@@ -86,8 +94,6 @@ describe('TerminalDrawer', () => {
       <TerminalDrawer
         open={true}
         height={300}
-        tabs={tabs}
-        activeId="term-1"
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onNewTerminal={vi.fn()}
@@ -120,13 +126,12 @@ describe('TerminalDrawer', () => {
   it('clamps the dragged height to the [120, 600] range', () => {
     const api = makeApi();
     (window as any).pi = api;
+    seedStore('term-1');
     const onResizeHeight = vi.fn();
     const { container } = render(
       <TerminalDrawer
         open={true}
         height={300}
-        tabs={tabs}
-        activeId="term-1"
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onNewTerminal={vi.fn()}
@@ -141,8 +146,5 @@ describe('TerminalDrawer', () => {
     });
     const last = onResizeHeight.mock.calls[onResizeHeight.mock.calls.length - 1][0];
     expect(last).toBe(120);
-    act(() => {
-      fireEvent.mouseUp(document);
-    });
   });
 });

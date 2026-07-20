@@ -5,6 +5,7 @@ import { TerminalDrawer } from '../components/TerminalDrawer';
 import { IntegratedTerminalPane } from '../components/IntegratedTerminalPane';
 import { XtermTerminal } from '../components/XtermTerminal';
 import { IntegratedChannel } from '../components/terminalChannel';
+import { useTabStore } from '../store/tabStore';
 import type { PiApi } from '../ipc';
 
 // 无头 jsdom 无 WebGL 上下文，用轻量 mock 替换真实 WebglAddon。
@@ -34,6 +35,15 @@ const tabs = [
   { id: 'term-2', title: 'bash' },
 ];
 
+// issue 03 后 TerminalDrawer 直接从 store 取 terminals / activeTermId，
+// 测试前把 terminals 装入 store（含 IntegratedTerminalInfo 必填字段）。
+beforeEach(() => {
+  useTabStore.setState({
+    terminals: tabs.map((t) => ({ id: t.id, profileId: 'p', cwd: '/', title: t.title })),
+    activeTermId: 'term-1',
+  });
+});
+
 describe('TerminalDrawer drag listeners (no leak)', () => {
   // 抓取 document 的真实原生实现，避免 spy 自递归。
   const nativeAdd = document.addEventListener.bind(document);
@@ -57,8 +67,6 @@ describe('TerminalDrawer drag listeners (no leak)', () => {
       <TerminalDrawer
         open={true}
         height={300}
-        tabs={tabs}
-        activeId="term-1"
         onSelectTab={vi.fn()}
         onCloseTab={vi.fn()}
         onNewTerminal={vi.fn()}

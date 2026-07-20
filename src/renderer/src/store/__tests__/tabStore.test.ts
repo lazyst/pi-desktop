@@ -76,7 +76,7 @@ describe('tabStore — 状态容器与 action', () => {
       expect(tab.kind).toBe('preview');
       expect(tab.id).toBe('preview:/repo//src/index.ts');
       expect(tab.location).toBe('editor');
-      expect(tab.title).toBe('src/index.ts');
+      expect(tab.title).toBe('index.ts');
       expect(s.activeEditorTabId).toBe('preview:/repo//src/index.ts');
     });
 
@@ -96,14 +96,14 @@ describe('tabStore — 状态容器与 action', () => {
       const s = getState();
       expect(s.tabs[0].id).toBe('diff:/repo//work');
       expect((s.tabs[0] as any).commitHash).toBeNull();
-      expect(s.tabs[0].title).toBe('Working Tree');
+      expect(s.tabs[0].title).toBe('工作区改动');
     });
 
     it('指定 commitHash 时使用短 hash 标题', () => {
       getState().openDiff('/repo', 'abc1234def');
       const s = getState();
       expect(s.tabs[0].id).toBe('diff:/repo//abc1234def');
-      expect(s.tabs[0].title).toBe('Diff abc1234');
+      expect(s.tabs[0].title).toBe('abc1234d');
     });
 
     it('同 id 已存在则激活不重复创建', () => {

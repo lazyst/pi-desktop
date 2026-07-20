@@ -2,9 +2,24 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import App from '../App';
+import { useTabStore } from '../store/tabStore';
 import { defaultConfig } from '../../../main/config';
 
 const CONFIG = defaultConfig();
+
+// store 是模块级单例，render(<App/>) 前重置，保证各用例从干净状态开始（
+// 等价于重构前 App 的 useState 每实例独立；见 issue 03 状态收编进 store）。
+beforeEach(() => {
+  useTabStore.setState({
+    tabs: [],
+    activeEditorTabId: null,
+    activePanelTabId: null,
+    terminals: [],
+    drawerOpen: false,
+    drawerHeight: CONFIG.terminalDrawerHeight,
+    activeTermId: null,
+  });
+});
 
 describe('App', () => {
   it('passes only disk sessions to the sidebar (no live merge)', async () => {
