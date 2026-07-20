@@ -1382,6 +1382,11 @@ html, body, #root {
 .monaco-code-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; }
 .monaco-code-editor .monaco-editor,
 .monaco-code-editor .monaco-editor .overflow-guard { height: 100% !important; }
+/* Monaco diff 编辑器容器（取代原自研 SplitDiffView）。填满 .diff-tab-body，
+   内部自带滚动，不抢父容器滚动；与 .monaco-code-editor 同视觉语言。 */
+.monaco-diff-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+.monaco-diff-editor .monaco-editor,
+.monaco-diff-editor .monaco-editor .overflow-guard { height: 100% !important; }
 /* Markdown preview wrapper + toolbar (inside CodePreview) */
 .code-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* Markdown 预览模式：内容可能超出视口，需可上下滚动（编辑模式由 CodeMirror

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseUnifiedPatch } from '../patch';
+import { parseUnifiedPatch, reconstructDiffSides } from '../patch';
 
 describe('parseUnifiedPatch', () => {
   it('returns null for empty input', () => {
@@ -103,5 +103,57 @@ describe('parseUnifiedPatch', () => {
     const files = parseUnifiedPatch(text);
     expect(files).not.toBeNull();
     expect(files!.length).toBe(1);
+  });
+});
+
+describe('reconstructDiffSides', () => {
+  it('returns empty sides when nothing parses', () => {
+    expect(reconstructDiffSides('')).toEqual({ original: '', modified: '' });
+    expect(reconstructDiffSides('not a diff')).toEqual({ original: '', modified: 'not a diff' });
+  });
+
+  it('reconstructs original/modified for a modified file', () => {
+    const text = [
+      '--- a/file.txt',
+      '+++ b/file.txt',
+      '@@ -1,4 +1,4 @@',
+      ' context a',
+      '-removed line',
+      '+added line',
+      ' context b',
+    ].join('\n');
+    const { original, modified } = reconstructDiffSides(text);
+    // original：上下文 + 删除行，无新增行
+    expect(original).toContain('context a');
+    expect(original).toContain('removed line');
+    expect(original).toContain('context b');
+    expect(original).not.toContain('added line');
+    // modified：上下文 + 新增行，无删除行
+    expect(modified).toContain('context a');
+    expect(modified).toContain('added line');
+    expect(modified).toContain('context b');
+    expect(modified).not.toContain('removed line');
+  });
+
+  it('separates multiple files with boundary markers', () => {
+    const text = [
+      'diff --git a/one b/one',
+      '--- a/one',
+      '+++ b/one',
+      '@@ -1 +1 @@',
+      '+one added',
+      'diff --git a/two b/two',
+      '--- a/two',
+      '+++ b/two',
+      '@@ -1 +1 @@',
+      '+two added',
+    ].join('\n');
+    const { original, modified } = reconstructDiffSides(text);
+    expect(original).toContain('===== b/one (original) =====');
+    expect(original).toContain('===== b/two (original) =====');
+    expect(modified).toContain('===== b/one (modified) =====');
+    expect(modified).toContain('===== b/two (modified) =====');
+    expect(modified).toContain('one added');
+    expect(modified).toContain('two added');
   });
 });

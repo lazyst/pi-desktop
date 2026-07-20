@@ -116,3 +116,39 @@ export function parseUnifiedPatch(text: string): SplitDiffFile[] | null {
 function cleanPatchPath(path: string): string {
   return path.split('\t')[0].trim();
 }
+
+/**
+ * 把 unified patch 文本重建成 Monaco diff 需要的 original/modified 两份完整文本。
+ * 遍历所有文件：删除行（-）只进 original；新增行（+）只进 modified；上下文行（ ）
+ * 两侧都进（行内容相同，保证对齐）；hunk 头/文件元数据头不计入内容。
+ * 多文件场景下，在每个文件两侧插入同名分隔标记，便于在单文档 diff 中辨识边界
+ * （标记行内容一致，Monaco 视为未改动 context）。
+ *
+ * 用于把 git 的 unified diff 喂给 MonacoDiffEditor（其输入是两份完整文本、由内部算
+ * 行内差异），替代自研 SplitDiffView 的 unified 单栏解析。
+ * 无法解析时回退：original 为空、modified 为整段原文（整段呈现为新增）。
+ */
+export function reconstructDiffSides(text: string): { original: string; modified: string } {
+  const files = parseUnifiedPatch(text);
+  if (!files) {
+    return { original: '', modified: text };
+  }
+  const originalParts: string[] = [];
+  const modifiedParts: string[] = [];
+  for (const file of files) {
+    const name = file.newPath || file.oldPath || '（未命名文件）';
+    originalParts.push(`===== ${name} (original) =====`);
+    modifiedParts.push(`===== ${name} (modified) =====`);
+    for (const row of file.rows) {
+      if (row.type === 'hunk') continue; // hunk/元数据头不计入内容
+      const { left, right } = row;
+      if (left.type === 'removed' || left.type === 'context') {
+        originalParts.push(left.text);
+      }
+      if (right.type === 'added' || right.type === 'context') {
+        modifiedParts.push(right.text);
+      }
+    }
+  }
+  return { original: originalParts.join('\n'), modified: modifiedParts.join('\n') };
+}
