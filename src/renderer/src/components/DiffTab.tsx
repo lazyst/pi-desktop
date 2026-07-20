@@ -6,9 +6,10 @@
 //   • commitHash 为某 hash → 该提交的 diff（历史快照，无需订阅）
 //   • 提交 diff 时显示「← 返回工作区改动」按钮（onBack 回调通知父组件切回工作区 diff）
 // 纯只读：无 write/push/checkout（对齐 GitView 的只读范围）。
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { pi } from '../ipc';
-import { SplitDiffView } from './SplitDiffView';
+import { MonacoDiffEditor } from './editor/MonacoDiffEditor';
+import { reconstructDiffSides } from '../lib/patch';
 
 interface Props {
   cwd: string;
@@ -66,6 +67,12 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
   const title = commitHash ? '提交改动' : '工作区改动';
   const empty = !loading && !error && diff.trim().length === 0;
 
+  // 把 git 的 unified diff 重建成 Monaco diff 需要的 original/modified 双文本。
+  const { original, modified } = useMemo(
+    () => (empty ? { original: '', modified: '' } : reconstructDiffSides(diff)),
+    [diff, empty],
+  );
+
   // active 当前仅语义占位（keep-alive 由父容器 CSS 控制），但接收以备父组件传递。
   void active;
 
@@ -85,7 +92,9 @@ export function DiffTab({ cwd, commitHash, active, onBack }: Props) {
         {!loading && !error && empty && (
           <div className="git-empty">{commitHash ? '该提交无改动' : '无改动'}</div>
         )}
-        {!loading && !error && !empty && <SplitDiffView text={diff} />}
+        {!loading && !error && !empty && (
+          <MonacoDiffEditor original={original} modified={modified} language="plaintext" />
+        )}
       </div>
     </div>
   );
