@@ -20,6 +20,13 @@ interface Props {
   active: boolean;
   /** 预览内相对链接点击 → 在应用内切到目标文件（语义同文件树 onOpenFile）。 */
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
+  /** 真正关闭本 tab（由父组件传入，通常即移除该 preview tab）。dirty 确认通过后调用。 */
+  onClose: () => void;
+  /** 向父组件（CenterPane）注册「关闭请求拦截器」：父组件 TabBar 的 × 会先调用它，
+   *  以便 dirty 时弹出确认而不是直接丢弃改动。传 null 表示注销（unmount 时）。 */
+  onRegisterCloseGuard?: (id: string, guard: (() => void) | null) => void;
+  /** 本 tab 的唯一 id（与 CenterPane tabs 中的 id 对齐，用于注册 guard）。 */
+  tabId: string;
 }
 
 function basename(p: string): string {
@@ -39,7 +46,7 @@ function countLines(s: string): number {
   return s.split(/\r\n|\r|\n/).length;
 }
 
-export function PreviewTab({ root, path, active, onOpenFile }: Props) {
+export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegisterCloseGuard, tabId }: Props) {
   const [dirty, setDirty] = useState(false);
   const [initialContent, setInitialContent] = useState('');
   const [currentContent, setCurrentContent] = useState('');
@@ -112,11 +119,19 @@ export function PreviewTab({ root, path, active, onOpenFile }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [active, kind, dirty, saving, doSave]);
 
-  // 当 dirty 且父组件触发关闭（tab 条 ×）时，由父组件调用本回调兜底确认。
-  // 这里保留 ConfirmDialog UI；父组件可直接用 onBeforeClose 语义，本项目目前由 tab 条处理。
-  const requestClose = () => {
+  // 关闭请求：dirty 时先弹确认（防止静默丢弃未保存改动，对齐原 FileDrawer 抽屉语义）；
+  // 非 dirty 或确认通过后，才真正关闭 tab（调父组件传入的 onClose）。
+  // 该回调经 onRegisterCloseGuard 注册到 CenterPane，使 TabBar 的 × 走此拦截而非直关。
+  const requestClose = useCallback(() => {
     if (dirty) setConfirmClose(true);
-  };
+    else onClose();
+  }, [dirty, onClose]);
+
+  // 挂载时向 CenterPane 注册关闭拦截器；卸载时注销（传 null）。
+  useEffect(() => {
+    onRegisterCloseGuard?.(tabId, requestClose);
+    return () => { onRegisterCloseGuard?.(tabId, null); };
+  }, [tabId, requestClose, onRegisterCloseGuard]);
 
   const fileName = basename(path) || path || '未命名文件';
 
@@ -168,7 +183,7 @@ export function PreviewTab({ root, path, active, onOpenFile }: Props) {
           message="文件有未保存的改动，确定关闭？改动将不会写入磁盘。"
           confirmLabel="关闭并丢弃"
           cancelLabel="继续编辑"
-          onConfirm={() => { setConfirmClose(false); setDirty(false); }}
+          onConfirm={() => { setConfirmClose(false); onClose(); }}
           onCancel={() => setConfirmClose(false)}
         />
       )}
