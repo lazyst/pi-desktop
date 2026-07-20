@@ -16,7 +16,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { monaco } from './monaco-setup';
-import { themeIsDark, getFontScale } from '../../editorUtils';
+import { themeIsDark, getMonacoFontSize, useMonacoThemeFollow, useMonacoFontFollow } from '../../editorUtils';
 
 interface Props {
   /** 仓库根目录，用于构造稳定的 model path（uri）。 */
@@ -55,46 +55,15 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
 
   const uri = modelUri(root, path);
 
-  // 受控内容同步：外部 content 变更时 reconcile（仅在不一致时覆盖，保护编辑中的光标）。
-  useEffect(() => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    const model = ed.getModel();
-    if (!model) return;
-    const current = model.getValue();
-    if (current !== content) {
-      // 保存当前视图状态，回写后尽量还原（用户编辑中外部一般不会变更，这里以防重载）。
-      const vs = ed.saveViewState();
-      model.setValue(content);
-      if (vs) ed.restoreViewState(vs);
-    }
-  }, [content]);
-
-  // 主题跟随：监听根节点 data-theme。
-  useEffect(() => {
-    const apply = () => monaco.editor.setTheme(themeIsDark() ? 'vs-dark' : 'vs');
-    apply();
-    const observer = new MutationObserver(apply);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-    return () => observer.disconnect();
-  }, []);
-
+  // 主题跟随：监听根节点 data-theme（与 diff 编辑器同源）。
+  useMonacoThemeFollow();
   // 字号跟随：监听 --font-scale（fontSize.ts 写到根节点）。
-  useEffect(() => {
-    const apply = () => {
-      const ed = editorRef.current;
-      if (!ed) return;
-      ed.updateOptions({ fontSize: Math.round(13 * getFontScale()) });
-    };
-    const observer = new MutationObserver(apply);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style'] });
-    return () => observer.disconnect();
-  }, []);
+  useMonacoFontFollow(() => editorRef.current);
 
   const handleMount: OnMount = useCallback((ed, m) => {
     editorRef.current = ed;
     // 初始字号对齐当前 --font-scale。
-    ed.updateOptions({ fontSize: Math.round(13 * getFontScale()) });
+    ed.updateOptions({ fontSize: getMonacoFontSize() });
 
     // 应用层视图状态缓存：切 model 前保存、切后恢复（saveViewState:false 由本逻辑接管）。
     ed.onDidChangeModel((e) => {
@@ -132,7 +101,7 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       options={{
         readOnly: false,
         automaticLayout: true, // 容器尺寸变化（tab 切换/CSS 隐藏）自动重排
-        fontSize: Math.round(13 * getFontScale()),
+        fontSize: getMonacoFontSize(),
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         fontFamily: 'var(--font-mono)',
