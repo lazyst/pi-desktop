@@ -166,6 +166,9 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('term:exit', handler);
     return () => ipcRenderer.removeListener('term:exit', handler);
   },
+  saveTerminalBuffer: (id: string, data: string) => ipcRenderer.send('terminal:saveBuffer', { id, data }),
+  loadTerminalBuffer: (id: string): Promise<string | undefined> => ipcRenderer.invoke('terminal:loadBuffer', id),
+  updateTerminalCwd: (id: string, cwd: string) => ipcRenderer.send('terminal:updateCwd', { id, cwd }),
   onTerminalList: (cb: (list: IntegratedTerminalInfo[]) => void) => {
     const handler = (_e: unknown, m: { list: IntegratedTerminalInfo[] }) => cb(m.list);
     ipcRenderer.on('term:list', handler);

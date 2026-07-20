@@ -18,6 +18,8 @@ export interface IntegratedTerminalPoolOptions {
   // 数据回调：key=终端实例 id，data=PTY 聚合后的输出。
   onData: (id: string, data: string) => void;
   onExit: (id: string) => void;
+  // 实例列表变化（create/destroy/cwd 变更）时推送最新列表，供渲染端侧边栏实时刷新。
+  onList: (list: IntegratedTerminalInfo[]) => void;
 }
 
 // 单个集成终端实例的内部条目。
@@ -136,6 +138,7 @@ export class IntegratedTerminalPool {
     this.clearDataBuffer(id);
     e.bp.dispose();
     this.entries.delete(id);
+    this.opts.onList(this.list()); // create/destroy 都推最新列表
   }
 
   /** 退出时全清。 */
@@ -154,6 +157,16 @@ export class IntegratedTerminalPool {
    */
   list(): IntegratedTerminalInfo[] {
     return [...this.entries.values()].map((e) => e.info);
+  }
+
+  /** 集成终端 cwd 变化（来自 shell integration 注入的 OSC 633;P;Cwd=）。
+   * 更新该实例的缓存 cwd 并推送最新列表，使渲染端侧边栏目录分组实时刷新
+   * （对齐 VS Code CwdDetectionCapability → 终端分组重排）。 */
+  updateCwd(id: string, cwd: string): void {
+    const e = this.entries.get(id);
+    if (!e || !cwd) return;
+    e.info.cwd = cwd;
+    this.opts.onList(this.list());
   }
 
   /** 背压回传：渲染端每消费 N 字节即经 IPC 上报（见 index.ts terminal:ack），
