@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar';
-import { TerminalPane } from './components/TerminalPane';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { TitleBar } from './components/TitleBar';
 import { TerminalDrawer } from './components/TerminalDrawer';

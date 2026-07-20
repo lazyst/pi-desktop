@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import { TerminalDrawer } from '../components/TerminalDrawer';
-import { IntegratedTerminalPane } from '../components/IntegratedTerminalPane';
+import { IntegratedPane } from '../components/IntegratedPane';
 import { XtermTerminal } from '../components/XtermTerminal';
 import { IntegratedChannel } from '../components/terminalChannel';
 import { useTabStore } from '../store/tabStore';
@@ -112,7 +112,7 @@ describe('TerminalDrawer drag listeners (no leak)', () => {
   });
 });
 
-describe('IntegratedTerminalPane constructs XtermTerminal with IntegratedChannel', () => {
+describe('IntegratedPane constructs XtermTerminal with IntegratedChannel', () => {
   beforeEach(() => {
     (window as any).pi = makeApi();
   });
@@ -127,7 +127,7 @@ describe('IntegratedTerminalPane constructs XtermTerminal with IntegratedChannel
     });
 
     const { container } = render(
-      <IntegratedTerminalPane terminalId="term-42" active={true} />,
+      <IntegratedPane terminalId="term-42" active={true} />,
     );
 
     // host div 渲染且带 data-terminal（标识该集成终端实例）。

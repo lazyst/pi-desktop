@@ -11,12 +11,12 @@
 //     ├─ .center-pane-body（flex:1，相对定位；所有 tab 内容都渲染，非 active 的 display:none）
 //     └─ TerminalDrawer（底部抽屉，仅当 drawerOpen 时挂载，且只在此容器内）
 //
-// keep-alive：所有 tab 内容（TerminalPane / PreviewTab / DiffTab）始终挂载，非 active 的
+// keep-alive：所有 tab 内容（SessionPane / PreviewTab / DiffTab）始终挂载，非 active 的
 // 加 .tab-content（非 active 即无 .active）class，由 CSS 控制 display:none——切换 tab 不重建、
-// 不闪首帧（对齐 TerminalPane / IntegratedTerminalPane 的 keep-alive 模式）。
+// 不闪首帧（对齐 SessionPane / IntegratedPane 的 keep-alive 模式）。
 import { TabBar } from './TabBar';
 import type { TabKind } from './TabBar';
-import { TerminalPane } from './TerminalPane';
+import { SessionPane } from './SessionPane';
 import { PreviewTab } from './PreviewTab';
 import { DiffTab } from './DiffTab';
 import { TerminalDrawer } from './TerminalDrawer';
@@ -86,7 +86,7 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
           const isActive = t.id === activeTabId;
           const cls = isActive ? 'tab-content active' : 'tab-content';
           if (t.kind === 'session') {
-            return <div key={t.id} className={cls}><TerminalPane sessionKey={t.key} active={isActive} /></div>;
+            return <div key={t.id} className={cls}><SessionPane sessionKey={t.key} active={isActive} /></div>;
           }
           if (t.kind === 'preview') {
             return (

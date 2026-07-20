@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
-import { TerminalPane } from '../components/TerminalPane';
+import { SessionPane } from '../components/SessionPane';
 import type { PiApi } from '../ipc';
 
 // 用可控的 mock 替换 WebGL addon，验证壳在 active 挂载时会经 XtermTerminal 尝试启用 GPU
@@ -33,7 +33,7 @@ function makeApi() {
   } as unknown as PiApi;
 }
 
-describe('TerminalPane shell WebGL renderer', () => {
+describe('SessionPane shell WebGL renderer', () => {
   beforeEach(() => {
     hoist.webglThrow = false;
     hoist.activateCalls = 0;
@@ -42,7 +42,7 @@ describe('TerminalPane shell WebGL renderer', () => {
   it('attempts to enable the WebGL (GPU) renderer when active (via XtermTerminal)', () => {
     const api = makeApi();
     (window as any).pi = api;
-    render(<TerminalPane sessionKey="k" active={true} />);
+    render(<SessionPane sessionKey="k" active={true} />);
     expect(hoist.activateCalls).toBeGreaterThanOrEqual(1);
   });
 
@@ -50,7 +50,7 @@ describe('TerminalPane shell WebGL renderer', () => {
     const api = makeApi();
     (window as any).pi = api;
     hoist.webglThrow = true;
-    const { container } = render(<TerminalPane sessionKey="k" active={true} />);
+    const { container } = render(<SessionPane sessionKey="k" active={true} />);
     expect(container.querySelector('.terminal-host')).toBeTruthy();
     expect(hoist.activateCalls).toBeGreaterThanOrEqual(1);
   });
