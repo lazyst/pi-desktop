@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
-import { TerminalPane } from '../components/TerminalPane';
+import { SessionPane } from '../components/SessionPane';
 import type { PiApi } from '../ipc';
 
 // 无头 jsdom 无 WebGL 上下文，真实 WebglAddon 在 mount() 激活时会抛错并污染测试输出。
@@ -23,21 +23,21 @@ function makeApi() {
   } as unknown as PiApi;
 }
 
-describe('TerminalPane (React 壳)', () => {
+describe('SessionPane (React 壳，经 PaneManager 驱动)', () => {
   it('renders a terminal-host div with session key and active class', () => {
     const api = makeApi();
     (window as any).pi = api;
-    const { container } = render(<TerminalPane sessionKey="k" active={true} />);
+    const { container } = render(<SessionPane sessionKey="k" active={true} />);
     const host = container.querySelector('.terminal-host') as HTMLElement;
     expect(host).toBeTruthy();
     expect(host.getAttribute('data-session')).toBe('k');
     expect(host.className).toContain('active');
   });
 
-  it('does not throw on right-click (forwards to XtermTerminal.handleContextMenu)', () => {
+  it('does not throw on right-click (forwards to XtermTerminal.handleContextMenu via PaneManager)', () => {
     const api = makeApi();
     (window as any).pi = api;
-    const { container } = render(<TerminalPane sessionKey="k" active={true} />);
+    const { container } = render(<SessionPane sessionKey="k" active={true} />);
     const host = container.querySelector('.terminal-host') as HTMLElement;
     expect(() => fireEvent.contextMenu(host)).not.toThrow();
   });
@@ -47,14 +47,14 @@ describe('TerminalPane (React 壳)', () => {
   it('keeps the terminal instance alive across active toggles (no remount)', () => {
     const api = makeApi();
     (window as any).pi = api;
-    const { container, rerender } = render(<TerminalPane sessionKey="k" active={true} />);
+    const { container, rerender } = render(<SessionPane sessionKey="k" active={true} />);
     const host = container.querySelector('.terminal-host') as HTMLElement;
     expect(host.className).toContain('active');
     // 切到非 active：不应抛错，实例保留（display:none 由 CSS 控制）。
-    rerender(<TerminalPane sessionKey="k" active={false} />);
+    rerender(<SessionPane sessionKey="k" active={false} />);
     expect(host.className).not.toContain('active');
     // 切回 active：实例仍在、未重建（不抛错）。
-    expect(() => rerender(<TerminalPane sessionKey="k" active={true} />)).not.toThrow();
+    expect(() => rerender(<SessionPane sessionKey="k" active={true} />)).not.toThrow();
     expect(host.className).toContain('active');
   });
 });

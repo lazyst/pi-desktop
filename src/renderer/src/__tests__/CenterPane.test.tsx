@@ -20,8 +20,8 @@ import { useTabStore } from '../store/tabStore';
 import type { Tab } from '../store/tabStore';
 
 // —— 轻量桩：只暴露可被断言的 data-* 与 className，不触发真实 xterm / 文件读取 ——
-vi.mock('../components/TerminalPane', () => ({
-  TerminalPane: ({ sessionKey, active }: any) => (
+vi.mock('../components/SessionPane', () => ({
+  SessionPane: ({ sessionKey, active }: any) => (
     <div
       data-testid="terminal-pane"
       data-key={sessionKey}

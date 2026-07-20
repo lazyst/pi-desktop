@@ -1,7 +1,7 @@
 import { useCallback, useRef, type MouseEvent } from 'react';
 import { TerminalTabBar } from './TerminalTabBar';
 import type { TabItem } from './TerminalTabBar';
-import { IntegratedTerminalPane } from './IntegratedTerminalPane';
+import { IntegratedPane } from './IntegratedPane';
 import { IconTerminal } from './icons';
 import { useTabStore } from '../store/tabStore';
 
@@ -23,8 +23,8 @@ const MAX_HEIGHT = 600;
 const clampHeight = (h: number) => Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, h));
 
 // VS Code 式集成终端抽屉：底部抽屉 + 可拖拽高度 + tab 条 + 多终端（keep-alive）。
-// 所有 tab 的 IntegratedTerminalPane 全部渲染，非 active 的加 hidden class（display:none），
-// 对齐 TerminalPane 的 keep-alive 模式（切 tab 不重建、不闪首帧）。
+// 所有 tab 的 IntegratedPane 全部渲染，非 active 的加 hidden class（display:none），
+// 对齐 SessionPane 的 keep-alive 模式（切 tab 不重建、不闪首帧）。
 export function TerminalDrawer({
   open,
   height,
@@ -92,7 +92,7 @@ export function TerminalDrawer({
             key={t.id}
             className={t.id === activeId ? 'integrated-terminal-slot active' : 'integrated-terminal-slot'}
           >
-            <IntegratedTerminalPane terminalId={t.id} active={t.id === activeId} />
+            <IntegratedPane terminalId={t.id} active={t.id === activeId} />
           </div>
         ))}
       </div>
