@@ -43,12 +43,19 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
   const drawerOpen = useTabStore((s) => s.drawerOpen);
   const drawerHeight = useTabStore((s) => s.drawerHeight);
   const closeCenterTab = useTabStore((s) => s.closeCenterTab);
+  // 拖拽重排（ADR-0001 TabReorder）：仅改同 location 的 order，不碰渲染实例（keep-alive 不受影响）。
+  const reorderTabs = useTabStore((s) => s.reorderTabs);
   // 集成终端 tab 选中直接用 store action；关闭则需 App 协调主进程销毁（见 onCloseTermTab）。
   const selectTermTab = useTabStore((s) => s.selectTab);
 
   // 可见 tab = 排除被「关闭隐藏」的（hidden=true）。TabBar 只渲染可见 tab；内容区仍渲染
   // 全部 tab（keep-alive）。tabs 已是 store 状态，按需过滤即可，无需 App 透传 closedTabIds。
+  // TabBar 的视觉顺序需跟随 store.order（拖拽重排只改 order），故按 order 升序提供给 TabBar；
+  // 内容区渲染循环仍用未排序的 tabs（keyed by id，顺序无关 keep-alive）。
   const visibleTabs = tabs.filter((t) => !t.hidden);
+  const orderedVisibleTabs = visibleTabs
+    .filter((t) => t.location === 'editor')
+    .sort((a, b) => a.order - b.order);
 
   // 各 tab 的「关闭请求拦截器」（如 PreviewTab 的 dirty 确认）。TabBar 的 × 不直接关，
   // 而是先查这里注册的 guard：有则走拦截逻辑（dirty 弹确认），无则直接关。
@@ -72,10 +79,11 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
   return (
     <div className="center-pane">
       <TabBar
-        tabs={visibleTabs.map((t) => ({ id: t.id, title: t.title, kind: t.kind as TabKind }))}
+        tabs={orderedVisibleTabs.map((t) => ({ id: t.id, title: t.title, kind: t.kind as TabKind }))}
         activeId={activeTabId}
         onSelect={selectTermTab}
         onClose={requestCloseTab}
+        onReorder={(orderedIds) => reorderTabs('editor', orderedIds)}
         showNew={false}
       />
       <div className="center-pane-body">

@@ -259,4 +259,47 @@ describe('CenterPane — 壳重写后行为回归', () => {
       expect(onCloseTermTab).toHaveBeenCalledWith('term-1');
     });
   });
+
+  describe('拖拽重排（issue 11 / ADR-0001 TabReorder）', () => {
+    it('父层按 store.order 排序后传入 TabBar，视觉顺序跟随 order', () => {
+      seedTabs([
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
+        { id: 's3', kind: 'session', location: 'editor', title: 'sess-c', hidden: false, order: 2, key: '/c', cwd: '/c', name: 'sess-c' } as Tab,
+      ]);
+      const { container } = renderCenterPane();
+      const els = container.querySelectorAll('.center-pane .terminal-tab');
+      expect(els[0].textContent).toContain('sess-a');
+      expect(els[1].textContent).toContain('sess-b');
+      expect(els[2].textContent).toContain('sess-c');
+    });
+
+    it('reorderTabs 仅改 order、不重排内容实例（内容 div 以 id 为 key 保持挂载）', () => {
+      seedTabs([
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
+        { id: 's3', kind: 'session', location: 'editor', title: 'sess-c', hidden: false, order: 2, key: '/c', cwd: '/c', name: 'sess-c' } as Tab,
+      ]);
+      const { container } = renderCenterPane();
+      const panesBefore = container.querySelectorAll('[data-testid="terminal-pane"]');
+      expect(panesBefore).toHaveLength(3);
+
+      // 模拟 TabBar 拖拽结束 → 父层调 reorderTabs('editor', 新顺序)。
+      act(() => {
+        useTabStore.getState().reorderTabs('editor', ['s3', 's1', 's2']);
+      });
+
+      // 视觉顺序跟随新 order（TabBar 仍按 store 排序传入）。
+      const els = container.querySelectorAll('.center-pane .terminal-tab');
+      expect(els[0].textContent).toContain('sess-c');
+      expect(els[1].textContent).toContain('sess-a');
+      expect(els[2].textContent).toContain('sess-b');
+
+      // 内容实例不重建：仍 3 个 data-key 挂载，且 key 集合不变（keep-alive）。
+      const panesAfter = container.querySelectorAll('[data-testid="terminal-pane"]');
+      expect(panesAfter).toHaveLength(3);
+      const keys = Array.from(panesAfter).map((p) => p.getAttribute('data-key')).sort();
+      expect(keys).toEqual(['/a', '/b', '/c']);
+    });
+  });
 });

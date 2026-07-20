@@ -1,4 +1,4 @@
-import { useCallback, useRef, type MouseEvent } from 'react';
+import { useCallback, useMemo, useRef, type MouseEvent } from 'react';
 import { TerminalTabBar } from './TerminalTabBar';
 import type { TabItem } from './TerminalTabBar';
 import { IntegratedPane } from './IntegratedPane';
@@ -37,6 +37,21 @@ export function TerminalDrawer({
   // 抽屉组件自行取数，消除 App→CenterPane→TerminalDrawer 的 props 透传）。
   const terminals = useTabStore((s) => s.terminals);
   const activeId = useTabStore((s) => s.activeTermId);
+  // 订阅 tabs 以便 order 变化（拖拽重排）驱动终端 tab 顺序刷新。
+  const tabs = useTabStore((s) => s.tabs);
+  // 拖拽重排（ADR-0001 TabReorder）：仅改同 location 的 order，不碰集成终端渲染实例。
+  const reorderTabs = useTabStore((s) => s.reorderTabs);
+  // TabBar 视觉顺序需跟随 store.order（拖拽重排只改 order），故按各终端在 tabs 中的
+  // order 升序展示；terminals 本身是主进程推送的原序，不反映拖拽结果。
+  const orderedTerminals = useMemo(
+    () =>
+      [...terminals].sort((a, b) => {
+        const ta = tabs.find((t) => t.id === a.id);
+        const tb = tabs.find((t) => t.id === b.id);
+        return (ta?.order ?? 0) - (tb?.order ?? 0);
+      }),
+    [terminals, tabs],
+  );
   const resizerStart = useRef<{ startY: number; startHeight: number } | null>(null);
   const onResizeRef = useRef(onResizeHeight);
   onResizeRef.current = onResizeHeight;
@@ -79,15 +94,16 @@ export function TerminalDrawer({
       <div className="terminal-drawer-header">
         <IconTerminal size={14} className="terminal-drawer-icon" />
         <TerminalTabBar
-          tabs={terminals.map((t) => ({ id: t.id, title: t.title })) as TabItem[]}
+          tabs={orderedTerminals.map((t) => ({ id: t.id, title: t.title })) as TabItem[]}
           activeId={activeId}
           onSelect={onSelectTab}
           onClose={onCloseTab}
           onNew={onNewTerminal}
+          onReorder={(orderedIds) => reorderTabs('panel', orderedIds)}
         />
       </div>
       <div className="terminal-drawer-body">
-        {terminals.map((t) => (
+        {orderedTerminals.map((t) => (
           <div
             key={t.id}
             className={t.id === activeId ? 'integrated-terminal-slot active' : 'integrated-terminal-slot'}
