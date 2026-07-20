@@ -15,9 +15,10 @@ import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker'
 const { typescript: monacoTS } = monaco.languages;
 
 // 按 language label 分发 worker，避免走 CDN loader。
-// 注意：monaco 的 `editor.api.d.ts` 用 `declare global { let MonacoEnvironment }`
-// 声明（let 不挂到 globalThis 类型上），故直接赋值给全局变量而非 globalThis 属性。
-MonacoEnvironment = {
+// monaco 的 `editor.api.d.ts` 用 `declare global { let MonacoEnvironment }` 声明（仅类型，
+// 运行时不产生绑定）。在 ESM（严格模式）下对未声明标识符直接赋值会抛 ReferenceError，
+// 故必须显式挂到 globalThis（cast 以兼容 monaco 的类型声明，运行时等价于裸全局赋值）。
+(globalThis as unknown as { MonacoEnvironment: monaco.Environment }).MonacoEnvironment = {
   getWorker(_workerId: string, label: string): Worker {
     switch (label) {
       case 'json':
