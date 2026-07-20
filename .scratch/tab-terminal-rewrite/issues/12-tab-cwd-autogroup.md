@@ -16,20 +16,22 @@
 
 **改动点：**
 - `TabBar.tsx` / `TerminalTabBar.tsx`：新增可选 `groupBy?: (t) => string | undefined` prop
-  与 `TabBarItem.groupKey?` 字段。`buildGroupedRows()` 按 `groupBy` 返回值对 tabs 做**稳定归并**
-  （同键聚一段，段内保持父层传入顺序），不同键之间插入 `terminal-tab-group-sep` 分隔符。
-  分隔符为**非 sortable 静态元素**（不进 `SortableContext` 的 items），故与 T11 拖拽重排互不冲突——
-  所有 tab 仍在同一 `SortableContext` 中可跨段拖拽，`handleDragEnd` 仍基于原始 `tabs` 计算下标。
-  不传 `groupBy` 时退化为原行为（零分隔符），保持向后兼容。
+  与 `TabBarItem.groupKey?` / `TabItem.groupKey?` 字段。分组逻辑抽到共享工具
+  `tabGrouping.ts` 的 `buildGroupedRows()`，按 groupBy 返回值做**稳定聚簇排序**（同键 tab
+  跨位置聚合到一段、段内保持父层传入的相对顺序），不同键之间插入 `terminal-tab-group-sep`
+  分隔符。分隔符为**非 sortable 静态元素**（不进 `SortableContext` 的 items），故与 T11 拖拽
+  重排互不冲突——所有 tab 仍在同一 `SortableContext` 中可跨段拖拽，`handleDragEnd` 仍基于
+  原始 `tabs` 计算下标。不传 `groupBy` 时退化为原行为（零分隔符），保持向后兼容。
 - `CenterPane.tsx`：构造 TabBar item 时按 `kind` 取分组键——`preview` 用 `root`、
   `session`/`diff` 用 `cwd`，并传 `groupBy={(t) => t.groupKey}`。
 - `TerminalDrawer.tsx`：终端 tab 按对应 `integrated-terminal` tab 的 `cwd` 分组。
 - `app.css`：新增 `.terminal-tab-group-sep` 样式（1px 竖线、上下留白、不可交互）。
 
 **验证：**
-- 新增 `TabBar.autogroup.test.tsx`（5 用例）：覆盖「不传 groupBy 行为不变」
-  /「按键聚合+段间分隔」/「稳定归并+相邻同键不重插」/「分组+拖拽共存不影响
-  `.terminal-tab` 计数与顺序契约」/「纯展示模式也分组」。
+- 新增 `TabBar.autogroup.test.tsx`（6 用例）：覆盖「不传 groupBy 行为不变」
+  /「按键聚合+段间分隔」/「稳定归并+相邻同键不重插」/「**乱序/交错同键仍聚成连续段**
+  （非仅相邻合并，修正初版碎片化）」/「分组+拖拽共存不影响 `.terminal-tab` 计数与顺序契约」
+  /「纯展示模式也分组」。
 - 全量测试 362 passed（含既有 TabBar.reorder / CenterPane / TerminalDrawer 测试均通过，
   分组分隔符不计入 `.terminal-tab` 计数，未破坏既有顺序/交互契约）。
 - renderer 侧 typecheck 无新增错误（main 进程 10 个 TS 错误为 pre-existing，与本次无关）。

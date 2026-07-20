@@ -16,6 +16,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { IconClose, IconNewSession } from './icons';
+import { buildGroupedRows } from './tabGrouping';
+export type { RenderedRow } from './tabGrouping';
 
 export interface TabItem {
   id: string;
@@ -24,6 +26,8 @@ export interface TabItem {
    *  不传则视为「无分组键」。纯展示层，不进 store 数据模型。终端区用 cwd。 */
   groupKey?: string;
 }
+
+// TerminalTabBar 的 TabItem.groupKey 承载分组键（见上方接口）。
 
 interface Props {
   tabs: TabItem[];
@@ -39,27 +43,7 @@ interface Props {
   groupBy?: (t: TabItem) => string | undefined;
 }
 
-// TabAutoGroup（ADR-0001 E3）：按 groupBy 返回的键对 tabs 做稳定归并排序——
-// 同键 tab 聚成一段，不同键之间插入分隔符占位（非 tab，仅视觉分段）。
-type RenderedRow = { type: 'tab'; item: TabItem } | { type: 'sep' };
-
-function buildGroupedRows(tabs: TabItem[], groupBy?: (t: TabItem) => string | undefined): RenderedRow[] {
-  if (!groupBy) return tabs.map((item) => ({ type: 'tab', item }));
-
-  const rows: RenderedRow[] = [];
-  let lastKey: string | undefined = '__sentinel__';
-  for (const item of tabs) {
-    const key = groupBy(item);
-    if (key !== lastKey) {
-      if (rows.length > 0) rows.push({ type: 'sep' });
-      lastKey = key;
-    }
-    rows.push({ type: 'tab', item });
-  }
-  return rows;
-}
-
-// 单个可排序的终端 tab：接入 useSortable，拖拽时应用 transform/transition。
+// TerminalTabBar 分组展示行复用共享 buildGroupedRows（与 TabBar 同源，避免重复实现）。
 function SortableTermTab({
   item,
   activeId,
