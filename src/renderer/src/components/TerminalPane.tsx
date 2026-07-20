@@ -46,12 +46,21 @@ export function TerminalPane({ sessionKey, active }: Props) {
     };
   }, [sessionKey]);
 
-  // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时 refit。
+  // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时校准尺寸。
+  // 关键：切回可见时显式调 setActive(true) 而非仅 mount——mount 对“已挂载实例”是 no-op
+  // （if mounted return），不会触发 resize；但 display:none 隐藏期间 xterm 尺寸为 0，
+  // 切回后必须 flush + doResize 用真实容器尺寸重测，否则沿用隐藏期的 0 尺寸渲染，
+  // 表现为“切回的终端变空白新终端、历史输出丢失 / 不能滚动”。切走时 active 已是 false，故
+  // 此处 setActive(true) 能真正进入 doResize 分支（对齐 IntegratedTerminalPane）。
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    if (active) term.mount(hostRef.current!); // 幂等：已 mount 则直接 setActive
-    else term.setActive(false);
+    if (active) {
+      term.mount(hostRef.current!); // 幂等：已 mount 则直接 return
+      term.setActive(true);         // 切回：flush + 强制 resize 校准尺寸
+    } else {
+      term.setActive(false);
+    }
   }, [active]);
 
   // 尺寸变化：交给 XtermTerminal 走防抖 refit（流式窗口内冻结，见 docs/adr/0002 T1）。

@@ -29,6 +29,13 @@ export default function App() {
   // 中间区通用 Tab 模型（重构阶段 3E）：单一状态源，App 持有所有 tab，CenterPane 仅渲染。
   const [tabs, setTabs] = useState<AnyTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // 「已关闭但保留实例」的 tab id 集合（仅 session 终端使用）：关闭 session tab 不卸载
+  // TerminalPane，仅隐藏（keep-alive，与切换 tab 行为一致），以彻底规避 WebGL context
+  // 泄漏与重挂载导致的滚动/输出丢失。从侧边栏重新点开同一会话即取消隐藏并恢复。
+  // preview/diff 等其它 tab 仍走真移除逻辑，不进此集合。
+  const [closedTabIds, setClosedTabIds] = useState<string[]>([]);
+  const closedTabIdsRef = useRef<string[]>([]);
+  closedTabIdsRef.current = closedTabIds;
   const [statusMap, setStatusMap] = useState<Record<string, SessionStatus>>({});
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
@@ -75,8 +82,16 @@ export default function App() {
     const offStatus = pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
     const offExit = pi.onExit((key) => {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
-      // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）。
+      // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）；
+      // 若该 tab 此前被「关闭隐藏」过，也同步从 closedTabIds 清理其 id。
       setTabs((prev) => prev.filter((t) => !(t.kind === 'session' && t.key === key)));
+      setClosedTabIds((prev) => {
+        const toRemove = prev.filter((id) => {
+          const t = tabsRef.current.find((x) => x.id === id);
+          return t != null && t.kind === 'session' && t.key === key;
+        });
+        return toRemove.length ? prev.filter((id) => !toRemove.includes(id)) : prev;
+      });
     });
     // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
     // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
@@ -227,7 +242,9 @@ export default function App() {
     try {
       const info = await pi.openSession(req.key ? { key: req.key } : { cwd: req.cwd, name: req.name });
       const id = info.key;
-      // 新增或激活 session tab：已存在同 key 的 session tab 则不重复添加。
+      // 新增或激活 session tab：已存在同 key 的 session tab（可见或已关闭隐藏）则不重复添加，
+      // 并取消其隐藏状态（从 closedTabIds 移除），使其重新可见（对齐“关闭=隐藏、重开=恢复”）。
+      setClosedTabIds((prev) => prev.filter((x) => x !== id));
       setTabs((prev) => prev.some((t) => t.kind === 'session' && t.key === id) ? prev : [...prev, { id, kind: 'session', title: info.name, key: info.key, cwd: info.cwd, name: info.name } as SessionTab]);
       setActiveTabId(id);
     } catch (err) {
@@ -445,11 +462,26 @@ export default function App() {
     pi.setConfig({ terminalDrawerHeight: h }).catch(() => {});
   }, []);
 
-  // 关闭中间区 tab（session/preview/diff）：仅从 tabs 移除；不杀进程。
-  // 关闭 session tab 不销毁 pty——TerminalPane unmount 只 term.unmount()，pty 销毁唯一
-  // 入口是 pi.terminate/deleteSession（与原「切换不杀」一致）。若关掉的是激活态则切到
-  // 剩余第一个或 null（用 tabsRef 读最新值，避免闭包陈旧）。
+  // 关闭中间区 tab。
+  //  - session 终端：仅「隐藏」不卸载（keep-alive，与切换 tab 行为一致）——把 tab 加入
+  //    closedTabIds 保留在 tabs 里（TerminalPane 不销毁，pty 也不杀），并把激活态切到下一个
+  //    可见 tab。这样既能规避 WebGL context 泄漏与重挂载输出/滚动丢失，又符合“关掉只是收起”
+  //    的直觉；从侧边栏重新点开同一会话即取消隐藏并恢复（handleOpen 已处理）。
+  //  - preview / diff：原逻辑真移除（这些 tab 无 keep-alive 需求，关闭即销毁）。
+  // 若关掉的是激活态，则切到剩余第一个「可见（非隐藏）」tab 或 null（用 ref 读最新值，
+  // 避免闭包陈旧）。
   const handleCloseCenterTab = (id: string) => {
+    const tab = tabsRef.current.find((t) => t.id === id);
+    if (tab?.kind === 'session') {
+      setClosedTabIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+      setActiveTabId((prev) => {
+        if (prev !== id) return prev;
+        const visible = tabsRef.current.filter((t) => t.id !== id && !closedTabIdsRef.current.includes(t.id));
+        return visible.length ? visible[0].id : null;
+      });
+      return;
+    }
+    // preview / diff：真移除
     setTabs((prev) => prev.filter((t) => t.id !== id));
     setActiveTabId((prev) => {
       if (prev !== id) return prev;
@@ -492,6 +524,7 @@ export default function App() {
       <CenterPane
         tabs={tabs}
         activeTabId={activeTabId}
+        closedTabIds={closedTabIds}
         onSelectTab={setActiveTabId}
         onCloseTab={handleCloseCenterTab}
         drawerOpen={drawerOpen}

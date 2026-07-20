@@ -603,9 +603,12 @@ html, body, #root {
    此处隐藏原生滚动条，避免与覆盖滚动条出现双条。仍保留滚动能力（scrollTop 有效）。 */
 .xterm-viewport {
   scrollbar-width: none; /* Firefox：隐藏原生滚动条 */
-  /* 全屏 TUI 应用：禁用原生纵向滚动条占位，避免流式输出时滚动条出现/消失微动视口宽度
-     → 触发 ResizeObserver → fit.fit() 重排跳动。 */
-  overflow-y: hidden;
+  /* 全屏 TUI 应用：禁用原生滚动条占位（scrollbar-width:none + webkit width:0），避免流式输出时
+     滚动条出现/消失微动视口宽度 → 触发 ResizeObserver → fit.fit() 重排跳动。
+     用 overflow-y:auto 而非 hidden：hidden 会彻底禁止滚动，一旦 WebGL 上下文丢失/降级为 DOM
+     渲染器，视口将无法滚动（表现为“不能滚动”）；auto 在 WebGL 模式下因 canvas 高度匹配视口
+     无溢出、不出现滚动条（视觉不变），在 DOM 降级模式下内容溢出时则可正常滚动。 */
+  overflow-y: auto;
 }
 .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
