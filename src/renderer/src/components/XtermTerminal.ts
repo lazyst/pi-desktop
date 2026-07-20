@@ -37,8 +37,9 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import { getTheme, onThemeChange, TERM_THEMES } from '../theme';
-import { getFontSize, onFontSizeChange } from '../fontSize';
+import { getTheme, TERM_THEMES, getTermTheme, type Theme } from '../theme';
+import { getFontSize } from '../fontSize';
+import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
 import { TerminalDataBufferer } from './terminalDataBufferer';
 import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
 import { DecorationAddon } from './decorationAddon';
@@ -82,7 +83,7 @@ export interface XtermTerminalOptions {
  * 再次 active 时调用 setActive(true)，会话删除时调用 unmount()，并把 host div / 置底按钮的
  * DOM 事件转交本类。
  */
-export class XtermTerminal {
+export class XtermTerminal implements LiveTerminal {
   private readonly sessionKey: string;
   private readonly channel: TerminalChannel;
   // 保留 pi 引用仅用于「非会话数据流」功能：剪贴板图片落盘(saveImage)、拖拽文件路径解析
@@ -120,9 +121,8 @@ export class XtermTerminal {
 
   // —— 反注册函数 ——
   private offExit: (() => void) | null = null;
-  private offTheme: (() => void) | null = null;
-  // 字体大小变更反注册（订阅全局 fontSize，联动终端字号 + 重测 fit）。
-  private offFontSize: (() => void) | null = null;
+  // 主题 / 字号变更不再由本实例订阅（见 lib/terminal-registry 单点订阅刷新所有存活实例），
+  // 故无 offTheme / offFontSize 字段，mount 时经 registerTerminal 登记、unmount 时 unregister。
   // 滚动状态回调：视口是否贴底变化时通知 React 壳（驱动「跳到底部」浮钮显隐）。
   onScrollState: ((atBottom: boolean) => void) | null = null;
   // 最近一次通知给壳的贴底状态（避免重复回调）。
@@ -164,6 +164,9 @@ export class XtermTerminal {
     this.mounted = true;
     this._initXterm(host);
     this.active = true;
+    // 登记到存活终端注册表：主题/字号全局变更由 registry 单点订阅后统一刷新本实例
+    // （见 lib/terminal-registry），无需本实例各自订阅 onThemeChange/onFontSizeChange。
+    registerTerminal(this);
   }
 
   /**
@@ -203,9 +206,10 @@ export class XtermTerminal {
     this.markNavigationAddon?.dispose();
     this.markNavigationAddon = null;
     this.offExit?.();
-    this.offTheme?.();
-    this.offFontSize?.();
-    this.offExit = this.offTheme = this.offFontSize = null;
+    this.offExit = null;
+    // 主题/字号刷新生效于存活实例（registry 单点订阅），故 unmount 时只需从注册表注销，
+    // 不再持有本实例的 offTheme/offFontSize 反注册（避免重复订阅导致的不一致）。
+    unregisterTerminal(this);
     // 键盘快捷键走 xterm attachCustomKeyEventHandler，term.dispose 时随实例清理；
     // 这里只清幂等标记，无需手动 removeEventListener（已不再绑 host）。
     this._keydownHandler = null;
@@ -281,6 +285,28 @@ export class XtermTerminal {
     } catch {
       /* DOM 渲染器或无纹理图集时忽略 */
     }
+  }
+
+  /**
+   * 主题切换刷新（由 lib/terminal-registry 单点订阅 onThemeChange 后统一调用）。
+   * 运行时重新构造 xterm 主题（背景/前景取当前容器 --bg-app / --text），再 forceRedraw 清
+   * WebGL 纹理残留，避免旧配色闪留、确保与容器背景严格一致（对齐 VS Code getBackgroundColor）。
+   */
+  applyTheme(theme: Theme): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.theme = getTermTheme(theme);
+    this.forceRedraw();
+  }
+
+  /**
+   * 全局字号变化刷新（由 lib/terminal-registry 单点订阅 onFontSizeChange 后统一调用）。
+   * 同步 fontSize + resize（cell 度量变化必须重建渲染纹理）+ forceRedraw。
+   */
+  applyFontSize(size: number): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.fontSize = size;
+    this.doResize(true); // fit + 通知 PTY，对齐窗口尺寸变化时的校准路径。
+    this.forceRedraw();
   }
 
   /** 右键上下文菜单：有选区则复制并清空，否则粘贴（对齐原 handleContextMenu 语义）。
@@ -791,18 +817,9 @@ export class XtermTerminal {
     this.offExit = this.channel.onExit(() => {
       this.doResize(true);
     });
-    this.offTheme = onThemeChange((t) => {
-      if (this.term) this.term.options.theme = TERM_THEMES[t];
-      // 主题切换清纹理图集，避免 WebGL 下旧配色/旧字形纹理残留闪留（对齐 VS Code forceRedraw）。
-      this.forceRedraw();
-    });
-    // 全局字体大小变化：同步终端字号并重新 fit + 重绘（cell 度量改变必须重建渲染纹理）。
-    this.offFontSize = onFontSizeChange((size) => {
-      if (!this.term || this.disposed) return;
-      this.term.options.fontSize = size;
-      this.doResize(true); // fit + 通知 PTY，对齐窗口尺寸变化时的校准路径。
-      this.forceRedraw();
-    });
+    // 主题切换 / 全局字号变化不再由本实例订阅（见 lib/terminal-registry 单点订阅刷新所有存活实例）；
+    // 初始主题 / 字号在 _initXterm 构造 term 时已取当前值（theme: TERM_THEMES[getTheme()]、fontSize: getFontSize()），
+    // 后续变更经 registry → applyTheme / applyFontSize 刷新本实例。
 
     // resize 分轴防抖器（对齐 VS Code TerminalResizeDebouncer）。
     this.resizeDebouncer = new TerminalResizeDebouncer(
