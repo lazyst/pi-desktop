@@ -111,6 +111,33 @@ describe('TabBar — TabAutoGroup 分组展示', () => {
     expect(titles.join('|')).toContain('Alpha|Beta|Gamma|Delta|Epsilon');
   });
 
+  it('真正的「归并分组」：父层传入乱序/交错同键时，仍按 key 聚成连续一段（非仅相邻合并）', () => {
+    // 父层未预先按 cwd 排序（如 order 交错）：A,B,A,C,B → 应聚为 A,A | B,B | C（3 段）。
+    const interleaved: TabBarItem[] = [
+      { id: 'a', title: 'A1', kind: 'session', groupKey: '/A' },
+      { id: 'b', title: 'B1', kind: 'preview', groupKey: '/B' },
+      { id: 'a2', title: 'A2', kind: 'session', groupKey: '/A' },
+      { id: 'c', title: 'C1', kind: 'diff', groupKey: '/C' },
+      { id: 'b2', title: 'B2', kind: 'preview', groupKey: '/B' },
+    ];
+    const { container } = render(
+      <TabBar
+        tabs={interleaved}
+        activeId="a"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        onReorder={vi.fn()}
+        groupBy={byGroup}
+      />,
+    );
+    expect(container.querySelectorAll('.terminal-tab').length).toBe(5);
+    // 段间分隔：A,A | B,B | C → 2 个分隔符（跨位置同键被聚到一起）。
+    expect(container.querySelectorAll('.terminal-tab-group-sep').length).toBe(2);
+    const titles = Array.from(container.querySelectorAll('.terminal-tab')).map((e) => e.textContent || '');
+    // 稳定聚簇：A1,A2 在前、B1,B2 在中、C1 在后（段内保持原相对顺序）。
+    expect(titles.join('|')).toBe('A1|A2|B1|B2|C1');
+  });
+
   it('纯展示模式（无 onReorder）也支持分组：分隔符正确渲染', () => {
     const { container } = render(
       <TabBar

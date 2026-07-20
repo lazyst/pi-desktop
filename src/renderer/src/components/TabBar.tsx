@@ -16,6 +16,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession } from './icons';
+import { buildGroupedRows } from './tabGrouping';
+export type { RenderedRow } from './tabGrouping';
 
 export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal';
 
@@ -60,31 +62,6 @@ const renderKindIcon = (kind: TabKind) => {
       return null;
   }
 };
-
-// TabAutoGroup（ADR-0001 E3）：按 groupBy 返回的键对 tabs 做稳定归并排序——
-// 同键 tab 聚成一段（段内保持父层传入的原有顺序，即稳定排序），不同键之间插入
-// 分隔符占位（非 tab，仅视觉分段）。无 groupBy 或不分组时原样返回（空分隔）。
-// 返回 [{ type:'tab', item }] 与 [{ type:'sep' }] 的交替序列，供渲染层展开。
-// 注意：本函数只重排「展示顺序」，不改 tabs 数据；拖拽的 handleDragEnd 仍基于
-// 原始 tabs 数组计算下标，故分组与 TabReorder 互不干扰。
-type RenderedRow = { type: 'tab'; item: TabBarItem } | { type: 'sep' };
-
-function buildGroupedRows(tabs: TabBarItem[], groupBy?: (t: TabBarItem) => string | undefined): RenderedRow[] {
-  if (!groupBy) return tabs.map((item) => ({ type: 'tab', item }));
-
-  const rows: RenderedRow[] = [];
-  let lastKey: string | undefined = '__sentinel__';
-  for (const item of tabs) {
-    const key = groupBy(item);
-    // 仅当「与上一段不同键」且「当前段非空」时插分隔（相邻同键不重复插）。
-    if (key !== lastKey) {
-      if (rows.length > 0) rows.push({ type: 'sep' });
-      lastKey = key;
-    }
-    rows.push({ type: 'tab', item });
-  }
-  return rows;
-}
 
 // 单个可排序的 tab：接入 useSortable，拖拽时应用 transform/transition。
 // 整个 tab 可拖；关闭 × 仍走 onClick（stopPropagation 已阻止切 tab）。
