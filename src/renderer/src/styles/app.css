@@ -170,6 +170,17 @@ html, body, #root {
 }
 .terminal-tab:hover .tab-close,
 .terminal-tab.active .tab-close { opacity: 1; }
+.terminal-tab-group-sep {
+  /* TabAutoGroup（ADR-0001 E3）组间视觉分隔：一条竖直细线，上下留白对齐 tab 高度。
+     自身不可交互、不占拖拽位（非 sortable）。 */
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+  opacity: 0.6;
+}
 /* Tab 栏右侧「+」新建按钮：对齐 .tab-close 视觉语言 */
 .terminal-new-btn {
   display: inline-flex;

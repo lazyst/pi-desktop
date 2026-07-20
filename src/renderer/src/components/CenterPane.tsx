@@ -79,11 +79,20 @@ export function CenterPane({ onNewTerminal, onResizeDrawer, onCloseTermTab, onOp
   return (
     <div className="center-pane">
       <TabBar
-        tabs={orderedVisibleTabs.map((t) => ({ id: t.id, title: t.title, kind: t.kind as TabKind }))}
+        tabs={orderedVisibleTabs.map((t) => ({
+          id: t.id,
+          title: t.title,
+          kind: t.kind as TabKind,
+          // TabAutoGroup（issue 12 / ADR-0001 E3）：按 cwd 归并分组。preview 无 cwd，用 root 替；
+          // 其余（session/diff）用 cwd。纯展示层 key，不进 store。
+          groupKey: t.kind === 'preview' ? (t as any).root : (t as any).cwd ?? '',
+        }))}
         activeId={activeTabId}
         onSelect={selectTermTab}
         onClose={requestCloseTab}
         onReorder={(orderedIds) => reorderTabs('editor', orderedIds)}
+        // 按 groupKey 稳定归并：同 cwd 聚一段、段间插视觉分隔；与拖拽重排互不冲突。
+        groupBy={(t) => t.groupKey}
         showNew={false}
       />
       <div className="center-pane-body">

@@ -4,6 +4,7 @@ import type { TabItem } from './TerminalTabBar';
 import { IntegratedPane } from './IntegratedPane';
 import { IconTerminal } from './icons';
 import { useTabStore } from '../store/tabStore';
+import type { Tab } from '../store/tabStore';
 
 interface Props {
   open: boolean;
@@ -94,12 +95,23 @@ export function TerminalDrawer({
       <div className="terminal-drawer-header">
         <IconTerminal size={14} className="terminal-drawer-icon" />
         <TerminalTabBar
-          tabs={orderedTerminals.map((t) => ({ id: t.id, title: t.title })) as TabItem[]}
+          tabs={orderedTerminals.map((t) => ({
+            id: t.id,
+            title: t.title,
+            // TabAutoGroup（issue 12 / ADR-0001 E3）：终端按 cwd 归并分组。
+            // cwd 取 store tabs 里对应 integrated-terminal tab 的 cwd（终端列表本身无 cwd）。
+            groupKey:
+              (tabs.find((x) => x.id === t.id && x.kind === 'integrated-terminal') as
+                | Extract<Tab, { kind: 'integrated-terminal' }>
+                | undefined)?.cwd ?? '',
+          })) as TabItem[]}
           activeId={activeId}
           onSelect={onSelectTab}
           onClose={onCloseTab}
           onNew={onNewTerminal}
           onReorder={(orderedIds) => reorderTabs('panel', orderedIds)}
+          // 按 groupKey 稳定归并：同 cwd 聚一段、段间插视觉分隔；与拖拽重排互不冲突。
+          groupBy={(t) => t.groupKey}
         />
       </div>
       <div className="terminal-drawer-body">
