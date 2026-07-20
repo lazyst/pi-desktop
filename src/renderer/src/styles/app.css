@@ -218,6 +218,45 @@ html, body, #root {
   box-sizing: border-box;
 }
 
+/* ── 终端内查找面板（对齐 VS Code TerminalFindWidget）── */
+.terminal-find-widget {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg-panel, #252526);
+  border: 1px solid var(--border, #3c3c3c);
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.terminal-find-widget input {
+  width: 180px;
+  background: var(--bg-input, #1e1e1e);
+  color: var(--text, #ddd);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 12px;
+  outline: none;
+}
+.terminal-find-widget input:focus { border-color: var(--accent, #0a84ff); }
+.terminal-find-widget button {
+  background: transparent;
+  color: var(--text-dim, #aaa);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1;
+}
+.terminal-find-widget button:hover { background: var(--bg-active, #2a2d2e); color: var(--text, #ddd); }
+.terminal-find-widget button.active { color: var(--accent, #0a84ff); background: var(--bg-active, #2a2d2e); }
+
 /* ── 标题栏终端按钮激活态（抽屉打开时高亮）── */
 .titlebar-btn.active {
   background: var(--bg-active);

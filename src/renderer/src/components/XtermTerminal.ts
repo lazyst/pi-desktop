@@ -37,6 +37,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
+import { SearchAddon } from '@xterm/addon-search';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import { getTheme, TERM_THEMES, getTermTheme, type Theme } from '../theme';
 import { getFontSize } from '../fontSize';
 import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
@@ -47,6 +49,13 @@ import { MarkNavigationAddon } from './markNavigationAddon';
 import { SessionChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import type { PiApi } from '../ipc';
+import {
+  TerminalCapability,
+  TerminalCapabilityStore,
+  CommandDetectionCapability,
+  CwdDetectionCapability,
+} from './terminalCapabilities';
+import { detectLinksInLine, buildLink } from './terminalLinks';
 import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
 
@@ -113,6 +122,20 @@ export class XtermTerminal implements LiveTerminal {
   // —— 装饰 / 导航（对齐 VS Code DecorationAddon / MarkNavigationAddon）——
   private decorationAddon: DecorationAddon | null = null;
   private markNavigationAddon: MarkNavigationAddon | null = null;
+
+  // —— shell integration capability（对齐 VS Code CommandDetectionCapability / CwdDetectionCapability）——
+  // 消费注入脚本发的 OSC 633 序列：命令生命周期 + 可信 cwd 检测。
+  private caps: TerminalCapabilityStore | null = null;
+  private searchAddon: SearchAddon | null = null;
+  private serializeAddon: SerializeAddon | null = null;
+  // 终端内链接 provider 的反注册函数（对齐 VS Code registerLinkProvider 的 IDisposable）。
+  private linkProviderDisposable: { dispose: () => void } | null = null;
+  // cwd 变化回调：集成终端把检测到的可信 cwd 回传主进程，驱动侧边栏目录分组实时刷新。
+  onCwdChange: ((cwd: string) => void) | null = null;
+  // 文件链接点击回调：把命中文件（含行号）回传壳，由文件树/编辑器定位选中（额外于系统打开）。
+  onOpenFile: ((path: string, line?: number, col?: number) => void) | null = null;
+  // 命令完成回调（供未来「重跑 / 复制命令」等能力使用）。
+  onCommandFinished: ((command: string) => void) | null = null;
 
   // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
   private _latestWriteSeq = 0;
@@ -205,6 +228,13 @@ export class XtermTerminal implements LiveTerminal {
     this.decorationAddon = null;
     this.markNavigationAddon?.dispose();
     this.markNavigationAddon = null;
+    this.searchAddon?.dispose();
+    this.searchAddon = null;
+    this.serializeAddon?.dispose();
+    this.serializeAddon = null;
+    this.linkProviderDisposable?.dispose();
+    this.linkProviderDisposable = null;
+    this.caps = null;
     this.offExit?.();
     this.offExit = null;
     // 主题/字号刷新生效于存活实例（registry 单点订阅），故 unmount 时只需从注册表注销，
@@ -624,6 +654,102 @@ export class XtermTerminal implements LiveTerminal {
     this.notifyScrollState();
   }
 
+  /** 终端内查找：前/后搜索（对齐 VS Code XtermTerminal.findNext/findPrevious + SearchAddon）。
+   * 由 React 壳的查找面板调用；首次调用时 searchAddon 已在 mount 预装载。
+   * @returns 是否命中（驱动面板显示「无结果」）。 */
+  findNext(termStr: string, options?: { regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean }): boolean {
+    if (!this.searchAddon || this.disposed) return false;
+    return this.searchAddon.findNext(termStr, {
+      regex: options?.regex ?? false,
+      caseSensitive: options?.caseSensitive ?? false,
+      wholeWord: options?.wholeWord ?? false,
+    });
+  }
+  findPrevious(termStr: string, options?: { regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean }): boolean {
+    if (!this.searchAddon || this.disposed) return false;
+    return this.searchAddon.findPrevious(termStr, {
+      regex: options?.regex ?? false,
+      caseSensitive: options?.caseSensitive ?? false,
+      wholeWord: options?.wholeWord ?? false,
+    });
+  }
+
+  /** 序列化当前滚动缓冲区（对齐 VS Code SerializeAddon + XtermSerializer）。
+   * 返回可 replay 的 VT 数据流字符串；未装载序列化 addon 时返回 null。 */
+  serializeScrollback(): string | null {
+    if (!this.serializeAddon || this.disposed || !this.term) return null;
+    try {
+      return this.serializeAddon.serialize({ scrollback: (this.term as any).options?.scrollback ?? 1000 });
+    } catch {
+      return null;
+    }
+  }
+
+  /** 还原滚动缓冲区（对齐 VS Code triggerReplay / reviveTerminalProcesses 的 initialText replay）。
+   * 把 serializeScrollback 产出的 VT 数据流重新写回终端。仅在 mount 后、首次数据到达前调用。 */
+  restoreScrollback(data: string): void {
+    if (!data || this.disposed || !this.term) return;
+    try {
+      this.term.write(data);
+    } catch {
+      /* 还原失败忽略 */
+    }
+  }
+
+  /** 注册终端内链接 provider（对齐 VS Code TerminalLinkManager.registerLinkProvider）。
+   * 实现 xterm ILinkProvider：对指定 buffer 行调用 detectLinksInLine，把命中转为 xterm ILink。
+   * 点击 file 链接 → pi.fsOpenWithSystem + onOpenFile 回调；点击 url → pi.openExternal。
+   * 返回反注册函数（unmount 时调用）。 */
+  private _registerTerminalLinkProvider(term: Terminal): { dispose: () => void } {
+    const provider = {
+      provideLinks: (bufferLineNumber: number, cb: (links: any[] | undefined) => void) => {
+        if (this.disposed || !term.buffer) {
+          cb(undefined);
+          return;
+        }
+        const line = term.buffer.active.getLine(bufferLineNumber - 1);
+        const text = line?.translateToString(true) ?? '';
+        // 相对路径解析：用当前 cwd（来自 CwdDetectionCapability）补全。
+        const cwd = this.caps?.get<CwdDetectionCapability>(TerminalCapability.CwdDetection)?.cwd;
+        const resolvePath = (p: string): string => {
+          if (!cwd) return p;
+          if (p.startsWith('./')) return cwd.replace(/[\\/]+$/, '') + '/' + p.slice(2);
+          if (p.startsWith('../')) {
+            // 仅处理单层 ..，递归上溯用 URL 归一化
+            try { return new URL(p, 'file://' + cwd + '/').pathname; } catch { return p; }
+          }
+          if (p === '~' || p.startsWith('~/')) return p; // 主目录本项目不解析，保持原样
+          return p;
+        };
+        const matches = detectLinksInLine(text, resolvePath);
+        if (!matches.length) {
+          cb(undefined);
+          return;
+        }
+        const links = matches.map((m) => {
+          const built = buildLink(m, {
+            openFile: (path, lineNum, colNum) => {
+              this.pi.fsOpenWithSystem?.(path).catch(() => {});
+              this.onOpenFile?.(path, lineNum, colNum);
+            },
+            openExternal: (url) => { this.pi.openExternal?.(url).catch(() => {}); },
+          });
+          // 填充绝对行号（detectLinks 只给列号，行号由 provider 上下文提供）。
+          return {
+            range: {
+              start: { x: built.range.start.x, y: bufferLineNumber },
+              end: { x: built.range.end.x, y: bufferLineNumber },
+            },
+            text: built.text,
+            activate: built.activate,
+          };
+        });
+        cb(links);
+      },
+    };
+    return term.registerLinkProvider(provider as any);
+  }
+
   /** 当前视口是否贴底（对齐 VS Code：viewportY >= baseY 即贴底）。xterm 6 WebGL 下
    * scrollTop 恒为 0，故用 buffer 的 viewportY/baseY 判定，而非 DOM 原生 scroll。 */
   private isAtBottom(): boolean {
@@ -764,6 +890,18 @@ export class XtermTerminal implements LiveTerminal {
       this.markNavigationAddon = null;
     }
 
+    // shell integration capability（对齐 VS Code ShellIntegrationAddon 激活后创建的 store）：
+    // 命令检测 + cwd 检测。命令 marker 用 xterm.registerMarker(0) 锚定当前行。
+    this.caps = new TerminalCapabilityStore();
+    const cmdCap = new CommandDetectionCapability(() => {
+      try { return (term as any).registerMarker?.(0); } catch { return undefined; }
+    });
+    cmdCap.onCommandFinished((c) => { if (c.command) this.onCommandFinished?.(c.command); });
+    const cwdCap = new CwdDetectionCapability();
+    cwdCap.onDidChangeCwd((cwd) => { this.onCwdChange?.(cwd); });
+    this.caps.add(TerminalCapability.CommandDetection, cmdCap);
+    this.caps.add(TerminalCapability.CwdDetection, cwdCap);
+
     // open（对齐 VS Code attachToElement: raw.open 在前，webgl 在其后装载）。
     try {
       term.open(host);
@@ -776,6 +914,32 @@ export class XtermTerminal implements LiveTerminal {
     // 对齐 VS Code attachToElement 的原生顺序（VS Code 自身也标注「TODO: Move before open」），
     // 但本项目保留 rendererLocked，避免「open 后加载 → 中途切换」的度量跳变风险。
     this.enableWebgl();
+
+    // 查找 addon（对齐 VS Code SearchAddon 装载）：预装载以便 Ctrl+F 即用。
+    try {
+      this.searchAddon = new SearchAddon();
+      term.loadAddon(this.searchAddon);
+    } catch {
+      this.searchAddon = null;
+    }
+
+    // 滚动缓冲区序列化 addon（对齐 VS Code @xterm/addon-serialize）：用于窗口关闭/终端重建时
+    // 保存 scrollback，重开时 replay 还原（见 serializeScrollback / restoreScrollback）。
+    try {
+      this.serializeAddon = new SerializeAddon();
+      term.loadAddon(this.serializeAddon);
+    } catch {
+      this.serializeAddon = null;
+    }
+
+    // 终端内链接 provider（对齐 VS Code TerminalLinkManager 的 registerLinkProvider）：
+    // 识别 file/url 链接，点击用系统程序打开（file→fsOpenWithSystem，url→openExternal），
+    // 并回传 onOpenFile 供文件树定位。
+    try {
+      this.linkProviderDisposable = this._registerTerminalLinkProvider(term);
+    } catch {
+      this.linkProviderDisposable = null;
+    }
 
     // 写完成确认计数器：xterm 每解析完一批写数据即递增解析序号（对齐 VS Code onWriteParsed）。
     try {
@@ -910,11 +1074,26 @@ export class XtermTerminal implements LiveTerminal {
     re.lastIndex = 0;
     while ((m = re.exec(data)) !== null) {
       if (m.index > last) segments.push(data.slice(last, m.index));
-      segments.push(m[0]);
-      last = m.index + m[0].length;
+      const seq = m[0];
+      segments.push(seq);
+      // 路由给命令检测 capability（去掉 \x1b]633; 前缀与 \x07 ST 后缀，对齐 VS Code _doHandleVSCodeSequence）。
+      this._routeOscToCapabilities(seq);
+      last = m.index + seq.length;
     }
     if (last < data.length) segments.push(data.slice(last));
     return segments.length ? segments : [data];
+  }
+
+  /** 把命中的 OSC 633/133 段交给对应 capability 解析（对齐 VS Code ShellIntegrationAddon 的 OSC 路由）。
+   * 命令生命周期 A/B/C/D/E → CommandDetectionCapability；属性 P;Cwd= → CwdDetectionCapability。 */
+  private _routeOscToCapabilities(seq: string): void {
+    if (!this.caps) return;
+    // seq 形如 \x1b]633;A\x07 或 \x1b]633;D;0\x07 或 \x1b]633;P;Cwd=/foo\x07
+    const body = seq.replace(/^\x1b\]/, '').replace(/\x07$/, '');
+    const cmdCap = this.caps.get<CommandDetectionCapability>(TerminalCapability.CommandDetection);
+    if (cmdCap?.handleSequence(body)) return;
+    const cwdCap = this.caps.get<CwdDetectionCapability>(TerminalCapability.CwdDetection);
+    cwdCap?.handleProperty(body);
   }
 
   /** 写入一段数据并回传背压（对齐 VS Code TerminalInstance._writeProcessData）。

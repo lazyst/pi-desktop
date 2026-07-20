@@ -28,7 +28,8 @@ describe('IntegratedTerminalPool real PTY', () => {
   it('spawns a real shell, echoes input, and reports exit on destroy', async () => {
     const onData = vi.fn();
     const onExit = vi.fn();
-    const pool = new IntegratedTerminalPool({ cols: 80, rows: 24, onData, onExit });
+    const onList = vi.fn();
+    const pool = new IntegratedTerminalPool({ cols: 80, rows: 24, onData, onExit, onList });
 
     const info = pool.create(makeProfile(), process.cwd());
     expect(info.id).toMatch(/^term-/);

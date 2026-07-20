@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type MouseEvent } from 'react';
+import { useEffect, useRef, useState, useCallback, type MouseEvent, type KeyboardEvent } from 'react';
 import { pi } from '../ipc';
 import {
   acquirePane,
@@ -10,6 +10,7 @@ import {
   paneHandleContextMenu,
   releasePane,
 } from './paneManager';
+import type { XtermTerminal } from './XtermTerminal';
 
 interface Props {
   // 终端实例 id，形如 'term-<uuid>'。同时作为 XtermTerminal 的 sessionKey（仅作标识），
@@ -28,8 +29,16 @@ interface Props {
 // 不闪首帧。对外 DOM 契约（.integrated-terminal-host / data-terminal / 隐藏 span）与原组件一致。
 export function IntegratedPane({ terminalId, active }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XtermTerminal | null>(null);
   // 视口是否贴底（驱动「跳到底部」浮钮显隐）。
   const [atBottom, setAtBottom] = useState(true);
+  // 查找面板可见性 + 当前查询串（对齐 VS Code TerminalFindWidget）。
+  const [findOpen, setFindOpen] = useState(false);
+  const [findText, setFindText] = useState('');
+  const [findCase, setFindCase] = useState(false);
+  const [findRegex, setFindRegex] = useState(false);
+  const [findWord, setFindWord] = useState(false);
+  const findInputRef = useRef<HTMLInputElement>(null);
 
   const handleContextMenu = useCallback((e: MouseEvent) => {
     paneHandleContextMenu(terminalId, e);
@@ -45,8 +54,14 @@ export function IntegratedPane({ terminalId, active }: Props) {
     const host = hostRef.current;
     if (!host) return;
     const term = acquirePane({ key: terminalId, kind: 'integrated', pi });
+    termRef.current = term;
     // 视口贴底状态变化 → 驱动浮钮显隐。
     setPaneScrollHandler(terminalId, (bottom) => setAtBottom(bottom));
+    // 接入 shell integration capability 回传：
+    //  - cwd 检测 → 更新主进程缓存并推侧边栏目录分组（对齐 VS Code CwdDetectionCapability）。
+    //  - 文件链接点击 → 在系统文件管理器选中（应用无内置编辑器，系统打开已由 link 本身触发）。
+    term.onCwdChange = (cwd) => pi.updateTerminalCwd?.(terminalId, cwd);
+    term.onOpenFile = (_path, _line, _col) => { /* 应用无内置编辑器；系统打开由链接点击触发 */ };
     if (active) mountPane(terminalId, host);
     return () => {
       // 清理时只卸载 xterm 渲染实例（经 PaneManager.releasePane 注销），
@@ -54,7 +69,11 @@ export function IntegratedPane({ terminalId, active }: Props) {
       // 此处若也调 destroyTerminal，会在 React StrictMode 的 mount→unmount→mount 双调用（dev）
       // 或抽屉收起隐藏时误杀刚创建的 pty，导致“新建即消失 / 闪退”。
       // drawerOpen 收起只是 display:none 隐藏 Pane（不卸载），pty 自然保留（keep-alive）。
+      // 卸载前序列化滚动缓冲区，供下次同 id 重建时 replay（对齐 VS Code 持久化）。
+      const buf = term.serializeScrollback();
+      if (buf) pi.saveTerminalBuffer?.(terminalId, buf);
       releasePane(terminalId);
+      termRef.current = null;
     };
   }, [terminalId]);
 
@@ -63,6 +82,14 @@ export function IntegratedPane({ terminalId, active }: Props) {
     if (active) {
       mountPane(terminalId, hostRef.current!); // 幂等：已挂载则直接 return
       setPaneActive(terminalId, true);         // 切回：flush + 强制 resize 校准尺寸
+      // 切回可见时若已有持久化缓冲区，replay 还原（对齐 VS Code triggerReplay）。
+      // 需在 mount 之后、首帧数据到达前写入，故紧随 setPaneActive 调用。
+      const term = termRef.current;
+      if (term) {
+        pi.loadTerminalBuffer?.(terminalId).then((buf) => {
+          if (buf) term.restoreScrollback(buf);
+        }).catch(() => {});
+      }
     } else {
       setPaneActive(terminalId, false);
     }
@@ -76,6 +103,38 @@ export function IntegratedPane({ terminalId, active }: Props) {
     ro.observe(host);
     return () => ro.disconnect();
   }, [terminalId]);
+
+  // 终端内查找：Ctrl/Cmd+F 打开查找面板，Esc 关闭，Enter/Shift+Enter 前/后查找。
+  const runFind = useCallback((backward: boolean) => {
+    const term = termRef.current;
+    if (!term || !findText) return;
+    if (backward) term.findPrevious(findText, { caseSensitive: findCase, regex: findRegex, wholeWord: findWord });
+    else term.findNext(findText, { caseSensitive: findCase, regex: findRegex, wholeWord: findWord });
+  }, [findText, findCase, findRegex, findWord]);
+
+  const handleFindKey = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      runFind(e.shiftKey);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setFindOpen(false);
+    }
+  }, [runFind]);
+
+  // 全局 Ctrl/Cmd+F 打开查找面板（仅当本面板 active）。
+  useEffect(() => {
+    if (!active) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setFindOpen(true);
+        setTimeout(() => findInputRef.current?.focus(), 0);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active]);
 
   // 非 active 时整块隐藏（keep-alive），CSS display:none。
   const hidden = !active;
@@ -99,6 +158,41 @@ export function IntegratedPane({ terminalId, active }: Props) {
         >
           ↓
         </button>
+      )}
+      {/* 终端内查找面板（对齐 VS Code TerminalFindWidget）：Ctrl/Cmd+F 唤起。 */}
+      {active && findOpen && (
+        <div className="terminal-find-widget" role="search">
+          <input
+            ref={findInputRef}
+            type="text"
+            value={findText}
+            placeholder="在终端中查找"
+            onChange={(e) => setFindText(e.target.value)}
+            onKeyDown={handleFindKey}
+            aria-label="查找"
+          />
+          <button
+            type="button"
+            className={findCase ? 'active' : ''}
+            title="区分大小写 (Alt+C)"
+            onClick={() => setFindCase((v) => !v)}
+          >Aa</button>
+          <button
+            type="button"
+            className={findRegex ? 'active' : ''}
+            title="正则 (Alt+R)"
+            onClick={() => setFindRegex((v) => !v)}
+          >.*</button>
+          <button
+            type="button"
+            className={findWord ? 'active' : ''}
+            title="整词 (Alt+W)"
+            onClick={() => setFindWord((v) => !v)}
+          >ab</button>
+          <button type="button" title="上一个 (Shift+Enter)" onClick={() => runFind(true)}>↑</button>
+          <button type="button" title="下一个 (Enter)" onClick={() => runFind(false)}>↓</button>
+          <button type="button" title="关闭 (Esc)" onClick={() => setFindOpen(false)}>×</button>
+        </div>
       )}
       {hidden && <span hidden data-testid="integrated-hidden" />}
     </>

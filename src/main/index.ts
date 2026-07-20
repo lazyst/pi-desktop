@@ -320,6 +320,8 @@ function createWindow() {
     onData: (id, data) => { if (!win.isDestroyed()) win.webContents.send('term:data', { id, data }); },
     // push the latest instance list on exit too, so the renderer's per-dir count stays live
     onExit: (id) => { if (!win.isDestroyed()) { win.webContents.send('term:exit', { id }); pushTerminalList(); } },
+    // 实例列表变化（create/destroy/cwd 变更）时推送最新列表。
+    onList: (list) => { if (!win.isDestroyed()) win.webContents.send('term:list', { list }); },
   });
 
   // Push the current live integrated-terminal instance list (each with its cwd) to the
@@ -367,6 +369,22 @@ function createWindow() {
   // （对齐 VS Code acknowledgeDataEvent 的真流控，见 integratedTerminalPool.acknowledgeDataEvent）。
   ipcMain.on('terminal:ack', (_e, m: { id: string; bytes: number }) => termPool.acknowledgeDataEvent(m.id, m.bytes));
   ipcMain.handle('terminal:destroy', (_e, id: string) => termPool.destroy(id));
+
+  // 滚动缓冲区持久化（对齐 VS Code terminal.integrated.bufferState 的内存暂存版）：
+  // 集成终端销毁时渲染端经 saveBuffer 上报序列化的 VT 数据流，下次同 id 重建时经 loadBuffer
+  // 取回并 replay，避免重启丢终端内容。采用内存 map（不落盘），进程退出即清空——
+  // 足以覆盖「关闭终端抽屉又重开」的常见场景；跨进程持久化需接入 storage（后续 polish）。
+  const terminalBuffers = new Map<string, string>();
+  ipcMain.on('terminal:saveBuffer', (_e, m: { id: string; data: string }) => {
+    if (m?.id && typeof m.data === 'string') terminalBuffers.set(m.id, m.data);
+  });
+  ipcMain.handle('terminal:loadBuffer', (_e, id: string): string | undefined => terminalBuffers.get(id));
+  // 集成终端 cwd 变化（来自注入脚本的 OSC 633;P;Cwd=）：更新缓存并推送最新列表，
+  // 使侧边栏目录分组实时重排（对齐 VS Code CwdDetectionCapability）。
+  ipcMain.on('terminal:updateCwd', (_e, m: { id: string; cwd: string }) => {
+    termPool.updateCwd(m.id, m.cwd);
+    pushTerminalList();
+  });
 
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
   // file:// 不走此通道，二进制/本地文件由 fs:openWithSystem（shell.openPath）以系统程序打开。

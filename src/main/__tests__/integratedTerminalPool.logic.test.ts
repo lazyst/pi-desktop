@@ -57,8 +57,9 @@ const fakeMissingCwd = path.resolve('/this/does/not/exist/xyz');
 function makePool() {
   const onData = vi.fn();
   const onExit = vi.fn();
-  const pool = new IntegratedTerminalPool({ cols: 80, rows: 24, onData, onExit });
-  return { pool, onData, onExit };
+  const onList = vi.fn();
+  const pool = new IntegratedTerminalPool({ cols: 80, rows: 24, onData, onExit, onList });
+  return { pool, onData, onExit, onList };
 }
 
 beforeEach(() => {

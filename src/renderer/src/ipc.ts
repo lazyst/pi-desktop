@@ -83,6 +83,13 @@ export interface PiApi {
   terminalResize(id: string, cols: number, rows: number): void;
   onTerminalData(cb: (id: string, data: string) => void): () => void;
   onTerminalExit(cb: (id: string) => void): () => void;
+  // 滚动缓冲区持久化（对齐 VS Code terminal.integrated.bufferState 的内存暂存版）：
+  // 集成终端销毁时上报序列化的 VT 数据流，下次同 id 重建时取回 replay。
+  saveTerminalBuffer(id: string, data: string): void;
+  loadTerminalBuffer(id: string): Promise<string | undefined>;
+  // 集成终端 cwd 变化回传（对齐 VS Code CwdDetectionCapability → 侧边栏目录分组实时刷新）：
+  // 注入脚本发的 OSC 633;P;Cwd= 检测到可信 cwd 后，渲染端经此更新主进程缓存并推送实例列表。
+  updateTerminalCwd(id: string, cwd: string): void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at
