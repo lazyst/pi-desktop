@@ -7,6 +7,10 @@ function resetStore() {
     tabs: [],
     activeEditorTabId: null,
     activePanelTabId: null,
+    terminals: [],
+    drawerOpen: false,
+    drawerHeight: 240,
+    activeTermId: null,
   });
 }
 
@@ -252,6 +256,142 @@ describe('tabStore — 状态容器与 action', () => {
       const before = getState().tabs;
       getState().setHidden('s1', false);
       expect(getState().tabs).toBe(before);
+    });
+  });
+
+  describe('closeCenterTab', () => {
+    it('session 终端：关闭 = 仅隐藏 keep-alive（hidden:true 且不卸载），激活指针留在被隐藏 tab 上', () => {
+      getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
+      getState().openSession({ key: 's2', cwd: '/b', name: 'sess-b' });
+      getState().selectTab('s1');
+      // 关闭 s1 → 实例仍在 tabs 中，仅置 hidden，内容实例不卸载（切回恢复滚动/历史）。
+      getState().closeCenterTab('s1');
+      const s = getState();
+      expect(s.tabs).toHaveLength(2);
+      const s1 = s.tabs.find((t) => t.id === 's1')!;
+      expect(s1.hidden).toBe(true);
+      // keep-alive：隐藏不卸载，激活指针留在被隐藏的 tab（CenterPane 仍渲染其内容为 active，
+      // 仅 TabBar 过滤掉 hidden；从侧边栏重开即恢复滚动/历史）。这正是「关闭=隐藏」语义。
+      expect(s.activeEditorTabId).toBe('s1');
+    });
+
+    it('session 已隐藏再 closeCenterTab 为 no-op（不会重复翻转或误卸载）', () => {
+      getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
+      getState().closeCenterTab('s1');
+      const before = getState().tabs;
+      getState().closeCenterTab('s1');
+      const s = getState();
+      expect(s.tabs).toBe(before);
+      expect(s.tabs[0].hidden).toBe(true);
+    });
+
+    it('preview / diff 关闭 = 真移除（无 keep-alive）', () => {
+      getState().openPreview('/repo', 'a.ts');
+      getState().openDiff('/repo', null);
+      getState().closeCenterTab('preview:/repo//a.ts');
+      const s = getState();
+      expect(s.tabs).toHaveLength(1);
+      expect(s.tabs[0].id).toBe('diff:/repo//work');
+    });
+
+    it('关闭激活的 preview tab 后激活指针回退到下一个可见 editor tab（preview 为真移除）', () => {
+      getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
+      getState().openPreview('/repo', 'a.ts');
+      getState().openPreview('/repo', 'b.ts');
+      getState().selectTab('preview:/repo//a.ts');
+      getState().closeCenterTab('preview:/repo//a.ts');
+      const s = getState();
+      // a.ts 被真移除；b.ts 预览仍保留（仅移除被关的那一个）。
+      expect(s.tabs.find((t) => t.id === 'preview:/repo//a.ts')).toBeUndefined();
+      expect(s.tabs.find((t) => t.id === 'preview:/repo//b.ts')).toBeTruthy();
+      // 激活指针回退到下一个可见 editor tab（按 order 首个为 session s1）。
+      expect(s.activeEditorTabId).toBe('s1');
+    });
+
+    it('不存在的 id 不改变状态', () => {
+      getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
+      getState().closeCenterTab('nope');
+      expect(getState().tabs).toHaveLength(1);
+    });
+  });
+
+  describe('removeTerminal', () => {
+    it('移除对应终端 tab，若为激活态则激活态迁移到剩余第一个', () => {
+      const list = [
+        { id: 't-1', profileId: 'p', cwd: '/a', title: 'a' },
+        { id: 't-2', profileId: 'p', cwd: '/b', title: 'b' },
+        { id: 't-3', profileId: 'p', cwd: '/c', title: 'c' },
+      ];
+      useTabStore.setState({ terminals: list, activeTermId: 't-2' });
+      getState().removeTerminal('t-2');
+      const s = getState();
+      expect(s.terminals.map((t) => t.id)).toEqual(['t-1', 't-3']);
+      // 激活态迁移到剩余第一个（t-1）。
+      expect(s.activeTermId).toBe('t-1');
+    });
+
+    it('移除最后一个终端后激活态置 null', () => {
+      useTabStore.setState({
+        terminals: [{ id: 't-1', profileId: 'p', cwd: '/a', title: 'a' }],
+        activeTermId: 't-1',
+      });
+      getState().removeTerminal('t-1');
+      const s = getState();
+      expect(s.terminals).toHaveLength(0);
+      expect(s.activeTermId).toBeNull();
+    });
+
+    it('移除非激活终端不影响当前激活指针', () => {
+      const list = [
+        { id: 't-1', profileId: 'p', cwd: '/a', title: 'a' },
+        { id: 't-2', profileId: 'p', cwd: '/b', title: 'b' },
+      ];
+      useTabStore.setState({ terminals: list, activeTermId: 't-1' });
+      getState().removeTerminal('t-2');
+      expect(getState().activeTermId).toBe('t-1');
+    });
+  });
+
+  describe('drawer 状态（开关 / 高度持久化语义）', () => {
+    it('toggleDrawer 在开/关间翻转', () => {
+      expect(getState().drawerOpen).toBe(false);
+      getState().toggleDrawer();
+      expect(getState().drawerOpen).toBe(true);
+      getState().toggleDrawer();
+      expect(getState().drawerOpen).toBe(false);
+    });
+
+    it('setDrawerOpen 直接设置展开态', () => {
+      getState().setDrawerOpen(true);
+      expect(getState().drawerOpen).toBe(true);
+      getState().setDrawerOpen(false);
+      expect(getState().drawerOpen).toBe(false);
+    });
+
+    it('setDrawerHeight 写入高度（持久化由 App 负责，store 仅管状态）', () => {
+      getState().setDrawerHeight(360);
+      expect(getState().drawerHeight).toBe(360);
+    });
+
+    it('setActiveTermId 写入当前激活集成终端指针', () => {
+      getState().setActiveTermId('t-9');
+      expect(getState().activeTermId).toBe('t-9');
+      getState().setActiveTermId(null);
+      expect(getState().activeTermId).toBeNull();
+    });
+
+    it('setTerminals 用主进程推送的完整列表覆盖（单一事实来源）', () => {
+      const list = [
+        { id: 't-1', profileId: 'p', cwd: '/a', title: 'a' },
+        { id: 't-2', profileId: 'p', cwd: '/b', title: 'b' },
+      ];
+      getState().setTerminals(list);
+      expect(getState().terminals).toHaveLength(2);
+      // 再次推送（如 create 后广播）应整体覆盖，不产生重复 id。
+      getState().setTerminals([{ id: 't-1', profileId: 'p', cwd: '/a', title: 'a' }]);
+      const s = getState();
+      expect(s.terminals).toHaveLength(1);
+      expect(s.terminals[0].id).toBe('t-1');
     });
   });
 
