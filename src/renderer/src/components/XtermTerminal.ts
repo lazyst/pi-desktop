@@ -216,6 +216,16 @@ export class XtermTerminal {
     }
     this._dragOverHandler = null;
     this._dropHandler = null;
+    // 治本：显式释放 WebGL context，避免关闭 tab 卸载实例时 context 泄漏累积。
+    // @xterm/addon-webgl 的 dispose() 不调用 WEBGL_lose_context.loseContext()，导致浏览器
+    // WebGL context 上限（~16）到达后，新实例 new WebglAddon() 创建失败、降级为 DOM 渲染器；
+    // 而 .xterm-viewport 在 DOM 模式下 overflow-y:hidden 禁用了滚动 → “不能滚动”。
+    // 在 term.dispose() 前从宿主 canvas 取回 context 并 loseContext（term.element 仍有效）。
+    if (this.term?.element) {
+      const canvas = this.term.element.querySelector('canvas');
+      const gl = (canvas?.getContext('webgl2') ?? canvas?.getContext('webgl')) as WebGLRenderingContext | null;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    }
     try {
       this.term?.dispose();
     } catch {

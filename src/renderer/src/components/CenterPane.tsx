@@ -24,6 +24,10 @@ import type { AnyTab, IntegratedTerminalInfo } from '../types';
 interface Props {
   tabs: AnyTab[];
   activeTabId: string | null;
+  // 被「关闭隐藏」的 tab id 集合（仅 session 终端使用）：这些 tab 仍保留实例（keep-alive），
+  // 只是不显示 tab 条、不激活；从侧边栏重新点开即恢复。TabBar 不渲染它们，但内容区仍渲染
+  // 其 TerminalPane（display:none 隐藏），以复用实例、避免重挂载。
+  closedTabIds: string[];
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;       // 中间区 tab（session/preview/diff）关闭
   drawerOpen: boolean;
@@ -40,6 +44,7 @@ interface Props {
 export function CenterPane({
   tabs,
   activeTabId,
+  closedTabIds,
   onSelectTab,
   onCloseTab,
   drawerOpen,
@@ -52,6 +57,8 @@ export function CenterPane({
   onResizeDrawer,
   onOpenFile,
 }: Props) {
+  // 可见 tab = 排除被「关闭隐藏」的。TabBar 只渲染可见 tab；内容区仍渲染全部 tab（keep-alive）。
+  const visibleTabs = tabs.filter((t) => !closedTabIds.includes(t.id));
   // 各 tab 的「关闭请求拦截器」（如 PreviewTab 的 dirty 确认）。TabBar 的 × 不直接关，
   // 而是先查这里注册的 guard：有则走拦截逻辑（dirty 弹确认），无则直接关。
   // 仅 preview tab 注册（session/diff tab 无 dirty 概念，直接关）。
@@ -72,7 +79,7 @@ export function CenterPane({
   return (
     <div className="center-pane">
       <TabBar
-        tabs={tabs.map((t) => ({ id: t.id, title: t.title, kind: t.kind }))}
+        tabs={visibleTabs.map((t) => ({ id: t.id, title: t.title, kind: t.kind }))}
         activeId={activeTabId}
         onSelect={onSelectTab}
         onClose={requestCloseTab}
@@ -102,7 +109,7 @@ export function CenterPane({
           }
           return <div key={t.id} className={cls}><DiffTab cwd={t.cwd} commitHash={t.commitHash} active={isActive} onBack={() => onCloseTab(t.id)} /></div>;
         })}
-        {tabs.length === 0 && <div className="empty-state">从左侧选择一个会话，或新建会话。</div>}
+        {visibleTabs.length === 0 && <div className="empty-state">从左侧选择一个会话，或新建会话。</div>}
       </div>
       {drawerOpen && (
         <TerminalDrawer
