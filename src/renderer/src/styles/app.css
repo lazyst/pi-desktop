@@ -43,7 +43,11 @@ html, body, #root {
   inset: 0;
 }
 .tab-content.active {
-  display: block;
+  /* 必须是 flex 容器，内部 .preview-tab / .diff-tab / .terminal-pane 的
+     flex:1 才能占满绝对定位(inset:0)给到的高度；否则高度链断裂、
+     overflow:auto 子项无法滚动（文件预览不能上下滚动的根因）。 */
+  display: flex;
+  flex-direction: column;
 }
 
 /* 集成终端底部抽屉：渲染在 .center-pane 内（.center-pane 是纵向 flex 列，
@@ -116,22 +120,28 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  /* 固定 tab 宽度，避免不同标题长度导致 tab 宽度抖动 */
+  width: 160px;
+  flex: none;
   padding: 4px 10px;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--text);
   background: transparent;
   border: none;
+  border-bottom: 2px solid transparent;
   border-radius: var(--r-sm) var(--r-sm) 0 0;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color var(--transition), color var(--transition);
+  overflow: hidden;
+  transition: background-color var(--transition), color var(--transition), border-color var(--transition);
 }
 .terminal-tab:hover { background: var(--bg-hover); }
 .terminal-tab.active {
   background: var(--bg-active);
   color: var(--accent);
-  box-shadow: inset 2px 0 0 var(--accent);
+  /* 去掉左侧高亮边框，改为 tab 底部高亮 */
+  border-bottom-color: var(--accent);
 }
 /* Tab 上的关闭 ×：默认隐藏，hover 整条或激活态时淡入 */
 .tab-close {
@@ -1364,6 +1374,9 @@ html, body, #root {
 
 /* Markdown preview wrapper + toolbar (inside CodePreview) */
 .code-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* Markdown 预览模式：内容可能超出视口，需可上下滚动（编辑模式由 CodeMirror
+   的 .cm-scroller 负责滚动，此处仅覆盖预览模式）。 */
+.markdown-file-preview { flex: 1; min-height: 0; overflow: auto; }
 .code-preview-toolbar {
   display: flex;
   align-items: center;
@@ -1534,6 +1547,9 @@ html, body, #root {
 .right-panel-resizer:hover { background: var(--accent-soft); }
 .right-panel-resizer:active { background: var(--accent); }
 .right-panel-body { flex: 1; min-height: 0; overflow: auto; }
+/* 右栏 tab（文件 / Git）使用通用 TabBar，但宽度应自适应，不沿用主内容区
+   固定的 160px；用后代选择器覆盖，使其与右栏宽度解耦、独立。 */
+.right-panel .terminal-tab { width: auto; flex: 0 0 auto; }
 .rp-root-select {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -1553,6 +1569,13 @@ html, body, #root {
   align-items: center;
   flex: none;
   opacity: 0.85;
+}
+/* 固定宽度的 tab 下，标题过长时省略号截断（保留关闭按钮可见） */
+.terminal-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .preview-empty, .preview-error { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); }

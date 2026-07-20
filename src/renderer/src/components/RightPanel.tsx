@@ -8,6 +8,7 @@ import { TabBar } from './TabBar';
 import { FileTree } from './FileTree';
 import { GitView } from './GitView';
 import { clampRightPanelWidth } from './sidebarGeometry';
+import { defaultConfig } from '../../../main/config';
 
 // 跨平台取目录名（最后一段路径），与 FilePanel.basename 一致：渲染进程 sandbox
 // 不能 import node:path，故自行实现。
@@ -45,6 +46,10 @@ export function RightPanel({
   // 右栏自身的 Tab 切换（文件树 / Git）。
   const [tab, setTab] = useState<RightTab>('files');
 
+  // 右栏宽度由本地 state 控制（初始取 prop width），拖拽实时跟手、松手经 onResize
+  // 回写 config——完全对齐 Sidebar 的拖拽模式（修复原“每帧依赖父组件 prop 回流”
+  // 导致的不跟手 / 方向错乱）。
+
   // 候选根目录：addedDirs ∪ activeCwd（去重）。
   const candidates = useMemo(() => {
     const set = new Set<string>(addedDirs);
@@ -81,34 +86,53 @@ export function RightPanel({
 
   const empty = candidates.length === 0;
 
-  // 拖拽右缘改宽：实时跟手，松手经 onResize 回写 config（用 clampRightPanelWidth 约束）。
+  // 右栏宽度由本地 state 控制（初始取 prop width，默认 320）；拖拽实时改、松手经
+  // onResize 回写 config——完全对齐 Sidebar 的拖拽模式（解决原“每帧依赖父组件
+  // prop 回流”导致的不跟手 / 方向错乱）。
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+  const [rpWidth, setRpWidth] = useState<number>(width ?? defaultConfig().rightPanelWidth);
+  const rpWidthRef = useRef<number>(rpWidth);
+  // 异步加载的 config.rightPanelWidth 经 prop 流入时同步到本地宽度 state；
+  // 拖拽过程中只走本地 setRpWidth（prop 不变，故本 effect 不触发），因此不冲突。
+  useEffect(() => {
+    if (width != null) setRpWidth(width);
+  }, [width]);
   const resizeStart = useRef<{ startX: number; startWidth: number } | null>(null);
+  // 把最新的 onResize 存进 ref，使拖拽监听回调保持稳定、不依赖 prop 身份。
   const onResizeRef = useRef(onResize);
   onResizeRef.current = onResize;
   const onResizerMove = useCallback((e: globalThis.MouseEvent) => {
     const s = resizeStart.current;
     if (!s) return;
-    const next = clampRightPanelWidth(s.startWidth + (e.clientX - s.startX), window.innerWidth);
-    onResizeRef.current(next);
+    // 右栏方向语义与左栏相反：右栏右贴窗、左缘可拖。
+    //   • 鼠标往左拖（clientX 减小）→ 右栏变宽、主内容区变窄；
+    //   • 鼠标往右拖（clientX 增大）→ 右栏变窄、主内容区变宽。
+    // 故用 startX - clientX（左拖为正、右拖为负），与左栏的 clientX - startX 相反。
+    const next = clampRightPanelWidth(s.startWidth + (s.startX - e.clientX), window.innerWidth);
+    rpWidthRef.current = next;
+    setRpWidth(next); // 本地实时跟手；无需每帧回流父组件
   }, []);
   const onResizerUp = useCallback(() => {
     resizeStart.current = null;
     document.removeEventListener('mousemove', onResizerMove);
     document.removeEventListener('mouseup', onResizerUp);
+    if (onResizeRef.current) onResizeRef.current(rpWidthRef.current);
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   }, [onResizerMove]);
   const onResizerDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    resizeStart.current = { startX: e.clientX, startWidth: width };
+    // 取右栏实际渲染宽度作为起点（隐藏态 offsetWidth 为 0 时退回跟踪宽度）。
+    const startWidth = rightPanelRef.current?.offsetWidth || rpWidthRef.current;
+    resizeStart.current = { startX: e.clientX, startWidth };
     document.addEventListener('mousemove', onResizerMove);
     document.addEventListener('mouseup', onResizerUp);
     document.body.style.cursor = 'ew-resize';
     document.body.style.userSelect = 'none';
-  }, [onResizerMove, onResizerUp, width]);
+  }, [onResizerMove, onResizerUp]);
 
   return (
-    <div className="right-panel" style={{ width }}>
+    <div className="right-panel" ref={rightPanelRef} style={{ width: rpWidth }}>
       <TabBar
         tabs={[
           { id: 'files', title: '文件', kind: 'preview' },
