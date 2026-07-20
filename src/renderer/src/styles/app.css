@@ -1377,6 +1377,11 @@ html, body, #root {
 .code-preview { flex: 1; min-height: 0; overflow: hidden; }
 .code-preview .cm-editor { height: 100%; }
 
+/* Monaco 编辑器容器（取代原 CodeMirror .code-preview）。填满 .preview-tab-body，
+   内部自带滚动，不抢父容器滚动。 */
+.monaco-code-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+.monaco-code-editor .monaco-editor,
+.monaco-code-editor .monaco-editor .overflow-guard { height: 100% !important; }
 /* Markdown preview wrapper + toolbar (inside CodePreview) */
 .code-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* Markdown 预览模式：内容可能超出视口，需可上下滚动（编辑模式由 CodeMirror
