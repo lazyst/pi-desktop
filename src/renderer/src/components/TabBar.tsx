@@ -17,13 +17,17 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession } from './icons';
 
-export type TabKind = 'session' | 'preview' | 'diff';
+export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal';
 
 export interface TabBarItem {
   id: string;
   title: string;
   kind: TabKind;
   closable?: boolean;   // 默认 true；某些特殊 tab 可设为不可关闭
+  /** 分组归并键（ADR-0001 TabAutoGroup）：同键的 tab 在 tab 条上归为一段，段间插视觉分隔。
+   *  不传则视为「无分组键」，与其他无键 tab 混排。纯展示层，不进 store 数据模型。
+   *  例：中间区 session/diff 用 cwd、preview 用 root；终端区用 cwd。 */
+  groupKey?: string;
 }
 
 interface Props {
@@ -37,6 +41,11 @@ interface Props {
   // 拖拽结束后回调「按当前视觉顺序的 id 列表」，由父层（CenterPane）调 store.reorderTabs。
   // 不传则纯展示（如右栏固定 files/git 两个 tab）。
   onReorder?: (orderedIds: string[]) => void;
+  // TabAutoGroup（ADR-0001 E3）：传入则按 item.groupKey 归并分组，组间插视觉分隔。
+  // 纯展示层归类，不进 store（无 group 实体）；与 onReorder 拖拽重排互不冲突——
+  // 分隔符为非 sortable 静态元素，所有 tab 仍在同一 SortableContext 中可跨段拖拽。
+  // 分组仅改变展示顺序/分隔，不改变 tabs 数据顺序（父层传入顺序即视觉顺序）。
+  groupBy?: (t: TabBarItem) => string | undefined;
 }
 
 const renderKindIcon = (kind: TabKind) => {
@@ -51,6 +60,31 @@ const renderKindIcon = (kind: TabKind) => {
       return null;
   }
 };
+
+// TabAutoGroup（ADR-0001 E3）：按 groupBy 返回的键对 tabs 做稳定归并排序——
+// 同键 tab 聚成一段（段内保持父层传入的原有顺序，即稳定排序），不同键之间插入
+// 分隔符占位（非 tab，仅视觉分段）。无 groupBy 或不分组时原样返回（空分隔）。
+// 返回 [{ type:'tab', item }] 与 [{ type:'sep' }] 的交替序列，供渲染层展开。
+// 注意：本函数只重排「展示顺序」，不改 tabs 数据；拖拽的 handleDragEnd 仍基于
+// 原始 tabs 数组计算下标，故分组与 TabReorder 互不干扰。
+type RenderedRow = { type: 'tab'; item: TabBarItem } | { type: 'sep' };
+
+function buildGroupedRows(tabs: TabBarItem[], groupBy?: (t: TabBarItem) => string | undefined): RenderedRow[] {
+  if (!groupBy) return tabs.map((item) => ({ type: 'tab', item }));
+
+  const rows: RenderedRow[] = [];
+  let lastKey: string | undefined = '__sentinel__';
+  for (const item of tabs) {
+    const key = groupBy(item);
+    // 仅当「与上一段不同键」且「当前段非空」时插分隔（相邻同键不重复插）。
+    if (key !== lastKey) {
+      if (rows.length > 0) rows.push({ type: 'sep' });
+      lastKey = key;
+    }
+    rows.push({ type: 'tab', item });
+  }
+  return rows;
+}
 
 // 单个可排序的 tab：接入 useSortable，拖拽时应用 transform/transition。
 // 整个 tab 可拖；关闭 × 仍走 onClick（stopPropagation 已阻止切 tab）。
@@ -121,11 +155,14 @@ function SortableTab({
 // 的 id 列表」交给 onReorder（父层调 store.reorderTabs 仅改 order，不碰渲染实例）。
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy }: Props) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
+
+  // 分组展示行（TabAutoGroup）：纯展示归类，不影响 tabs 数据顺序。
+  const rows = buildGroupedRows(tabs, groupBy);
 
   const newVisible = showNew ?? onNew !== undefined;
 
@@ -133,20 +170,21 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
   if (!onReorder) {
     return (
       <div className="terminal-tabbar" role="tablist">
-        {tabs.map((t) => {
-          const closable = t.closable ?? true;
-          return (
+        {rows.map((row, i) =>
+          row.type === 'sep' ? (
+            <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
+          ) : (
             <div
-              key={t.id}
+              key={row.item.id}
               role="tab"
-              aria-selected={t.id === activeId}
-              className={t.id === activeId ? 'terminal-tab active' : 'terminal-tab'}
-              onClick={() => onSelect(t.id)}
-              title={t.title}
+              aria-selected={row.item.id === activeId}
+              className={row.item.id === activeId ? 'terminal-tab active' : 'terminal-tab'}
+              onClick={() => onSelect(row.item.id)}
+              title={row.item.title}
             >
-              <span className="terminal-tab-icon">{renderKindIcon(t.kind)}</span>
-              <span className="terminal-tab-title">{t.title}</span>
-              {closable && (
+              <span className="terminal-tab-icon">{renderKindIcon(row.item.kind)}</span>
+              <span className="terminal-tab-title">{row.item.title}</span>
+              {(row.item.closable ?? true) && (
                 <button
                   type="button"
                   className="tab-close"
@@ -154,15 +192,15 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
                   title="关闭"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onClose(t.id);
+                    onClose(row.item.id);
                   }}
                 >
                   <IconClose size={12} />
                 </button>
               )}
             </div>
-          );
-        })}
+          ),
+        )}
         {newVisible && onNew && (
           <button
             type="button"
@@ -194,15 +232,21 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
         <div className="terminal-tabbar" role="tablist">
-          {tabs.map((t) => (
-            <SortableTab
-              key={t.id}
-              item={t}
-              activeId={activeId}
-              onSelect={onSelect}
-              onClose={onClose}
-            />
-          ))}
+          {rows.map((row, i) =>
+            row.type === 'sep' ? (
+              // 分组分隔符：非 sortable 静态元素，不参与拖拽排序计算；
+              // 仍需渲染在 SortableContext 内以共享 flex 行布局，但不进 items 数组。
+              <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
+            ) : (
+              <SortableTab
+                key={row.item.id}
+                item={row.item}
+                activeId={activeId}
+                onSelect={onSelect}
+                onClose={onClose}
+              />
+            ),
+          )}
           {newVisible && onNew && (
             <button
               type="button"
