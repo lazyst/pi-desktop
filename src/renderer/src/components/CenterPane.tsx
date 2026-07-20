@@ -18,6 +18,7 @@ import { TerminalPane } from './TerminalPane';
 import { PreviewTab } from './PreviewTab';
 import { DiffTab } from './DiffTab';
 import { TerminalDrawer } from './TerminalDrawer';
+import { useRef } from 'react';
 import type { AnyTab, IntegratedTerminalInfo } from '../types';
 
 interface Props {
@@ -51,13 +52,30 @@ export function CenterPane({
   onResizeDrawer,
   onOpenFile,
 }: Props) {
+  // 各 tab 的「关闭请求拦截器」（如 PreviewTab 的 dirty 确认）。TabBar 的 × 不直接关，
+  // 而是先查这里注册的 guard：有则走拦截逻辑（dirty 弹确认），无则直接关。
+  // 仅 preview tab 注册（session/diff tab 无 dirty 概念，直接关）。
+  const closeGuards = useRef<Map<string, () => void>>(new Map());
+
+  // TabBar × 的统一入口：先问对应 tab 的 guard，无 guard 才直接关。
+  const requestCloseTab = (id: string) => {
+    const guard = closeGuards.current.get(id);
+    if (guard) guard();
+    else onCloseTab(id);
+  };
+
+  const registerCloseGuard = (id: string, guard: (() => void) | null) => {
+    if (guard) closeGuards.current.set(id, guard);
+    else closeGuards.current.delete(id);
+  };
+
   return (
     <div className="center-pane">
       <TabBar
         tabs={tabs.map((t) => ({ id: t.id, title: t.title, kind: t.kind }))}
         activeId={activeTabId}
         onSelect={onSelectTab}
-        onClose={onCloseTab}
+        onClose={requestCloseTab}
         showNew={false}
       />
       <div className="center-pane-body">
@@ -68,7 +86,19 @@ export function CenterPane({
             return <div key={t.id} className={cls}><TerminalPane sessionKey={t.key} active={isActive} /></div>;
           }
           if (t.kind === 'preview') {
-            return <div key={t.id} className={cls}><PreviewTab root={t.root} path={t.path} active={isActive} onOpenFile={onOpenFile} /></div>;
+            return (
+              <div key={t.id} className={cls}>
+                <PreviewTab
+                  tabId={t.id}
+                  root={t.root}
+                  path={t.path}
+                  active={isActive}
+                  onOpenFile={onOpenFile}
+                  onClose={() => onCloseTab(t.id)}
+                  onRegisterCloseGuard={registerCloseGuard}
+                />
+              </div>
+            );
           }
           return <div key={t.id} className={cls}><DiffTab cwd={t.cwd} commitHash={t.commitHash} active={isActive} onBack={() => onCloseTab(t.id)} /></div>;
         })}
