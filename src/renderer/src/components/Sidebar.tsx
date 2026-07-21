@@ -132,10 +132,14 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
   // 取某 cwd 下运行中的集成终端计数（纯终端数）；无则 0。
   const terminalCount = (cwd: string): number => terminalsByCwd?.get(cwd) ?? 0;
 
-  // 组内会话按时间倒序（最新在前）。time 形如 'YYYY-MM-DD HH:MM'，字典序即时间序。
-  // 时间相同时用原始相对顺序兜底（稳定排序依赖数组下标）。
+  // 组内会话排序：未晋升（unsaved）的排最前，其余按时间倒序（最新在前）。
+  // time 形如 'YYYY-MM-DD HH:MM'，字典序即时间序。
   const sortedItems = (items: Session[]): Session[] =>
-    [...items].sort((a, b) => (b.time ?? '').localeCompare(a.time ?? ''));
+    [...items].sort((a, b) => {
+      if (a.unsaved && !b.unsaved) return -1;
+      if (!a.unsaved && b.unsaved) return 1;
+      return (b.time ?? '').localeCompare(a.time ?? '');
+    });
 
   return (
     <>
