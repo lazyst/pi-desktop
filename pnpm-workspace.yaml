@@ -1,4 +1,0 @@
-onlyBuiltDependencies:
-  - node-pty
-  - esbuild
-  - electron
