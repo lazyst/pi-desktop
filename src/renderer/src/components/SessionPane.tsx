@@ -50,10 +50,11 @@ export function SessionPane({ sessionKey, active }: Props) {
   }, [sessionKey]);
 
   // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时校准尺寸。
-  // 关键：切回可见时显式调 setPaneActive(true) 而非仅 mount——mount 对“已挂载实例”是 no-op
-  // （if mounted return），不会触发 resize；但 display:none 隐藏期间 xterm 尺寸为 0，
+  // 关键：切回可见时显式调 setPaneActive(true) 而非仅 mount——mount 对"已挂载实例"是 no-op
+  // （if mounted return），不会触发 resize；但 opacity:0 隐藏期间 xterm 尺寸为 0，
   // 切回后必须 flush + doResize 用真实容器尺寸重测，否则沿用隐藏期的 0 尺寸渲染，
-  // 表现为“切回的终端变空白新终端、历史输出丢失 / 不能滚动”。
+  // 表现为"切回的终端变空白新终端、历史输出丢失 / 不能滚动"。
+  // 滚动位置保存/恢复由 CenterPane 在 activeCwd 切换前完成（对齐 Orca captureScrollState）。
   useEffect(() => {
     if (active) {
       mountPane(sessionKey, hostRef.current!); // 幂等：已挂载则直接 return

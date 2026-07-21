@@ -78,8 +78,7 @@ export function IntegratedPane({ terminalId, active }: Props) {
   }, [terminalId]);
 
   // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时校准尺寸。
-  // 对齐 SessionPane：仅调 setActive，不做 restoreScrollback——同一 terminalId 不会复用
-  //（每次新建都是 term-<uuid>），且 StrictMode 双 mount 会残留过期序列化数据写入活终端。
+  // 滚动位置保存/恢复由 CenterPane 在 activeCwd 切换前完成（对齐 Orca captureScrollState）。
   useEffect(() => {
     if (active) {
       mountPane(terminalId, hostRef.current!); // 幂等：已挂载则直接 return

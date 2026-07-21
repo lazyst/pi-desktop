@@ -44,11 +44,13 @@ interface Props {
   onNewTerminalInAppWorkDir?: () => void;
   // 在各项目分组（cwd）下新建集成终端的入口，传入具体目录。
   onNewTerminalInCwd?: (cwd: string) => void;
+  /** 点击目录名称 → 切换到该目录的 tab 条。 */
+  onSelectCwd?: (cwd: string) => void;
 }
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
-  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd }: Props) {
+  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -166,7 +168,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           const showTermBadge = termCount > 0;
           return (
             <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}`}>
-              <div className="group-title">
+              <div className="group-title" onClick={() => onSelectCwd?.(g.cwd)}>
                 <span className="group-name" title={g.cwd}>
                   {`📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
                   {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>({termCount})</span>}

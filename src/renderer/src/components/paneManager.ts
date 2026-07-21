@@ -16,6 +16,7 @@
 //
 // 两种通道（SessionChannel / IntegratedChannel）经统一 acquire/release/setActive 入口驱动，
 // 差异仅在「构造时选哪条 channel」与「集成终端卸载时是否通知主进程销毁 pty」。
+
 import { SessionChannel, IntegratedChannel, UnifiedChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import { XtermTerminal } from './XtermTerminal';
@@ -116,6 +117,44 @@ export function releasePane(key: string): void {
   if (!term) return;
   term.unmount();
   panes.delete(key);
+}
+
+/** 滚动位置快照（对齐 Orca ScrollState），由 paneManager 内部存储。 */
+interface InternalPaneScrollState {
+  viewportY: number;
+  baseY: number;
+  wasAtBottom: boolean;
+  marker: unknown; // IMarker|null
+}
+
+/** 跨目录 keep-alive：按 pane id 存储的滚动位置快照。在 setActiveCwd 前保存、之后恢复。 */
+const scrollStates = new Map<string, InternalPaneScrollState>();
+
+/**
+ * 保存指定 pane 的滚动位置快照（对齐 Orca captureScrollState）。
+ * 必须在 DOM 变化前调用（setActiveCwd 的 Zustand set 回调中），此时 pane 有有效尺寸。
+ * 内部存储，restore 时自动取出。
+ */
+export function capturePaneScrollState(key: string): void {
+  const raw = panes.get(key)?.captureScrollState();
+  if (!raw) return;
+  scrollStates.set(key, { viewportY: raw.viewportY, baseY: raw.baseY, wasAtBottom: raw.wasAtBottom, marker: raw.marker });
+}
+
+/**
+ * 恢复指定 pane 的之前保存的滚动位置（对齐 Orca restoreTerminalStructuralScrollIntent）。
+ * 在 DOM 更新后（useEffect 中）调用，此时 pane 已重新 visible，可 scrollToLine。
+ */
+export function restorePaneScrollState(key: string): void {
+  const state = scrollStates.get(key);
+  if (!state) return;
+  scrollStates.delete(key);
+  panes.get(key)?.restoreScrollState({ viewportY: state.viewportY, baseY: state.baseY, wasAtBottom: state.wasAtBottom, marker: state.marker as any });
+}
+
+/** 清空全部滚动位置快照（测试 / 应用重置时调用）。 */
+export function clearPaneScrollStates(): void {
+  scrollStates.clear();
 }
 
 /** 清空全部实例（测试 / 应用卸载时调用）。 */

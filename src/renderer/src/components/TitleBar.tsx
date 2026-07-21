@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react';
 import { pi } from '../ipc';
-import { IconSettings, IconMinimize, IconMaximize, IconRestore, IconClose, IconTerminal } from './icons';
+import { IconSettings, IconMinimize, IconMaximize, IconRestore, IconClose } from './icons';
 
 interface Props {
   onOpenSettings: () => void;
-  onNewTerminal: () => void;
 }
 
 // Custom title bar for the frameless window. Everything is painted with CSS
 // variables, so its colours follow the active theme automatically (task 3).
 // The bar itself is a drag region; only the buttons opt out via
 // `-webkit-app-region: no-drag` (see app.css).
-export function TitleBar({ onOpenSettings, onNewTerminal }: Props) {
+export function TitleBar({ onOpenSettings }: Props) {
   const [maximized, setMaximized] = useState(false);
 
   // Subscribe to maximize state so the restore/maximize icon stays in sync.
@@ -26,15 +25,6 @@ export function TitleBar({ onOpenSettings, onNewTerminal }: Props) {
       <span className="titlebar-title">Pi Desktop</span>
       <div className="titlebar-spacer" />
       <div className="titlebar-actions">
-        <button
-          className="titlebar-btn"
-          type="button"
-          title="新建终端"
-          aria-label="新建终端"
-          onClick={onNewTerminal}
-        >
-          <IconTerminal />
-        </button>
         <button className="titlebar-btn" type="button" title="设置" aria-label="设置" onClick={onOpenSettings}>
           <IconSettings />
         </button>

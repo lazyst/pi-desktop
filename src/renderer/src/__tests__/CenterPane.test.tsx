@@ -1,25 +1,20 @@
 // @vitest-environment jsdom
 //
-// CenterPane 集成测试（issue 04：壳重写后行为回归）。
+// CenterPane 集成测试（按工作目录分组）。
 //
-// 重点覆盖「壳重写（阶段1）」后用户可见行为不变的关键契约：
-//   1. 会话 tab 关闭 → store 置 hidden:true，且内容实例不卸载（keep-alive，
-//      切回恢复滚动与历史）。CenterPane 渲染所有 tab 内容（含 hidden），
-//      仅 TabBar 过滤掉 hidden；非 active 的加 .tab-content（无 .active）由 CSS display:none。
-//   2. preview tab 的关闭 × 经 CenterPane 的 closeGuard 拦截（dirty 确认）；
-//      diff tab 的 × 直接走 store.closeCenterTab（真移除）。
-//   3. 所有 tab 统一在 TabBar 中管理（session / preview / diff / terminal），
-//      不再有底部抽屉。集成终端以 IntegratedPane 与 SessionPane 同层级渲染。
-//
-// 为聚焦「壳契约」而非子组件内部逻辑，这里把重组件（SessionPane / PreviewTab /
-// DiffTab / IntegratedPane）替换为轻量桩，仅断言 CenterPane 与 store 的取数/写回契约。
+// CenterPane 现在按 store.activeCwd 只显示当前工作目录的 tab 条和内容。
+// 测试覆盖：
+//   1. 按 activeCwd 过滤可见 tab
+//   2. 会话 tab 关闭 → store 置 hidden:true，且内容实例不卸载（keep-alive）
+//   3. preview / diff tab 关闭语义不变
+//   4. 拖拽重排
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import { CenterPane } from '../components/CenterPane';
-import { useTabStore } from '../store/tabStore';
+import { useTabStore, getTabCwd } from '../store/tabStore';
 import type { Tab } from '../store/tabStore';
 
-// —— 轻量桩：只暴露可被断言的 data-* 与 className，不触发真实 xterm / 文件读取 ——
+// —— 轻量桩：只暴露可被断言的 data-* 与 className ——
 vi.mock('../components/SessionPane', () => ({
   SessionPane: ({ sessionKey, active }: any) => (
     <div
@@ -34,7 +29,6 @@ vi.mock('../components/SessionPane', () => ({
 
 vi.mock('../components/PreviewTab', () => ({
   PreviewTab: ({ tabId, active, onRegisterCloseGuard, onClose }: any) => {
-    // 挂载即注册关闭拦截器（模拟 dirty 场景：注册一个会弹确认的函数）。
     return (
       <div
         data-testid="preview-tab-body"
@@ -71,31 +65,35 @@ function resetStore() {
   useTabStore.setState({
     tabs: [],
     activeTabId: null,
+    activeCwd: null,
+    cwdOrder: [],
+    cwdActiveTab: {},
     terminals: [],
   });
 }
 
+/** 用 tabs 灌入 store，自动根据第一个非 hidden tab 的 cwd 设置 activeCwd。 */
 function seedTabs(tabs: Tab[]) {
-  useTabStore.setState({ tabs });
+  const first = tabs.find((t) => !t.hidden) || tabs[0];
+  const cwd = first ? getTabCwd(first) : null;
+  const cwdOrder = cwd ? [cwd] : [];
+  const firstVisible = tabs.find((t) => !t.hidden);
+  const cwdActiveTab = cwd && firstVisible ? { [cwd]: firstVisible.id } : {};
+  useTabStore.setState({ tabs, activeCwd: cwd, cwdOrder, cwdActiveTab });
 }
 
 function renderCenterPane(overrides: Partial<React.ComponentProps<typeof CenterPane>> = {}) {
-  return render(
-    <CenterPane
-      onNewTerminal={vi.fn()}
-      {...overrides}
-    />,
-  );
+  return render(<CenterPane {...overrides} />);
 }
 
-describe('CenterPane — 壳重写后行为回归', () => {
+describe('CenterPane — 按工作目录分组', () => {
   beforeEach(resetStore);
 
-  describe('从 store 取数渲染中间区 TabBar', () => {
-    it('只渲染可见（非 hidden）tab 到 TabBar，hidden 的不出现在 tab 条', () => {
+  describe('按 activeCwd 过滤 tab', () => {
+    it('只渲染 activeCwd 下的可见 tab，其他目录的 tab 不出现', () => {
       seedTabs([
-        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: true, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: true, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
       ]);
       const { container } = renderCenterPane();
       const tabEls = container.querySelectorAll('.center-pane .terminal-tab');
@@ -106,8 +104,8 @@ describe('CenterPane — 壳重写后行为回归', () => {
 
     it('active 指针驱动 TabBar 的 active class，取数自 store.activeTabId', () => {
       seedTabs([
-        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
       ]);
       useTabStore.setState({ activeTabId: 's2' });
       const { container } = renderCenterPane();
@@ -116,40 +114,66 @@ describe('CenterPane — 壳重写后行为回归', () => {
       expect(tabEls[1].className).toContain('active');
     });
 
-    it('无可见 tab 时渲染空状态提示', () => {
-      seedTabs([
-        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: true, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-      ]);
+    it('activeCwd 为 null 时渲染空状态提示', () => {
+      useTabStore.setState({
+        tabs: [],
+        activeCwd: null,
+        cwdOrder: [],
+        cwdActiveTab: {},
+      });
       const { container } = renderCenterPane();
       expect(container.querySelector('.empty-state')).toBeTruthy();
+    });
+
+    it('activeCwd 有值但目录下无任何 tab 时渲染空状态提示', () => {
+      useTabStore.setState({
+        tabs: [],
+        activeCwd: '/a',
+        cwdOrder: ['/a'],
+        cwdActiveTab: {},
+      });
+      const { container } = renderCenterPane();
+      expect(container.querySelector('.empty-state')).toBeTruthy();
+    });
+
+    it('activeCwd 有值且目录下有 hidden tab（keep-alive）时不显示空状态', () => {
+      useTabStore.setState({
+        tabs: [
+          { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: true, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
+        ],
+        activeCwd: '/a',
+        cwdOrder: ['/a'],
+        cwdActiveTab: { '/a': null },
+      });
+      const { container } = renderCenterPane();
+      // hidden tab 内容仍挂载（keep-alive），不应显示空状态
+      expect(container.querySelector('.empty-state')).toBeFalsy();
+      expect(container.querySelector('[data-testid="terminal-pane"]')).toBeTruthy();
     });
   });
 
   describe('keep-alive：会话 tab 关闭后 hidden:true 且内容实例不卸载', () => {
-    it('关闭会话 tab → 调 store.closeCenterTab，tab 进入 hidden 但内容 div 仍挂载（切回可恢复）', () => {
+    it('关闭会话 tab → 调 store.closeCenterTab，tab 进入 hidden 但内容 div 仍挂载', () => {
       seedTabs([
-        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
       ]);
       useTabStore.setState({ activeTabId: 's1' });
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
-      // 两个会话的内容 div 都挂载（keep-alive，全部渲染）。
+      // 所有 tab 内容 div 都挂载（keep-alive）。
       const panes = container.querySelectorAll('[data-testid="terminal-pane"]');
       expect(panes.length).toBe(2);
 
-      // 点 TabBar 上 s1 的 × → 经 requestCloseTab 直关（session 无 guard）。
+      // 点 TabBar 上 s1 的 ×。
       const closeBtns = container.querySelectorAll('.center-pane .terminal-tab .tab-close');
       expect(closeBtns.length).toBe(2);
       fireEvent.click(closeBtns[0] as HTMLElement);
 
-      // store.closeCenterTab('s1') 被调用（session → 隐藏不卸载）。
       expect(closeCenterTab).toHaveBeenCalledWith('s1');
-      // store 实际把 s1 置 hidden。
       const s = useTabStore.getState();
       expect(s.tabs.find((t) => t.id === 's1')!.hidden).toBe(true);
-      // 内容实例不卸载：tab 内容仍全部渲染（不随 hidden 移除）。
       expect(s.tabs).toHaveLength(2);
     });
 
@@ -174,7 +198,7 @@ describe('CenterPane — 壳重写后行为回归', () => {
   });
 
   describe('preview / diff 关闭：guard 拦截与真移除', () => {
-    it('preview 关闭 × 经 CenterPane guard 注册 → 调用注册的 guard（而非直关）', () => {
+    it('preview 关闭 × 经 CenterPane guard 注册 → 调用注册的 guard', () => {
       seedTabs([
         { id: 'preview:/repo//a.ts', kind: 'preview', location: 'editor', title: 'a.ts', hidden: false, order: 0, root: '/repo', path: 'a.ts' } as Tab,
       ]);
@@ -182,18 +206,15 @@ describe('CenterPane — 壳重写后行为回归', () => {
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
-      // 注册 guard（模拟 PreviewTab 挂载时经 onRegisterCloseGuard 登记）。
       const registerBtn = container.querySelector('[data-testid="preview-confirm-close"]') as HTMLElement;
       act(() => { fireEvent.click(registerBtn); });
 
-      // 点 × → requestCloseTab 先查 guard：有则走 guard（此处 guard 会再调 onClose→store.closeCenterTab）。
       const closeBtn = container.querySelector('.center-pane .terminal-tab .tab-close') as HTMLElement;
       fireEvent.click(closeBtn);
-      // guard 被触发 → 最终仍落到 store.closeCenterTab（preview 为真移除）。
       expect(closeCenterTab).toHaveBeenCalledWith('preview:/repo//a.ts');
     });
 
-    it('diff tab 的 × 直接走 store.closeCenterTab（无 guard），preview 仍保留', () => {
+    it('diff tab 的 × 直接走 store.closeCenterTab（无 guard）', () => {
       seedTabs([
         { id: 'preview:/repo//a.ts', kind: 'preview', location: 'editor', title: 'a.ts', hidden: false, order: 0, root: '/repo', path: 'a.ts' } as Tab,
         { id: 'diff:/repo//work', kind: 'diff', location: 'editor', title: '工作区改动', hidden: false, order: 1, cwd: '/repo', commitHash: null } as Tab,
@@ -203,20 +224,17 @@ describe('CenterPane — 壳重写后行为回归', () => {
 
       const { container } = renderCenterPane();
       const closeBtns = container.querySelectorAll('.center-pane .terminal-tab .tab-close');
-      // 第二个是 diff 的 ×（preview 在前）。
       fireEvent.click(closeBtns[1] as HTMLElement);
       expect(closeCenterTab).toHaveBeenCalledWith('diff:/repo//work');
     });
   });
 
-
-
   describe('拖拽重排（issue 11 / ADR-0001 TabReorder）', () => {
     it('父层按 store.order 排序后传入 TabBar，视觉顺序跟随 order', () => {
       seedTabs([
-        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
-        { id: 's3', kind: 'session', location: 'editor', title: 'sess-c', hidden: false, order: 2, key: '/c', cwd: '/c', name: 'sess-c' } as Tab,
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
+        { id: 's3', kind: 'session', location: 'editor', title: 'sess-c', hidden: false, order: 2, key: '/c', cwd: '/root', name: 'sess-c' } as Tab,
       ]);
       const { container } = renderCenterPane();
       const els = container.querySelectorAll('.center-pane .terminal-tab');
@@ -225,28 +243,25 @@ describe('CenterPane — 壳重写后行为回归', () => {
       expect(els[2].textContent).toContain('sess-c');
     });
 
-    it('reorderTabs 仅改 order、不重排内容实例（内容 div 以 id 为 key 保持挂载）', () => {
+    it('reorderTabs 仅改 order、不重排内容实例', () => {
       seedTabs([
-        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
-        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
-        { id: 's3', kind: 'session', location: 'editor', title: 'sess-c', hidden: false, order: 2, key: '/c', cwd: '/c', name: 'sess-c' } as Tab,
+        { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
+        { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
+        { id: 's3', kind: 'session', location: 'editor', title: 'sess-c', hidden: false, order: 2, key: '/c', cwd: '/root', name: 'sess-c' } as Tab,
       ]);
       const { container } = renderCenterPane();
       const panesBefore = container.querySelectorAll('[data-testid="terminal-pane"]');
       expect(panesBefore).toHaveLength(3);
 
-      // 模拟 TabBar 拖拽结束 → 父层调 reorderTabs(新顺序)。
       act(() => {
         useTabStore.getState().reorderTabs(['s3', 's1', 's2']);
       });
 
-      // 视觉顺序跟随新 order（TabBar 仍按 store 排序传入）。
       const els = container.querySelectorAll('.center-pane .terminal-tab');
       expect(els[0].textContent).toContain('sess-c');
       expect(els[1].textContent).toContain('sess-a');
       expect(els[2].textContent).toContain('sess-b');
 
-      // 内容实例不重建：仍 3 个 data-key 挂载，且 key 集合不变（keep-alive）。
       const panesAfter = container.querySelectorAll('[data-testid="terminal-pane"]');
       expect(panesAfter).toHaveLength(3);
       const keys = Array.from(panesAfter).map((p) => p.getAttribute('data-key')).sort();
