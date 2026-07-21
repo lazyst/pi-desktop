@@ -655,7 +655,25 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, '../renderer/index.html'));
 }
 
-app.whenReady().then(createWindow);
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  // 已有实例在运行，直接退出新启动的副本。
+  app.quit();
+} else {
+  // 当用户再次打开应用时，聚焦到已有窗口（托盘隐藏场景也适用）。
+  app.on('second-instance', () => {
+    const [existingWin] = BrowserWindow.getAllWindows();
+    if (existingWin) {
+      if (existingWin.isMinimized()) existingWin.restore();
+      existingWin.show();
+      existingWin.focus();
+    }
+  });
+
+  app.whenReady().then(createWindow);
+}
+
 // 窗口隐藏（非关闭）时应用保持存活；托盘常驻即入口，真正退出只经 before-quit
 // （见 issue 04）。macOS 本就不退出，其余平台也不再因窗口"关闭"（实为隐藏）而退出。
 app.on('window-all-closed', () => { /* 托盘常驻：不自动退出，仅 before-quit 触发真正退出 */ });
