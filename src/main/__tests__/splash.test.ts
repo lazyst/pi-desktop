@@ -128,12 +128,12 @@ describe('integrated terminal IPC handlers (terminal:*)', () => {
     expect(Array.isArray(p.args)).toBe(true);
   });
 
-  it('terminal:create returns IntegratedTerminalInfo and terminal:input/resize forward to pty', () => {
+  it('terminal:create returns TerminalInfo and terminal:input/resize forward to pty', () => {
     const profiles = ipcHandlers['terminal:listProfiles']();
     const info = ipcHandlers['terminal:create'](null, { profile: profiles[0], cwd: '/tmp' });
     expect(typeof info.id).toBe('string');
     expect(info.id).toMatch(/^term-/);
-    expect(info.profileId).toBe(profiles[0].id);
+    expect(info.type).toBe('shell');
     expect(info.title).toBe(profiles[0].label);
 
     const pty = mockPtys[0];

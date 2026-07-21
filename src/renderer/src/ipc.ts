@@ -69,6 +69,8 @@ export interface PiApi {
   // 在系统文件管理器中打开文件/目录所在位置并选中（资源管理器“打开所在文件夹”）。
   fsShowInFolder(absPath: string): Promise<boolean>;
   // ── 集成终端（抽屉内嵌的真实 shell）──
+  /** 统一终端创建入口：新建终端或打开已有会话文件。command='pi' 时 spawn pi 进程，否则 spawn shell。 */
+  spawnTerminal(req: { command?: string; cwd: string; profile?: any; sessionFile?: string; name?: string; key?: string }): Promise<any>;
   listTerminalProfiles(): Promise<TerminalProfile[]>;
   createTerminal(req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo>;
   // 在「应用工作目录」分组下创建集成终端（cwd 取 config.appWorkDir，主进程确保目录存在）。

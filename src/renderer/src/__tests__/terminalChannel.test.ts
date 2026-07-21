@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest';
-import { SessionChannel, IntegratedChannel } from '../components/terminalChannel';
+import { SessionChannel, IntegratedChannel, UnifiedChannel } from '../components/terminalChannel';
 import type { PiApi } from '../ipc';
 
 // 构造一个可观测的 mock PiApi：记录各 IPC 调用，并允许手动触发事件回调。
@@ -177,6 +177,73 @@ describe('IntegratedChannel', () => {
     offExit();
     pi._fire('onTerminalData', 'term-1', 'x');
     pi._fire('onTerminalExit', 'term-1');
+
+    expect(cbData).not.toHaveBeenCalled();
+    expect(cbExit).not.toHaveBeenCalled();
+  });
+});
+
+describe('UnifiedChannel', () => {
+  // UnifiedChannel 与 IntegratedChannel 共享相同的 term:* IPC 方法
+  // （onTerminalData / onTerminalExit / terminalInput / terminalResize），
+  // 但语义上 UnifiedChannel 收编了 SessionChannel + IntegratedChannel，
+  // 是未来新代码的首选渠道。测试覆盖确保两者行为一致。
+
+  it('onData 只回调匹配 id 的数据，忽略其它 id', () => {
+    const pi = makeMockPi();
+    const ch = new UnifiedChannel(pi, 'unified-1');
+    const cb = vi.fn();
+    ch.onData(cb);
+
+    pi._fire('onTerminalData', 'unified-2', 'noise');
+    pi._fire('onTerminalData', 'unified-1', 'hello');
+    pi._fire('onTerminalData', 'unified-1', 'world');
+
+    expect(cb).toHaveBeenCalledTimes(2);
+    expect(cb).toHaveBeenNthCalledWith(1, 'hello');
+    expect(cb).toHaveBeenNthCalledWith(2, 'world');
+  });
+
+  it('onExit 只回调匹配 id 的退出', () => {
+    const pi = makeMockPi();
+    const ch = new UnifiedChannel(pi, 'unified-1');
+    const cb = vi.fn();
+    ch.onExit(cb);
+
+    pi._fire('onTerminalExit', 'unified-2');
+    pi._fire('onTerminalExit', 'unified-1');
+
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('send 转发到 pi.terminalInput(id, data)', () => {
+    const pi = makeMockPi();
+    const ch = new UnifiedChannel(pi, 'unified-7');
+    ch.send('xyz');
+    expect(pi.terminalInput).toHaveBeenCalledTimes(1);
+    expect(pi.terminalInput).toHaveBeenCalledWith('unified-7', 'xyz');
+  });
+
+  it('resize 转发到 pi.terminalResize(id, cols, rows)', () => {
+    const pi = makeMockPi();
+    const ch = new UnifiedChannel(pi, 'unified-7');
+    ch.resize(120, 40);
+    expect(pi.terminalResize).toHaveBeenCalledTimes(1);
+    expect(pi.terminalResize).toHaveBeenCalledWith('unified-7', 120, 40);
+  });
+
+  it('onData / onExit 取消订阅后不再回调', () => {
+    const pi = makeMockPi();
+    const ch = new UnifiedChannel(pi, 'unified-1');
+    const cbData = vi.fn();
+    const cbExit = vi.fn();
+    const offData = ch.onData(cbData);
+    const offExit = ch.onExit(cbExit);
+
+    offData();
+    offExit();
+    pi._fire('onTerminalData', 'unified-1', 'x');
+    pi._fire('onTerminalExit', 'unified-1');
 
     expect(cbData).not.toHaveBeenCalled();
     expect(cbExit).not.toHaveBeenCalled();

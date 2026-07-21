@@ -8,11 +8,11 @@
 //      仅 TabBar 过滤掉 hidden；非 active 的加 .tab-content（无 .active）由 CSS display:none。
 //   2. preview tab 的关闭 × 经 CenterPane 的 closeGuard 拦截（dirty 确认）；
 //      diff tab 的 × 直接走 store.closeCenterTab（真移除）。
-//   3. 抽屉高度持久化：从 store.drawerHeight 取数渲染 TerminalDrawer 的 height；
-//      抽屉开关由 store.drawerOpen 驱动。
+//   3. 所有 tab 统一在 TabBar 中管理（session / preview / diff / terminal），
+//      不再有底部抽屉。集成终端以 IntegratedPane 与 SessionPane 同层级渲染。
 //
-// 为聚焦「壳契约」而非子组件内部逻辑，这里把重组件（TerminalPane / PreviewTab /
-// DiffTab / TerminalDrawer）替换为轻量桩，仅断言 CenterPane 与 store 的取数/写回契约。
+// 为聚焦「壳契约」而非子组件内部逻辑，这里把重组件（SessionPane / PreviewTab /
+// DiffTab / IntegratedPane）替换为轻量桩，仅断言 CenterPane 与 store 的取数/写回契约。
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, act } from '@testing-library/react';
 import { CenterPane } from '../components/CenterPane';
@@ -66,27 +66,12 @@ vi.mock('../components/DiffTab', () => ({
   ),
 }));
 
-vi.mock('../components/TerminalDrawer', () => ({
-  TerminalDrawer: ({ open, height, onCloseTab, onNewTerminal, onResizeHeight }: any) =>
-    open ? (
-      <div data-testid="terminal-drawer" data-height={height} className="terminal-drawer">
-        <button data-testid="drawer-close" onClick={() => onCloseTab('term-1')}>close</button>
-        <button data-testid="drawer-new" onClick={() => onNewTerminal()}>new</button>
-        <button data-testid="drawer-resize" onClick={() => onResizeHeight(300)}>resize</button>
-      </div>
-    ) : null,
-}));
-
 /** 重置 store 到干净状态。 */
 function resetStore() {
   useTabStore.setState({
     tabs: [],
-    activeEditorTabId: null,
-    activePanelTabId: null,
+    activeTabId: null,
     terminals: [],
-    drawerOpen: false,
-    drawerHeight: 240,
-    activeTermId: null,
   });
 }
 
@@ -94,14 +79,10 @@ function seedTabs(tabs: Tab[]) {
   useTabStore.setState({ tabs });
 }
 
-const noop = () => {};
-
 function renderCenterPane(overrides: Partial<React.ComponentProps<typeof CenterPane>> = {}) {
   return render(
     <CenterPane
       onNewTerminal={vi.fn()}
-      onResizeDrawer={vi.fn()}
-      onCloseTermTab={vi.fn()}
       {...overrides}
     />,
   );
@@ -123,12 +104,12 @@ describe('CenterPane — 壳重写后行为回归', () => {
       expect(tabEls[0].textContent).toContain('sess-a');
     });
 
-    it('active 指针驱动 TabBar 的 active class，取数自 store.activeEditorTabId', () => {
+    it('active 指针驱动 TabBar 的 active class，取数自 store.activeTabId', () => {
       seedTabs([
         { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
         { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
       ]);
-      useTabStore.setState({ activeEditorTabId: 's2' });
+      useTabStore.setState({ activeTabId: 's2' });
       const { container } = renderCenterPane();
       const tabEls = container.querySelectorAll('.center-pane .terminal-tab');
       expect(tabEls[0].className).not.toContain('active');
@@ -150,7 +131,7 @@ describe('CenterPane — 壳重写后行为回归', () => {
         { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
         { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/b', name: 'sess-b' } as Tab,
       ]);
-      useTabStore.setState({ activeEditorTabId: 's1' });
+      useTabStore.setState({ activeTabId: 's1' });
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
@@ -188,7 +169,7 @@ describe('CenterPane — 壳重写后行为回归', () => {
       });
       const s = useTabStore.getState();
       expect(s.tabs.find((t) => t.id === '/a')!.hidden).toBe(false);
-      expect(s.activeEditorTabId).toBe('/a');
+      expect(s.activeTabId).toBe('/a');
     });
   });
 
@@ -197,7 +178,7 @@ describe('CenterPane — 壳重写后行为回归', () => {
       seedTabs([
         { id: 'preview:/repo//a.ts', kind: 'preview', location: 'editor', title: 'a.ts', hidden: false, order: 0, root: '/repo', path: 'a.ts' } as Tab,
       ]);
-      useTabStore.setState({ activeEditorTabId: 'preview:/repo//a.ts' });
+      useTabStore.setState({ activeTabId: 'preview:/repo//a.ts' });
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
@@ -217,7 +198,7 @@ describe('CenterPane — 壳重写后行为回归', () => {
         { id: 'preview:/repo//a.ts', kind: 'preview', location: 'editor', title: 'a.ts', hidden: false, order: 0, root: '/repo', path: 'a.ts' } as Tab,
         { id: 'diff:/repo//work', kind: 'diff', location: 'editor', title: '工作区改动', hidden: false, order: 1, cwd: '/repo', commitHash: null } as Tab,
       ]);
-      useTabStore.setState({ activeEditorTabId: 'diff:/repo//work' });
+      useTabStore.setState({ activeTabId: 'diff:/repo//work' });
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
@@ -228,37 +209,7 @@ describe('CenterPane — 壳重写后行为回归', () => {
     });
   });
 
-  describe('抽屉高度 / 开关持久化（取数自 store）', () => {
-    it('drawerOpen=true 时渲染 TerminalDrawer，且其 height 取数自 store.drawerHeight', () => {
-      useTabStore.setState({ drawerOpen: true, drawerHeight: 360 });
-      const { getByTestId } = renderCenterPane();
-      const drawer = getByTestId('terminal-drawer');
-      expect(drawer).toBeTruthy();
-      expect(drawer.getAttribute('data-height')).toBe('360');
-    });
 
-    it('drawerOpen=false 时不挂载 TerminalDrawer', () => {
-      useTabStore.setState({ drawerOpen: false });
-      const { queryByTestId } = renderCenterPane();
-      expect(queryByTestId('terminal-drawer')).toBeNull();
-    });
-
-    it('抽屉高度拖拽 → onResizeDrawer 回调收到新高度（持久化由 App 负责写 config）', () => {
-      useTabStore.setState({ drawerOpen: true, drawerHeight: 240 });
-      const onResizeDrawer = vi.fn();
-      const { getByTestId } = renderCenterPane({ onResizeDrawer });
-      fireEvent.click(getByTestId('drawer-resize'));
-      expect(onResizeDrawer).toHaveBeenCalledWith(300);
-    });
-
-    it('抽屉关闭 tab → 调 onCloseTermTab（App 协调主进程 destroyTerminal）', () => {
-      useTabStore.setState({ drawerOpen: true, drawerHeight: 240 });
-      const onCloseTermTab = vi.fn();
-      const { getByTestId } = renderCenterPane({ onCloseTermTab });
-      fireEvent.click(getByTestId('drawer-close'));
-      expect(onCloseTermTab).toHaveBeenCalledWith('term-1');
-    });
-  });
 
   describe('拖拽重排（issue 11 / ADR-0001 TabReorder）', () => {
     it('父层按 store.order 排序后传入 TabBar，视觉顺序跟随 order', () => {
@@ -284,9 +235,9 @@ describe('CenterPane — 壳重写后行为回归', () => {
       const panesBefore = container.querySelectorAll('[data-testid="terminal-pane"]');
       expect(panesBefore).toHaveLength(3);
 
-      // 模拟 TabBar 拖拽结束 → 父层调 reorderTabs('editor', 新顺序)。
+      // 模拟 TabBar 拖拽结束 → 父层调 reorderTabs(新顺序)。
       act(() => {
-        useTabStore.getState().reorderTabs('editor', ['s3', 's1', 's2']);
+        useTabStore.getState().reorderTabs(['s3', 's1', 's2']);
       });
 
       // 视觉顺序跟随新 order（TabBar 仍按 store 排序传入）。

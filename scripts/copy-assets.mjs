@@ -21,18 +21,20 @@ function copyAsset(from, to) {
   console.log(`[copy-assets] ${from} -> ${to}`);
 }
 
-// 递归拷贝一个目录（用于 shell-integration 脚本，运行时由主进程 fs 读取注入到 shell）。
-function copyDir(from, to) {
-  const src = path.join(root, from);
-  if (!fs.existsSync(src)) return;
-  fs.mkdirSync(to, { recursive: true });
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (entry.isDirectory()) copyDir(path.join(from, entry.name), path.join(to, entry.name));
-    else fs.copyFileSync(path.join(src, entry.name), path.join(to, entry.name));
-  }
-  console.log(`[copy-assets] ${from}/ -> ${to}/`);
+// 拷贝 shell-integration 脚本（不含 inject.ts，已编译进 index.js bundle）。
+// 运行时 getShellIntegrationInjection 用 __dirname 定位脚本，
+// 绑定后 __dirname = out/main/，故脚本需平铺到 out/main/ 根下。
+const shellScripts = [
+  'shellIntegration.ps1',
+  'shellIntegration-bash.sh',
+  'shellIntegration.fish',
+  'shellIntegration-env.zsh',
+  'shellIntegration-login.zsh',
+  'shellIntegration-profile.zsh',
+  'shellIntegration-rc.zsh',
+];
+for (const f of shellScripts) {
+  copyAsset(`src/main/shell-integration/${f}`, `out/main/${f}`);
 }
-
-copyDir('src/main/shell-integration', 'out/main/shell-integration');
 
 for (const a of assets) copyAsset(a.from, a.to);

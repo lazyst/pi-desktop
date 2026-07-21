@@ -10,6 +10,8 @@ function mockPty() {
     write: vi.fn(),
     resize: vi.fn(),
     kill: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
     on: vi.fn((e: string, cb: (d?: any) => void) => { cbs[e] = cb; }),
     emit: (e: string, d?: any) => cbs[e]?.(d),
     pid: 999,

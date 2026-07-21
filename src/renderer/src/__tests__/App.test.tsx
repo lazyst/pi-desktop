@@ -12,12 +12,8 @@ const CONFIG = defaultConfig();
 beforeEach(() => {
   useTabStore.setState({
     tabs: [],
-    activeEditorTabId: null,
-    activePanelTabId: null,
+    activeTabId: null,
     terminals: [],
-    drawerOpen: false,
-    drawerHeight: CONFIG.terminalDrawerHeight,
-    activeTermId: null,
   });
 });
 

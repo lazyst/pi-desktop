@@ -8,21 +8,21 @@
 //
 // 关键语义（对齐 VS Code terminalInstance.setVisible 不析构）：
 //  - 实例只创建一次（keep-alive），跨 active 切换保留；非 active 时仅 setActive(false)
-//    （壳把 host 设为 display:none），实例本身不销毁，避免「销毁→重建→WebGL 重探测」的切 tab 首帧闪。
-//  - 切回 active 时显式 setActive(true)：flush + 强制 resize 校准尺寸（display:none 隐藏期
-//    xterm 尺寸为 0，切回必须用真实容器尺寸重测，否则表现为「切回的终端变空白新终端、历史丢失」）。
+//    （壳把 host 用 opacity:0 + pointer-events:none 隐藏），实例本身不销毁，避免「销毁→重建→WebGL 重探测」的切 tab 首帧闪。
+//  - 切回 active 时 setActive(true)：flush + doResize 重测尺寸（非 active 期间 CSS opacity:0
+//    保留了完整布局，xterm 尺寸不变，doResize 通常无变化；仍调 flush 以处理隐藏期排队的 resize）。
 //  - 5ms 数据缓冲 / 分轴 resize 防抖 / 主题字号跟随 已在 XtermTerminal + terminal-registry +
 //    terminalDataBufferer + terminalResizeDebouncer 内实现，本模块只做实例登记与驱动，不重复堆逻辑。
 //
 // 两种通道（SessionChannel / IntegratedChannel）经统一 acquire/release/setActive 入口驱动，
 // 差异仅在「构造时选哪条 channel」与「集成终端卸载时是否通知主进程销毁 pty」。
-import { SessionChannel, IntegratedChannel } from './terminalChannel';
+import { SessionChannel, IntegratedChannel, UnifiedChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import { XtermTerminal } from './XtermTerminal';
 import type { PiApi } from '../ipc';
 
 /** 终端种类：会话终端走 SessionChannel，集成终端走 IntegratedChannel。 */
-export type PaneKind = 'session' | 'integrated';
+export type PaneKind = 'session' | 'integrated' | 'unified';
 
 /** acquire 参数。 */
 export interface AcquireOptions {
@@ -59,9 +59,11 @@ export function acquirePane({ key, kind, pi }: AcquireOptions): XtermTerminal {
   if (existing) return existing; // keep-alive：已存在则直接复用，不重建（避免 WebGL 重探测首帧闪）。
 
   const channel: TerminalChannel =
-    kind === 'integrated'
-      ? new IntegratedChannel(pi, key)
-      : new SessionChannel(pi, key);
+    kind === 'unified'
+      ? new UnifiedChannel(pi, key)
+      : kind === 'integrated'
+        ? new IntegratedChannel(pi, key)
+        : new SessionChannel(pi, key);
 
   const term = new XtermTerminal({ sessionKey: key, channel, pi });
   panes.set(key, term);

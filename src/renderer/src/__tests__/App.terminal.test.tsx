@@ -12,16 +12,12 @@ const CONFIG = defaultConfig();
 beforeEach(() => {
   useTabStore.setState({
     tabs: [],
-    activeEditorTabId: null,
-    activePanelTabId: null,
+    activeTabId: null,
     terminals: [],
-    drawerOpen: false,
-    drawerHeight: CONFIG.terminalDrawerHeight,
-    activeTermId: null,
   });
 });
 
-// 构造带集成终端 IPC 桩的 pi，供 App 终端抽屉测试使用。
+// 构造带统一终端 IPC 桩的 pi，供 App 统一 TabBar 终端测试使用。
 function makeApi(overrides: Record<string, unknown> = {}) {
   const api = {
     listSessions: vi.fn().mockResolvedValue([]),
@@ -35,7 +31,7 @@ function makeApi(overrides: Record<string, unknown> = {}) {
     onIndex: vi.fn(() => () => {}),
     onRelink: vi.fn(() => () => {}),
     onTerminalExit: vi.fn(() => () => {}),
-    // 主进程在 createTerminal/destroyTerminal 后会经 term:list 主动推送完整列表
+    // 主进程在 spawnTerminal/destroyTerminal 后会经 term:list 主动推送完整列表
     // （单一事实来源，见 App 的 onTerminalList 订阅）。preload 的解构为 cb(m.list)，
     // 故桩也按 m.list 解构，对齐真实契约（避免 setTerminals 收到非数组而崩溃）。
     onTerminalList: vi.fn((cb: (list: any[]) => void) => {
@@ -53,15 +49,11 @@ function makeApi(overrides: Record<string, unknown> = {}) {
       { id: 'pwsh', name: 'PowerShell', shell: 'pwsh', args: [] },
       { id: 'bash', name: 'bash', shell: 'bash', args: [] },
     ]),
-    createTerminal: vi.fn(async () => {
-      const info = { id: 't-1', profileId: 'pwsh', cwd: '/x', title: 'PowerShell' };
-      // 模拟主进程 create 后广播 term:list（含新实例），对齐真实运行时。
-      (api as any)._termListCb?.([info]);
-      return info;
-    }),
-    // 无激活会话时 App.handleNewTerminal 走「应用工作目录」分支，需有对应桩。
-    createTerminalInAppWorkDir: vi.fn(async () => {
-      const info = { id: 't-1', profileId: 'pwsh', cwd: '/app', title: 'PowerShell' };
+    // spawnTerminal 替代旧 createTerminal/createTerminalInAppWorkDir：
+    // 返回统一 TerminalInfo 格式（含 key/name/type/status）。
+    spawnTerminal: vi.fn(async () => {
+      const info = { id: 't-1', key: 't-1', cwd: '/', title: 'PowerShell', name: 'PowerShell', type: 'shell', status: 'running' };
+      // 模拟主进程 spawn 后广播 term:list（含新实例），对齐真实运行时。
       (api as any)._termListCb?.([info]);
       return info;
     }),
@@ -79,86 +71,54 @@ function makeApi(overrides: Record<string, unknown> = {}) {
   return api;
 }
 
-describe('App 集成终端抽屉（T6）', () => {
-  it('点击标题条终端按钮 → 抽屉打开', () => {
+describe('App 统一 TabBar 终端（Phase 2）', () => {
+  it('点击标题条终端按钮 → spawnTerminal 被调用', async () => {
     const api = makeApi();
     render(<App />);
-    const btn = screen.getByLabelText('终端') as HTMLButtonElement;
+    const btn = screen.getByLabelText('新建终端') as HTMLButtonElement;
     expect(btn).toBeTruthy();
-    expect(btn.getAttribute('aria-label')).toBe('终端');
-    expect(screen.queryByTestId('terminal-drawer')).toBeNull();
     fireEvent.click(btn);
-    expect(screen.getByTestId('terminal-drawer')).toBeTruthy();
-    // 再次点击 → 收起
-    fireEvent.click(btn);
-    expect(screen.queryByTestId('terminal-drawer')).toBeNull();
+    await waitFor(() => expect(api.spawnTerminal).toHaveBeenCalled());
   });
 
-  it('标题条终端按钮在激活时带 active 类', () => {
+  it('handleNewTerminal → spawnTerminal 被调用、openTerminal 创建 tab', async () => {
     const api = makeApi();
     render(<App />);
-    const btn = screen.getByLabelText('终端') as HTMLButtonElement;
-    expect(btn.className).not.toContain('active');
-    fireEvent.click(btn);
-    expect(btn.className).toContain('active');
-  });
+    fireEvent.click(screen.getByLabelText('新建终端'));
 
-  it('handleNewTerminal → createTerminal 被调用、经 onTerminalList 推送渲染恰好一个 tab、activeTermId 设置', async () => {
-    const api = makeApi();
-    render(<App />);
-    // 先打开抽屉，再点「新建终端」按钮（位于抽屉 tab 条右侧）。
-    fireEvent.click(screen.getByLabelText('终端'));
-    const newBtn = screen.getByLabelText('新建终端') as HTMLButtonElement;
-    fireEvent.click(newBtn);
-
-    await waitFor(() => expect(api.createTerminal.mock.calls.length + api.createTerminalInAppWorkDir.mock.calls.length).toBeGreaterThan(0));
-    // createTerminal 被传入 profile 与 cwd（无激活会话时走 createTerminalInAppWorkDir 分支，同样校验 profile）。
-    const createCalls = api.createTerminal.mock.calls;
-    const createAppCalls = api.createTerminalInAppWorkDir.mock.calls;
-    expect(createCalls.length + createAppCalls.length).toBe(1);
-    const req = (createCalls.length ? createCalls : createAppCalls)[0] as unknown as [{ profile: { id: string }; cwd?: string }];
-    expect(req[0].profile.id).toBe(CONFIG.defaultTerminalProfile ?? 'pwsh');
+    await waitFor(() => expect(api.spawnTerminal).toHaveBeenCalled());
+    // spawnTerminal 被传入 profile（defaultTerminalProfile 为 null 时取 profiles[0]）。
+    const spawnCalls = (api as any).spawnTerminal.mock.calls;
+    expect(spawnCalls.length).toBe(1);
+    const req = spawnCalls[0][0];
+    expect(req.profile.id).toBe(CONFIG.defaultTerminalProfile ?? 'pwsh');
     expect(api.listTerminalProfiles).toHaveBeenCalled();
-    // 关键回归点：新建一次终端，抽屉里应「恰好一个」PowerShell tab，
+    // 关键回归点：新建一次终端，中间区应「恰好一个」PowerShell tab，
     // 不会因「本地追加 + onTerminalList 推送」双路径而渲染出两个重复 tab。
     expect(api.onTerminalList).toHaveBeenCalled();
     await waitFor(() => expect(screen.getAllByText('PowerShell').length).toBe(1));
   });
 
-  it('关闭 tab → destroyTerminal 被调用、terminals 减少，且自动收起（最后一个）', async () => {
+  it('关闭终端 tab → 杀 PTY + 移除 tab，侧边栏计数更新', async () => {
     const api = makeApi();
     render(<App />);
-    fireEvent.click(screen.getByLabelText('终端'));
     fireEvent.click(screen.getByLabelText('新建终端'));
-    // 等到终端创建（无激活会话时走 createTerminalInAppWorkDir 分支）。
-    await waitFor(() => expect(api.createTerminal.mock.calls.length + api.createTerminalInAppWorkDir.mock.calls.length).toBeGreaterThan(0));
+    await waitFor(() => expect(api.spawnTerminal).toHaveBeenCalled());
 
-    // 抽屉内应有一个终端 tab 的关闭按钮
-    const closeBtn = screen.getByLabelText('关闭终端') as HTMLButtonElement;
+    // TabBar 中的关闭按钮（class="tab-close"）。
+    const closeBtn = document.querySelector('.tab-close') as HTMLButtonElement;
     expect(closeBtn).toBeTruthy();
     fireEvent.click(closeBtn);
-    expect(api.destroyTerminal).toHaveBeenCalledWith('t-1');
-    // 关掉最后一个 → 抽屉收起
-    await waitFor(() => expect(screen.queryByTestId('terminal-drawer')).toBeNull());
-  });
 
-  it('抽屉高度拖拽 → setConfig 被调用（terminalDrawerHeight）', async () => {
-    const api = makeApi();
-    render(<App />);
-    fireEvent.click(screen.getByLabelText('终端'));
-    fireEvent.click(screen.getByLabelText('新建终端'));
-    await waitFor(() => expect(api.createTerminal.mock.calls.length + api.createTerminalInAppWorkDir.mock.calls.length).toBeGreaterThan(0));
-
-    const resizer = document.querySelector('.terminal-drawer-resizer') as HTMLElement;
-    expect(resizer).toBeTruthy();
-    act(() => {
-      fireEvent.mouseDown(resizer, { clientY: 500 });
-      fireEvent.mouseMove(document, { clientY: 400 });
-      fireEvent.mouseUp(document);
+    // destroyTerminal 被调用，杀死 PTY
+    await waitFor(() => expect(api.destroyTerminal).toHaveBeenCalled());
+    // 标签从 DOM 移除（不再只是隐藏）
+    await waitFor(() => {
+      expect(screen.queryByText('PowerShell')).toBeNull();
     });
-    // 向上拖 100px：drawerHeight(=CONFIG.terminalDrawerHeight) + 100 → 回写 config。
-    expect(api.setConfig).toHaveBeenCalled();
-    const partial = api.setConfig.mock.calls[api.setConfig.mock.calls.length - 1][0];
-    expect(partial).toHaveProperty('terminalDrawerHeight');
+    // store.terminals 已清空（mock destroyTerminal 回调 _termListCb([])）
+    expect(useTabStore.getState().terminals).toEqual([]);
+    // tab 被真移除（不再是 hidden）
+    expect(useTabStore.getState().tabs.length).toBe(0);
   });
 });
