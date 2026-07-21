@@ -375,8 +375,9 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  // 背压回传（对齐 VS Code acknowledgeDataEvent）：每批 write 解析完成后通知主进程消费字节数。
-  it('acknowledges consumed bytes via pi.acknowledgeDataEvent after each write', async () => {
+  // 背压回传（对齐 VS Code AckDataBufferer）：累积消费字符数达 CharCountAckSize(5000)
+  // 才发一次 acknowledgeDataEvent IPC，减少高频小段 write 下的通信量。
+  it('batches ack via AckDataBufferer, sending every 5000 chars (aligned with VS Code)', async () => {
     const api = makeApi();
     vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, _d: string | Uint8Array, cb?: () => void) {
       cb?.(); // 立即解析完成
@@ -384,10 +385,28 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+
+    // 写 11 字符 → 未达阈值，不应触发 ack
     onData('k', 'hello world');
-    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalled());
-    // 回传 key 与本次消费字节数（'hello world'.length === 11）。
-    expect((api.acknowledgeDataEvent as any).mock.calls[0]).toEqual(['k', 11]);
+    await vi.waitFor(() => expect(api.acknowledgeDataEvent).not.toHaveBeenCalled());
+
+    // 再写 4990 字符 → 累积 5001 > 5000，触发一次 5000 回传
+    const big = 'x'.repeat(4990);
+    onData('k', big);
+    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(1));
+    expect(api.acknowledgeDataEvent).toHaveBeenCalledWith('k', 5000);
+
+    // 剩余 1 字符累积在 _unsentAckChars（未达阈值），再写 4999 → 累积 5000 == 5000，仍不触发（需 > 5000）
+    onData('k', 'y');
+    onData('k', 'z'.repeat(4999));
+    // 此时累积 = 1 + 4999 = 5000，5000 > 5000？不满足 > 条件，无新 ack
+    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(1));
+
+    // 再写 1 字符 → 累积 5001 > 5000，触发第二次 5000 回传
+    onData('k', '!');
+    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(2));
+    expect(api.acknowledgeDataEvent).toHaveBeenLastCalledWith('k', 5000);
+
     t.unmount();
   });
 
