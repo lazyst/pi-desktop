@@ -60,7 +60,9 @@ export class SessionPool {
   private dataBuffers = new Map<string, DataBuffer>();
   constructor(private ptyFactory: PtyFactory, private opts: SessionPoolOptions) {}
 
-  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。 */
+  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。
+   * 背压计数已在 pty.on('data') 实时处理，此处仅做数据聚合后投递。
+   * （对齐 VS Code 的「先计算背压再 fire 数据」时序）。 */
   private emitData(key: string, data: string): void {
     let buf = this.dataBuffers.get(key);
     if (!buf) {
@@ -76,8 +78,7 @@ export class SessionPool {
       b.chunks = [];
       b.timer = null;
       this.dataBuffers.delete(key);
-      // 经背压计数：累加未确认字符；超高水位由 BackpressureController 调 pty.pause() 源头反压。
-      this.entries.get(key)?.bp.onData(joined.length);
+      // 背压计数已在 pty.on('data') 实时处理，此处不再重复累加。
       // 数据照常发往渲染端（pause 只掐断 PTY 后续输出，已读出的这块照发）。
       this.opts.onData(key, joined);
     }, DATA_BUFFER_MS);
@@ -113,7 +114,12 @@ export class SessionPool {
     // `live-<uuid>`; after the session file is written it is linked to the on-disk
     // `.jsonl` path (see reconcile), and `e.info.key` is read dynamically so both
     // the live key and the disk key receive status updates.
-    pty.on('data', (d: string) => this.emitData(e.info.key, d));
+    pty.on('data', (d: string) => {
+      // 实时背压计数：PTY 数据一到立即累加，消除 5ms 聚合窗口导致的背压响应延迟
+      // （对齐 VS Code TerminalProcess.onProcessData 的源头流控时序）。
+      this.entries.get(e.info.key)?.bp.onData(d.length);
+      this.emitData(e.info.key, d);
+    });
     pty.on('exit', (code: number | null, signal: string | null) => {
       e.info.status = 'dead';
       this.opts.onStatus(e.info.key, 'dead');

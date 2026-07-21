@@ -39,7 +39,7 @@ interface Entry {
  *    例外：启用 shell integration 注入时，本池会额外给该实例的 env 补上
  *    TERM_PROGRAM='vscode' + VSCODE_INJECTION + VSCODE_NONCE——因为 VS Code 系注入脚本
  *    （fish 等）靠 TERM_PROGRAM 判定激活，注入路径与 pi-tui 路径互不干扰。
- *  - 输出走 5ms 聚合窗口 + 背压节流后回调 onData，节奏对齐 SessionPool 的双段缓冲设计。
+ *  - 背压计数在 pty.on('data') 实时处理、5ms 聚合仅做输出合并（对齐 VS Code 的先算背压再 fire 时序）。
  *  - 启动真实 shell 时注入 VS Code shell integration 脚本，使 shell 主动发 OSC 633 系序列，
  *    渲染端据此做命令级分段写入（见 XtermTerminal._segmentByShellIntegration）。
  */
@@ -106,7 +106,12 @@ export class IntegratedTerminalPool {
       // 源头背压：超高水位 pause PTY、降到低水位 resume PTY（对齐 VS Code ptyProcess.pause/resume）。
       bp: new BackpressureController(() => pty.pause(), () => pty.resume()),
     };
-    pty.on('data', (d: string) => this.emitData(id, d));
+    pty.on('data', (d: string) => {
+      // 实时背压计数：PTY 数据一到立即累加，对齐 VS Code TerminalProcess.onProcessData
+      // 的源头流控（先算背压再 fire 数据）。消除 5ms 聚合窗口导致的背压响应延迟。
+      this.entries.get(id)?.bp.onData(d.length);
+      this.emitData(id, d);
+    });
     pty.on('exit', () => {
       this.clearDataBuffer(id);
       this.entries.get(id)?.bp.dispose();
@@ -177,8 +182,9 @@ export class IntegratedTerminalPool {
   }
 
   /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。
-   * 窗口结束的数据不直接 IPC 推送，而是经 BackpressureController 节流——
-   * 超水位则暂缓投递，等渲染端 ack 追上后再补推。 */
+   * 背压计数已在 pty.on('data') 实时处理，此处仅做数据聚合后投递，
+   * 不再重复累加 inflight（对齐 VS Code TerminalProcess.onProcessData
+   * 的「先计算背压再 fire 数据」时序）。 */
   private emitData(id: string, data: string): void {
     let buf = this.dataBuffers.get(id);
     if (!buf) {
@@ -194,8 +200,7 @@ export class IntegratedTerminalPool {
       b.chunks = [];
       b.timer = null;
       this.dataBuffers.delete(id);
-      // 经背压计数：累加未确认字符；超高水位由 BackpressureController 调 pty.pause() 源头反压。
-      this.entries.get(id)?.bp.onData(joined.length);
+      // 背压计数已在 pty.on('data') 实时处理，此处不再重复累加。
       // 数据照常发往渲染端（pause 只掐断 PTY 后续输出，已读出的这块照发）。
       this.opts.onData(id, joined);
     }, DATA_BUFFER_MS);
