@@ -1,4 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// paneManager 引入 xterm（需要浏览器环境），在 tabStore 纯逻辑测试中 mock 掉。
+vi.mock('../../components/paneManager', () => ({
+  capturePaneScrollState: vi.fn(),
+}));
+
 import { useTabStore, type Tab, type TabLocation } from '../tabStore';
 
 /** 重置 store 到初始空状态，保证用例间隔离。 */
@@ -6,6 +12,9 @@ function resetStore() {
   useTabStore.setState({
     tabs: [],
     activeTabId: null,
+    activeCwd: null,
+    cwdOrder: [],
+    cwdActiveTab: {},
     terminals: [],
   });
 }
@@ -246,9 +255,9 @@ describe('tabStore — 状态容器与 action', () => {
   });
 
   describe('closeCenterTab', () => {
-    it('session 终端：关闭 = 仅隐藏 keep-alive（hidden:true 且不卸载），激活指针移到下一个可见 tab', () => {
+    it('session 终端：关闭 = 仅隐藏 keep-alive（hidden:true 且不卸载），激活指针移到同目录下一个可见 tab', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
-      getState().openSession({ key: 's2', cwd: '/b', name: 'sess-b' });
+      getState().openSession({ key: 's2', cwd: '/a', name: 'sess-b' });
       getState().selectTab('s1');
       // 关闭 s1 → 实例仍在 tabs 中，仅置 hidden，内容实例不卸载（切回恢复滚动/历史）。
       getState().closeCenterTab('s1');
@@ -280,8 +289,8 @@ describe('tabStore — 状态容器与 action', () => {
       expect(s.tabs[0].id).toBe('diff:/repo//work');
     });
 
-    it('关闭激活的 preview tab 后激活指针回退到下一个可见 tab（preview 为真移除）', () => {
-      getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
+    it('关闭激活的 preview tab 后激活指针回退到同目录下一个可见 tab（preview 为真移除）', () => {
+      getState().openSession({ key: 's1', cwd: '/repo', name: 'sess-a' });
       getState().openPreview('/repo', 'a.ts');
       getState().openPreview('/repo', 'b.ts');
       getState().selectTab('preview:/repo//a.ts');
@@ -290,7 +299,7 @@ describe('tabStore — 状态容器与 action', () => {
       // a.ts 被真移除；b.ts 预览仍保留（仅移除被关的那一个）。
       expect(s.tabs.find((t) => t.id === 'preview:/repo//a.ts')).toBeUndefined();
       expect(s.tabs.find((t) => t.id === 'preview:/repo//b.ts')).toBeTruthy();
-      // 激活指针回退到下一个可见 tab（按 order 首个为 session s1）。
+      // 激活指针回退到同目录下一个可见 tab（按 order 首个为 session s1）。
       expect(s.activeTabId).toBe('s1');
     });
 
@@ -302,21 +311,21 @@ describe('tabStore — 状态容器与 action', () => {
   });
 
   describe('removeTerminalTab', () => {
-    it('移除 terminal tab（kind=integrated-terminal），激活态迁移到下一个可见 tab', () => {
+    it('移除 terminal tab（kind=integrated-terminal），激活态迁移到同目录下一个可见 tab', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().openTerminal('t-1', '/a', 'Terminal');
-      getState().openTerminal('t-2', '/b', 'Terminal');
-      getState().openTerminal('t-3', '/c', 'Terminal');
+      getState().openTerminal('t-2', '/a', 'Terminal');
+      getState().openTerminal('t-3', '/a', 'Terminal');
       // activeTabId 现在指向最后打开的 t-3
       getState().selectTab('t-2');
       getState().removeTerminalTab('t-2');
       const s = getState();
       expect(s.tabs.find((t) => t.kind === 'integrated-terminal' && t.id === 't-2')).toBeUndefined();
-      // 激活态迁移到下一个可见 tab（按 order 首个为 s1）。
+      // 激活态迁移到同目录下一个可见 tab（按 order 首个为 s1）。
       expect(s.activeTabId).toBe('s1');
     });
 
-    it('移除最后一个 terminal tab 后 activeTabId 迁移到 session tab', () => {
+    it('移除最后一个 terminal tab 后 activeTabId 迁移到同目录 session tab', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().openTerminal('t-1', '/a', 'Terminal');
       getState().removeTerminalTab('t-1');
@@ -329,7 +338,7 @@ describe('tabStore — 状态容器与 action', () => {
     it('移除非激活 terminal tab 不影响当前 activeTabId', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().openTerminal('t-1', '/a', 'Terminal');
-      getState().openTerminal('t-2', '/b', 'Terminal');
+      getState().openTerminal('t-2', '/a', 'Terminal');
       getState().selectTab('t-1');
       getState().removeTerminalTab('t-2');
       expect(getState().activeTabId).toBe('t-1');

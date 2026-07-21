@@ -12,18 +12,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { useTabStore } from '../store/tabStore';
 
 function seed(activeId: string | null) {
-  // 先通过 openTerminal 创建 tab，再将 activeTabId 设为指定值。
+  // 所有 tab 用同一 cwd 以便在同目录内迁移激活指针。
+  const cwd = '/a';
+  const cwdActiveTab: Record<string, string | null> = {};
+  if (activeId) cwdActiveTab[cwd] = activeId;
   useTabStore.setState({
     tabs: [
-      { id: 't-1', kind: 'integrated-terminal', location: 'editor', title: 'PowerShell', hidden: false, order: 0, cwd: '/a' },
-      { id: 't-2', kind: 'integrated-terminal', location: 'editor', title: 'bash', hidden: false, order: 1, cwd: '/b' },
-      { id: 't-3', kind: 'integrated-terminal', location: 'editor', title: 'shell', hidden: false, order: 2, cwd: '/c' },
+      { id: 't-1', kind: 'integrated-terminal', location: 'editor', title: 'PowerShell', hidden: false, order: 0, cwd },
+      { id: 't-2', kind: 'integrated-terminal', location: 'editor', title: 'bash', hidden: false, order: 1, cwd },
+      { id: 't-3', kind: 'integrated-terminal', location: 'editor', title: 'shell', hidden: false, order: 2, cwd },
     ] as any[],
     activeTabId: activeId,
+    activeCwd: cwd,
+    cwdOrder: [cwd],
+    cwdActiveTab,
     terminals: [
-      { id: 't-1', profileId: 'pwsh', cwd: '/a', title: 'PowerShell' },
-      { id: 't-2', profileId: 'bash', cwd: '/b', title: 'bash' },
-      { id: 't-3', profileId: 'pwsh', cwd: '/c', title: 'shell' },
+      { id: 't-1', profileId: 'pwsh', cwd, title: 'PowerShell' },
+      { id: 't-2', profileId: 'bash', cwd, title: 'bash' },
+      { id: 't-3', profileId: 'pwsh', cwd, title: 'shell' },
     ],
   });
 }
@@ -33,6 +39,9 @@ describe('集成终端激活指针迁移（store 为单一事实来源）', () =
     useTabStore.setState({
       tabs: [],
       activeTabId: null,
+      activeCwd: null,
+      cwdOrder: [],
+      cwdActiveTab: {},
       terminals: [],
     });
   });

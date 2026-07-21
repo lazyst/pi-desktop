@@ -665,6 +665,51 @@ export class XtermTerminal implements LiveTerminal {
     this.notifyScrollState();
   }
 
+  /**
+   * 保存当前滚动位置的全量快照（对齐 Orca captureScrollState）。
+   * 包含：viewportY（绝对行号）、baseY（滚动缓冲区总行数）、wasAtBottom（是否贴底）、
+   * 以及 xterm.registerMarker 创建的物理 marker（在 resize 后仍能跟踪逻辑行）。
+   * 返回完整快照，恢复时先用 marker（精确），marker 失效后回退到绝对行号。
+   */
+  captureScrollState(): { viewportY: number; baseY: number; wasAtBottom: boolean; marker?: IMarker } | null {
+    if (!this.term || this.disposed) return null;
+    const buf = this.term.buffer.active;
+    const viewportY = buf.viewportY;
+    const baseY = buf.baseY;
+    const wasAtBottom = viewportY >= baseY;
+    let marker: IMarker | undefined;
+    if (!wasAtBottom) {
+      const offset = viewportY - (baseY + buf.cursorY);
+      try {
+        const m = this.term.registerMarker(offset);
+        if (m) marker = m;
+      } catch { /* marker 注册失败静默忽略 */ }
+    }
+    return { viewportY, baseY, wasAtBottom, marker };
+  }
+
+  /**
+   * 恢复滚动位置（对齐 Orca restoreTerminalStructuralScrollIntent）。
+   * 优先用 marker.line（精确到逻辑行），marker 失效后回退到绝对行号 viewportY。
+   * 如果 wasAtBottom 为 true 或计算后目标行超出范围，scrollToBottom。
+   */
+  restoreScrollState(state: { viewportY: number; baseY: number; wasAtBottom: boolean; marker?: IMarker | null } | null): void {
+    if (!this.term || this.disposed || !state) return;
+    if (state.wasAtBottom) {
+      this.term.scrollToBottom();
+      return;
+    }
+    // 优先用 marker（精确逻辑行跟踪）
+    if (state.marker && state.marker.line >= 0) {
+      this.term.scrollToLine(state.marker.line);
+      return;
+    }
+    // marker 失效回退到绝对行号
+    const buf = this.term.buffer.active;
+    const targetY = Math.min(state.viewportY, buf.baseY);
+    this.term.scrollToLine(targetY);
+  }
+
   /** 终端内查找：前/后搜索（对齐 VS Code XtermTerminal.findNext/findPrevious + SearchAddon）。
    * 由 React 壳的查找面板调用；首次调用时 searchAddon 已在 mount 预装载。
    * @returns 是否命中（驱动面板显示「无结果」）。 */

@@ -50,16 +50,15 @@ export default function App() {
   // 缓存探测到的 profile 列表，避免每次新建都探测。
   const profilesRef = useRef<TerminalProfile[] | null>(null);
   // 当前激活会话（从 store tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
-  // 中间区 tab / 激活指针直接订阅 store（见 issue 03：状态已收编进 useTabStore）。
+  // 中间区 tab / 激活指针直接订阅 store。
   const tabs = useTabStore((s) => s.tabs);
   const activeTabId = useTabStore((s) => s.activeTabId);
+  const activeCwd = useTabStore((s) => s.activeCwd);
   // 终端实例列表订阅：仅用于 App 本地的侧边栏分组计数（terminalsByCwd 派生）。
   const terminals = useTabStore((s) => s.terminals);
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
-  const activeCwd = activeSession?.cwd ?? null;  // 跟随当前激活 tab（预览/diff 时为 null）
-  // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次会话的 cwd，
-  // 供右栏文件树/Git 自动模式稳定跟随——修复“打开文件后文件树显示未选择工作目录”
-  // （根因：原右栏自动模式直接绑定 activeCwd，激活 tab 切到预览时 activeCwd 归零）。
+  // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次的 cwd，
+  // 供右栏文件树/Git 自动模式稳定跟随。
   const [lastSessionCwd, setLastSessionCwd] = useState<string | null>(null);
   useEffect(() => { if (activeCwd) setLastSessionCwd(activeCwd); }, [activeCwd]);
   const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
@@ -332,11 +331,8 @@ export default function App() {
 
   const handleTerminate = (key: string) => { pi.terminate(key); };
 
-  // —— 统一终端创建 ——
-  // 新建终端：取 profile → spawn → 在统一 TabBar 中创建 tab。
-  // 使用 ref 跟踪最新 activeCwd，避免 useCallback 闭包陈旧。
-  const activeCwdRef = useRef(activeCwd);
-  activeCwdRef.current = activeCwd;
+  // —— 集成终端创建 ——
+  // 在指定目录创建集成终端。若未指定 cwd，使用当前活跃目录。
   const appWorkDirRef = useRef(appWorkDir);
   appWorkDirRef.current = appWorkDir;
 
@@ -348,7 +344,7 @@ export default function App() {
       const defaultId = cfg.defaultTerminalProfile;
       const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
       if (!profile) return;
-      const targetCwd = cwd || activeCwdRef.current || appWorkDirRef.current || defaultConfig().appWorkDir || '';
+      const targetCwd = cwd || useTabStore.getState().activeCwd || appWorkDirRef.current || defaultConfig().appWorkDir || '';
       const info = await pi.spawnTerminal({ command: undefined, cwd: targetCwd, profile });
       useTabStore.getState().openTerminal(info.id, info.cwd, info.title);
     } catch (err) {
@@ -356,9 +352,13 @@ export default function App() {
     }
   }, []);
 
-  const handleNewTerminal = useCallback(() => doCreateTerminal(), [doCreateTerminal]);
   const handleNewTerminalInCwd = useCallback((cwd: string) => doCreateTerminal(cwd), [doCreateTerminal]);
   const handleNewTerminalInAppWorkDir = useCallback(() => doCreateTerminal(appWorkDirRef.current || ''), [doCreateTerminal]);
+
+  // 点击侧边栏目录名称 → 切换到该目录的 tab 条，不打开新会话。
+  const handleSelectCwd = useCallback((cwd: string) => {
+    useTabStore.getState().setActiveCwd(cwd);
+  }, []);
 
   // 集成终端 × 关闭：杀 PTY 再移除 tab（区别于 session 的 keep-alive 隐藏）。
   // 对齐用户预期：关闭终端 tab ≡ 终止终端进程，侧边栏计数相应减一。
@@ -376,7 +376,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <TitleBar onOpenSettings={() => setSettingsOpen(true)} onNewTerminal={handleNewTerminal} />
+      <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
       <div className="app-shell">
       <Sidebar
         sessions={sessions}
@@ -404,9 +404,9 @@ export default function App() {
         terminalsByCwd={terminalsByCwd}
         onNewTerminalInAppWorkDir={handleNewTerminalInAppWorkDir}
         onNewTerminalInCwd={handleNewTerminalInCwd}
+        onSelectCwd={handleSelectCwd}
       />
       <CenterPane
-        onNewTerminal={handleNewTerminal}
         onOpenFile={handleOpenFile}
         onDestroyTerminal={handleDestroyTerminal}
       />

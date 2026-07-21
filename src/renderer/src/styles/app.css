@@ -54,6 +54,7 @@ html, body, #root {
   z-index: 1;
 }
 
+
 /* 集成终端底部抽屉：渲染在 .center-pane 内（.center-pane 是纵向 flex 列，
    TabBar 在上、.center-pane-body 在中、.terminal-drawer 在底部），天然只跨中栏、不跨右栏；
    固定高度（由内联 style 控制），只挤压 .center-pane-body（中间 tab 内容区），
@@ -108,6 +109,53 @@ html, body, #root {
 .integrated-terminal-slot.active {
   visibility: visible;
   pointer-events: auto;
+}
+
+/* ── 中间区目录标签条 ──
+   在 TabBar 上方显示当前目录名，以及可切换的其他目录按钮。 */
+.center-pane-cwd-bar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  gap: 8px;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.cwd-label {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.cwd-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  overflow: hidden;
+}
+.cwd-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--transition), color var(--transition);
+}
+.cwd-switch-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 /* ── 集成终端：Tab 栏 / Tab / 新建按钮 / xterm 宿主 ──
