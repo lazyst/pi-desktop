@@ -10,7 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "dist": "pnpm build && electron-builder --config.nsis.oneClick=false",
+    "dist:win": "pnpm build && electron-builder --win --config.nsis.oneClick=false"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.1.0",
@@ -38,6 +40,7 @@
     "katex": "^0.18.0",
     "mermaid": "^11.16.0",
     "monaco-editor": "^0.52.0",
+    "node-pty": "^1.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
@@ -62,11 +65,56 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.1",
     "electron": "^32.0.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "jsdom": "^25.0.0",
-    "node-pty": "^1.0.0",
+    "png-to-ico": "^3.0.2",
     "typescript": "^5.5.0",
     "vite": "^5.4.0",
     "vitest": "^2.1.0"
+  },
+  "build": {
+    "appId": "com.pi.desktop",
+    "productName": "pi-desktop",
+    "files": [
+      "out/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "npmArgs": [],
+    "extraResources": [
+      {
+        "from": "src/main/assets/tray-icon.png",
+        "to": "assets/tray-icon.png",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "src/main/assets/tray-icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "src/main/assets/tray-icon.ico",
+      "uninstallerIcon": "src/main/assets/tray-icon.ico",
+      "runAfterFinish": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "src/main/assets/tray-icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "src/main/assets/tray-icon.png",
+      "category": "Development"
+    },
+    "directories": {
+      "output": "release"
+    }
   }
 }

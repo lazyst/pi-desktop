@@ -6,7 +6,7 @@ import type { AppConfig } from '../renderer/src/types';
 // 启动卡动画或点击新建终端后整屏黑屏，取决于崩溃发生的时机）。
 // appWorkDir 的“文件夹名”在此声明（renderer 安全占位）；main 进程在 ensureAppWorkDir
 // 中结合 os.homedir() 解析为绝对路径（见 index.ts 的 getDefaultAppWorkDir）。
-export const DEFAULT_APP_WORK_DIR_NAME = 'piDesktop';
+export const DEFAULT_APP_WORK_DIR_NAME = 'defaultWorkSpace';
 
 // 默认应用工作目录根（~/piDesktop），可在「设置 → 终端」改为其他目录。
 // 返回文件夹名（renderer 安全）；绝对路径由 main 进程的 getDefaultAppWorkDir 计算。

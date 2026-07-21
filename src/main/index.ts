@@ -26,12 +26,12 @@ import { detectTerminalProfiles } from './shellProfiles';
 
 // 默认应用工作目录的绝对路径（仅 main 进程使用，有 node:os）。config.ts 因被
 // renderer（sandbox，无 node:os）共享而不能 import node 模块，故在此用 node:os/path 计算。
-// 文件夹名 ('piDesktop') 由 config.DEFAULT_APP_WORK_DIR_NAME 提供，保持单一来源。
+// 文件夹名 ('defaultWorkSpace') 由 config.DEFAULT_APP_WORK_DIR_NAME 提供，保持单一来源。
 function getDefaultAppWorkDir(): string {
-  return path.join(os.homedir(), 'piDesktop');
+  return path.join(os.homedir(), 'pi-desktop', 'defaultWorkSpace');
 }import type { AppConfig, TerminalProfile } from '../renderer/src/types';
 
-const configPath = () => path.join(app.getPath('userData'), 'config.json');
+const configPath = () => path.join(os.homedir(), 'pi-desktop', 'config.json');
 let configState: AppConfig | undefined;
 let configTimer: ReturnType<typeof setTimeout> | undefined;
 let configDirty = false;
@@ -48,15 +48,17 @@ function loadConfig(): AppConfig {
   }
 }
 
-// 确保 config.appWorkDir 字段存在（旧配置/损坏时补全默认 ~/piDesktop），
+// 确保 config.appWorkDir 字段存在（旧配置/损坏时补全默认 ~/pi-desktop/defaultWorkSpace），
 // 并创建该目录（递归），使「应用工作目录」分组下的集成终端 cwd 真实可用，
 // 避免 integratedTerminalPool 的 safeCwd 因目录缺失而静默回退到 process.cwd()、导致分组语义失效。
 function ensureAppWorkDir(): string {
   ensureLoaded();
   const cfg = configState!;
-  // 旧配置/损坏时补全默认 ~/piDesktop，并写回持久化（对齐 ADR §3 A1「自动填默认并写回」）。
-  const dir = cfg.appWorkDir || getDefaultAppWorkDir();
-  if (!cfg.appWorkDir) {
+  // 旧配置/损坏时补全默认 ~/pi-desktop/defaultWorkSpace，并写回持久化（对齐 ADR §3 A1「自动填默认并写回」）。
+  // config.ts 的 defaultConfig 只返回文件夹名（renderer 安全），此处补全为绝对路径。
+  let dir = cfg.appWorkDir;
+  if (!dir || !path.isAbsolute(dir)) {
+    dir = getDefaultAppWorkDir();
     configState = mergeConfig(cfg, { appWorkDir: dir });
     writeConfigNow();
   }
@@ -75,6 +77,8 @@ function ensureLoaded(): void {
 function writeConfigNow(): void {
   if (!configState) return;
   try {
+    const dir = path.dirname(configPath());
+    fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(configPath(), JSON.stringify(configState, null, 2));
   } catch (err) {
     console.error('[config] failed to write config.json:', err);
@@ -91,7 +95,13 @@ function setConfig(partial: Partial<AppConfig>): void {
   configState = mergeConfig(configState!, partial);
   // 应用工作目录变更：确保新目录已创建（递归），使该分组下的终端 cwd 立即可用。
   if (partial.appWorkDir) {
-    try { fs.mkdirSync(partial.appWorkDir, { recursive: true }); } catch (err) { console.error('[appWorkDir] failed to create dir:', partial.appWorkDir, err); }
+    // 确保传入的路径是绝对路径（renderer 可能只传了相对路径）
+    const dir = partial.appWorkDir;
+    const absDir = path.isAbsolute(dir) ? dir : path.join(os.homedir(), 'pi-desktop', dir);
+    if (absDir !== dir) {
+      configState = mergeConfig(configState!, { appWorkDir: absDir });
+    }
+    try { fs.mkdirSync(absDir, { recursive: true }); } catch (err) { console.error('[appWorkDir] failed to create dir:', absDir, err); }
   }
   configDirty = true;
   if (configTimer) clearTimeout(configTimer);
@@ -214,6 +224,8 @@ function resolveSessionsDir(): string {
 }
 
 function createWindow() {
+  // 确保 appWorkDir 已解析为绝对路径并已创建目录，避免 renderer 拿到相对路径后报错。
+  ensureAppWorkDir();
   const cfg = getConfig();
   // 还原上次窗口几何（最大化状态单独存标志，bounds 永远是非最大化尺寸）。
   // show:false —— 启动动画（splash）由 renderer 首屏就绪后经 splash:done IPC 触发
