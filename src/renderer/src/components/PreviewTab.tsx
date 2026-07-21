@@ -12,6 +12,8 @@ import { pi } from '../ipc';
 import { MonacoCodeEditor } from './editor/MonacoCodeEditor';
 import { ImagePreview } from './ImagePreview';
 import { ConfirmDialog } from './ConfirmDialog';
+import { MarkdownPreview } from './MarkdownPreview';
+import { RichMarkdownEditor } from './RichMarkdownEditor';
 
 interface Props {
   root: string;
@@ -55,6 +57,9 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  // markdown 文件的三模式视图：预览(渲染) / 源码(Monaco) / 富文本(TipTap)。
+  const [isMarkdown, setIsMarkdown] = useState(false);
+  const [viewMode, setViewMode] = useState<'rendered' | 'source' | 'rich'>('source');
 
   // Load metadata (kind + initial content) when the file changes.
   useEffect(() => {
@@ -76,10 +81,14 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
           if (!ok && !cancelled) setError('无法用系统程序打开该文件');
           return;
         }
-        if (res.isImage) setKind('image');
+        if (res.isImage) { setKind('image'); setIsMarkdown(false); }
         else {
           setKind('code');
           setLanguage(res.language);
+          const md = res.language === 'markdown';
+          setIsMarkdown(md);
+          // markdown 默认进入渲染预览（orca 风格）；其余代码默认源码编辑。
+          setViewMode(md ? 'rendered' : 'source');
           setInitialContent(res.content);
           setCurrentContent(res.content);
         }
@@ -87,6 +96,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
         if (cancelled) return;
         setError(e instanceof Error ? e.message : String(e));
         setKind('binary');
+        setIsMarkdown(false);
       }
     })();
     return () => { cancelled = true; };
@@ -105,6 +115,13 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       setSaving(false);
     }
   }, [root, path, currentContent]);
+
+  // 内容变更统一入口：Monaco(源码) 与 RichMarkdownEditor(富文本) 共用，
+  // 更新 currentContent 并据此计算 dirty（与磁盘 initialContent 比较）。
+  const handleChange = useCallback((c: string) => {
+    setCurrentContent(c);
+    setDirty(c !== initialContent);
+  }, [initialContent]);
 
   // 关闭请求：dirty 时先弹确认（防止静默丢弃未保存改动，对齐原 FileDrawer 抽屉语义）；
   // 非 dirty 或确认通过后，才真正关闭 tab（调父组件传入的 onClose）。
@@ -126,7 +143,32 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
     <div className="preview-tab">
       <div className="preview-tab-header">
         <span className="preview-tab-title" title={path}>{fileName}</span>
-        {kind === 'code' && (
+        {isMarkdown && (
+          <span className="code-preview-toggle">
+            <button
+              type="button"
+              className={viewMode === 'rendered' ? 'is-active' : ''}
+              onClick={() => setViewMode('rendered')}
+            >
+              预览
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'source' ? 'is-active' : ''}
+              onClick={() => setViewMode('source')}
+            >
+              源码
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'rich' ? 'is-active' : ''}
+              onClick={() => setViewMode('rich')}
+            >
+              富文本
+            </button>
+          </span>
+        )}
+        {kind === 'code' && !isMarkdown && (
           <span className="drawer-meta">
             {currentContent ? `${countLines(currentContent)} 行` : ''}
           </span>
@@ -148,17 +190,25 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
 
       <div className="preview-tab-body">
         {kind === 'code' && (
-          <MonacoCodeEditor
-            root={root}
-            path={path}
-            language={language}
-            content={currentContent}
-            onChange={(c) => {
-              setCurrentContent(c);
-              setDirty(c !== initialContent);
-            }}
-            onSave={dirty ? doSave : undefined}
-          />
+          isMarkdown && viewMode === 'rendered' ? (
+            <MarkdownPreview
+              content={currentContent}
+              filePath={path}
+              root={root}
+              onOpenFile={onOpenFile}
+            />
+          ) : isMarkdown && viewMode === 'rich' ? (
+            <RichMarkdownEditor content={currentContent} filePath={path} onChange={handleChange} />
+          ) : (
+            <MonacoCodeEditor
+              root={root}
+              path={path}
+              language={language}
+              content={currentContent}
+              onChange={handleChange}
+              onSave={dirty ? doSave : undefined}
+            />
+          )
         )}
         {kind === 'image' && <ImagePreview root={root} path={path} />}
         {kind === 'binary' && <div className="preview-empty">二进制文件，已用系统程序打开。</div>}
