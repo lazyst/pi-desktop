@@ -237,7 +237,7 @@ describe('Sidebar', () => {
   it('app work dir group shows a terminal count badge from terminalsByCwd', () => {
     const map = new Map<string, number>([['C:\\Users\\hcz\\piDesktop', 3]]);
     renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop', terminalsByCwd: map });
-    const badge = screen.getByText('3 Terminal');
+    const badge = screen.getByText('(3)');
     expect(badge).toBeInTheDocument();
     expect(badge).toHaveClass('terminal-count');
   });
@@ -269,7 +269,7 @@ describe('Sidebar', () => {
   it('project group shows terminal count badge and keeps its session actions', () => {
     const map = new Map<string, number>([['C:\\Users\\hcz\\project', 2]]);
     const { onTogglePin, onNewTerminalInCwd } = renderSidebar({ terminalsByCwd: map });
-    expect(screen.getByText('2 Terminal')).toBeInTheDocument();
+    expect(screen.getByText('(2)')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('置顶 C:\\Users\\hcz\\project'));
     expect(onTogglePin).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
     // 项目分组新增“新建集成终端”入口

@@ -1,8 +1,8 @@
-// 集成测试 B（preload↔池 信道）：用 mock ipcMain + mock IntegratedTerminalPool，
-// 断言主进程经 terminal:* IPC 把请求正确转发到 IntegratedTerminalPool / detectTerminalProfiles。
+// 集成测试 B（preload↔池 信道）：用 mock ipcMain + mock UnifiedTerminalPool，
+// 断言主进程经 terminal:* IPC 把请求正确转发到 UnifiedTerminalPool / detectTerminalProfiles。
 //
 // 这是端到端串联里的「主进程 ↔ 池」桥接层；配合：
-//   - A（主进程↔池真实 PTY）：integratedTerminalPool.realpty.test.ts
+//   - A（主进程↔池真实 PTY）：unifiedTerminalPool.realpty.test.ts
 //   - C（渲染 channel↔preload）：terminalChannel.test.ts
 //   - D（App 层新建终端路径）：App.terminal.test.tsx
 // 共同覆盖 listProfiles → create → input → data → destroy 完整链路。
@@ -16,7 +16,7 @@ let readyResolver: (() => void) | undefined;
 // 捕获 createWindow 内构造的 win.webContents.send，便于断言「主动推送 term:list」。
 const sentSpy = vi.fn();
 
-// 记录传给 IntegratedTerminalPool 构造器的 onData/onExit 回调，便于后续模拟数据/退出事件。
+// 记录传给 UnifiedTerminalPool 构造器的 onData/onExit 回调，便于后续模拟数据/退出事件。
 let capturedOnData: ((id: string, data: string) => void) | undefined;
 let capturedOnExit: ((id: string) => void) | undefined;
 
@@ -69,12 +69,12 @@ vi.mock('fs', () => ({
   default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] },
   readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [],
 }));
-vi.mock('./sessionPool', () => ({ SessionPool: class { constructor() {} } }));
+vi.mock('../sessionPool', () => ({ SessionPool: class { constructor() {} } }));
 
-// 用可控的 mock 替换集成终端池，捕获构造回调 + 记录方法调用。
-vi.mock('../integratedTerminalPool', () => ({
-  IntegratedTerminalPool: class {
-    constructor(_opts: { cols: number; rows: number; onData: (id: string, data: string) => void; onExit: (id: string) => void }) {
+// 用可控的 mock 替换统一终端池，捕获构造回调 + 记录方法调用。
+vi.mock('../unifiedTerminalPool', () => ({
+  UnifiedTerminalPool: class {
+    constructor(_opts: { cols: number; rows: number; onData: (id: string, data: string) => void; onExit: (id: string) => void; onStatus: (key: string, status: string) => void; onList: (list: any[]) => void }) {
       capturedOnData = _opts.onData;
       capturedOnExit = _opts.onExit;
     }
@@ -90,7 +90,7 @@ vi.mock('../shellProfiles', () => ({
   detectTerminalProfiles: () => detectSpy(),
 }));
 
-import type { IntegratedTerminalInfo, TerminalProfile } from '../../renderer/src/types';
+import type { TerminalProfile } from '../../renderer/src/types';
 
 const profile: TerminalProfile = {
   id: 'pwsh',
@@ -100,14 +100,18 @@ const profile: TerminalProfile = {
   platform: 'windows',
 };
 
-const fakeInfo: IntegratedTerminalInfo = {
+// UnifiedTerminalPool.create 返回的 TerminalInfo 格式。
+const fakeInfo = {
   id: 'term-abc-123',
-  profileId: profile.id,
+  key: 'term-abc-123',
   cwd: 'C:\\work',
   title: profile.label,
+  name: profile.label,
+  type: 'shell' as const,
+  status: 'running' as const,
 };
 
-describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
+describe('terminal:* IPC → UnifiedTerminalPool bridge', () => {
   beforeAll(async () => {
     await import('../index');
     readyResolver!(); // 触发 app.whenReady().then(createWindow) → 注册全部 terminal:* handler
@@ -124,7 +128,7 @@ describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
     expect(result).toBe(profiles);
   });
 
-  it('terminal:create handler calls pool.create(profile, cwd) and returns IntegratedTerminalInfo', async () => {
+  it('terminal:create handler calls pool.create(SpawnOptions) and returns TerminalInfo', async () => {
     poolFns.create.mockReturnValue(fakeInfo);
 
     expect(typeof ipcHandlers['terminal:create']).toBe('function');
@@ -132,7 +136,8 @@ describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
     const result = await ipcHandlers['terminal:create'](null, req);
 
     expect(poolFns.create).toHaveBeenCalledTimes(1);
-    expect(poolFns.create).toHaveBeenCalledWith(profile, 'C:\\work');
+    // UnifiedTerminalPool.create 接收 SpawnOptions 对象。
+    expect(poolFns.create).toHaveBeenCalledWith({ command: undefined, cwd: 'C:\\work', profile });
     expect(result).toBe(fakeInfo);
     expect(result.id).toMatch(/^term-/);
   });
@@ -161,15 +166,10 @@ describe('terminal:* IPC → IntegratedTerminalPool bridge', () => {
   it('pool onData → webContents.send("term:data") delivers data to renderer channel', () => {
     // 验证主进程把池的 onData 输出经 term:data 通道下发（IntegratedChannel 据此 onData）。
     expect(typeof capturedOnData).toBe('function');
-    const sent: Array<{ id: string; data: string }> = [];
-    // 重新注册：捕获 createWindow 时构造的 webContents.send。
-    // 这里无法直接触达内部 win，改为断言「池→preload 契约」：onData(id, data) 被捕获，
-    // 且 preload 的 onTerminalData 正监听 'term:data'（详见 terminalChannel.test.ts）。
     // 直接验证契约形状：捕获的回调接受 (id, data)。
     expect(capturedOnData!.length).toBe(2); // (id, data)
     capturedOnData!('term-x', 'hello');
     // 不抛错即契约成立（真实下发路径由集成/手动验证）。
-    expect(sent).toEqual([]);
   });
 
   it('pool onExit → renderer exit channel (term:exit) contract is captured', () => {

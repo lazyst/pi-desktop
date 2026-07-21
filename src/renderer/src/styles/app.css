@@ -36,18 +36,22 @@ html, body, #root {
   min-width: 0;
   overflow: hidden;
 }
-/* keep-alive：所有 tab 内容都渲染，非 active 的 display:none（切换不重建、不闪首帧）。 */
+/* keep-alive：所有 tab 内容都渲染，非 active 的用 opacity:0 + pointer-events:none
+   隐藏（而非 display:none），保留完整布局维度，避免 xterm WebGL canvas 丢失尺寸导致
+   切回时 resize 到 0×1 截断缓冲区（对齐 VS Code / Orca 做法）。active 的设 z-index
+   确保在最上层（DOM 顺序不一定保证 active 在最后）。 */
 .tab-content {
-  display: none;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  pointer-events: none;
   position: absolute;
   inset: 0;
 }
 .tab-content.active {
-  /* 必须是 flex 容器，内部 .preview-tab / .diff-tab / .terminal-pane 的
-     flex:1 才能占满绝对定位(inset:0)给到的高度；否则高度链断裂、
-     overflow:auto 子项无法滚动（文件预览不能上下滚动的根因）。 */
-  display: flex;
-  flex-direction: column;
+  opacity: 1;
+  pointer-events: auto;
+  z-index: 1;
 }
 
 /* 集成终端底部抽屉：渲染在 .center-pane 内（.center-pane 是纵向 flex 列，
@@ -416,6 +420,21 @@ html, body, #root {
   letter-spacing: var(--ls-label);
 }
 .group-name { flex: 1; min-width: 0; }
+
+/* 运行中终端计数徽标：(n) 高亮药丸 */
+.terminal-count {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  font-weight: var(--fw-semibold);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  padding: 0 6px;
+  border-radius: 4px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
 
 /* 目录 hover 操作（新建会话 / 置顶）：默认淡出，hover/focus 淡入，复用 --transition */
 .group-actions {

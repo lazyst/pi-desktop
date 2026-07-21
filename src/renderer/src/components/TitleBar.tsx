@@ -4,15 +4,14 @@ import { IconSettings, IconMinimize, IconMaximize, IconRestore, IconClose, IconT
 
 interface Props {
   onOpenSettings: () => void;
-  onToggleTerminal: () => void;
-  terminalOpen: boolean;
+  onNewTerminal: () => void;
 }
 
 // Custom title bar for the frameless window. Everything is painted with CSS
 // variables, so its colours follow the active theme automatically (task 3).
 // The bar itself is a drag region; only the buttons opt out via
 // `-webkit-app-region: no-drag` (see app.css).
-export function TitleBar({ onOpenSettings, onToggleTerminal, terminalOpen }: Props) {
+export function TitleBar({ onOpenSettings, onNewTerminal }: Props) {
   const [maximized, setMaximized] = useState(false);
 
   // Subscribe to maximize state so the restore/maximize icon stays in sync.
@@ -28,11 +27,11 @@ export function TitleBar({ onOpenSettings, onToggleTerminal, terminalOpen }: Pro
       <div className="titlebar-spacer" />
       <div className="titlebar-actions">
         <button
-          className={`titlebar-btn${terminalOpen ? ' active' : ''}`}
+          className="titlebar-btn"
           type="button"
-          title="终端"
-          aria-label="终端"
-          onClick={onToggleTerminal}
+          title="新建终端"
+          aria-label="新建终端"
+          onClick={onNewTerminal}
         >
           <IconTerminal />
         </button>

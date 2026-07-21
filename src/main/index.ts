@@ -3,9 +3,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { SessionPool } from './sessionPool';
+import { UnifiedTerminalPool } from './unifiedTerminalPool';
+import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './sessionPool';
-import nodePty from 'node-pty';
 import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir } from './fsBridge';
 import { gitStatus, gitLog, gitDiff } from './gitBridge';
 
@@ -22,7 +22,6 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
 import { defaultConfig, parseConfig, mergeConfig } from './config';
 import { snapshotWindowState, initialBoundsOptions } from './windowState';
-import { IntegratedTerminalPool } from './integratedTerminalPool';
 import { detectTerminalProfiles } from './shellProfiles';
 
 // 默认应用工作目录的绝对路径（仅 main 进程使用，有 node:os）。config.ts 因被
@@ -170,8 +169,7 @@ function createTray(win: BrowserWindow): void {
   }
 }
 
-const SESSIONS_DIR =
-  process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
+// SESSIONS_DIR 已由 resolveSessionsDir() 替代（见下方 createWindow）。
 
 // Resolve the `pi` executable to an absolute path. The electron child process does
 // NOT always inherit the user's shell PATH (e.g. when the app is launched by
@@ -211,48 +209,8 @@ function resolveNodeDir(): string | undefined {
   return undefined;
 }
 
-function createPool(win: BrowserWindow) {
-  const useFake = process.env.PI_DESKTOP_FAKE === '1';
-  const fakeScript = path.join(__dirname, 'fake-pi.mjs');
-  const piBin = resolvePi();
-  const nodeDir = resolveNodeDir();
-  // 像 VS Code / 其他终端模拟器一样，向 pty 显式声明终端类型与真彩色支持。
-  // 否则从 GUI 启动的 Electron 主进程不携带 TERM，pi-tui 会降级运行：不隐藏硬件光标
-  // （光标在 pi-tui 自建光标之上闪烁）→ 残留闪烁；布局模式不同 → 内容遮挡底部编辑器。
-  // 关键：TERM_PROGRAM 必须声明为 vscode——pi-tui 依据 TERM_PROGRAM==='vscode'（及
-  // VSCODE_* 环境标记）启用稳定的差分渲染模式（打字机式输出、无逐帧闪烁/滚屏跳动）。
-  // 声明为 'pi-desktop' 会让 pi-tui 走降级渲染路径，出现最新行闪烁 + 编辑器上下跳。
-  const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    TERM: 'xterm-256color',
-    COLORTERM: 'truecolor',
-    TERM_PROGRAM: 'vscode',
-    TERM_PROGRAM_VERSION: '1.128.1',
-  };
-  // Ensure `node` (used by the pi.cmd shim) is on the child PATH even when the app
-  // was launched without the user's shell PATH.
-  if (nodeDir) childEnv.PATH = [nodeDir, process.env.PATH].filter(Boolean).join(path.delimiter);
-  const ptyFactory = (file: string, args: string[], opts: any): IPtyLike => {
-    if (useFake) return nodePty.spawn('node', [fakeScript], { ...opts, shell: true, env: childEnv }) as unknown as IPtyLike;
-    // `file` is always 'pi' from the pool; use the resolved absolute path so the
-    // real `pi` is found even when PATH doesn't contain the pnpm bin.
-    return nodePty.spawn(piBin, args, { ...opts, shell: true, env: childEnv }) as unknown as IPtyLike;
-  };
-  return new SessionPool(ptyFactory, {
-    cols: 80, rows: 24, sessionsDir: SESSIONS_DIR,
-    // The window may already be destroyed when these fire (e.g. during killAll on
-    // 'closed'), so guard every send to avoid "Object has been destroyed" exceptions.
-    onData: (key, data) => { if (!win.isDestroyed()) win.webContents.send('session:data', { key, data }); },
-    onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
-    onExit: (key) => { if (!win.isDestroyed()) win.webContents.send('session:exit', { key }); },
-    onRelink: (from, to) => { if (!win.isDestroyed()) win.webContents.send('session:relink', { from, to }); },
-    // 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端每消费 N 字节即经 IPC 上报，
-    // 由 SessionPool.acknowledgeDataEvent 记账（见下方 ipcMain.on('session:ack')）。
-    // 注意：此处**不能**写成 `() => pool.acknowledgeDataEvent(...)` —— 那会自引用无限递归，
-    // 且 pool 在本闭包创建时（createPool 同步执行期）还处于 const TDZ，点击会话触发 IPC
-    // 时会抛 `ReferenceError: pool is not defined`。SessionPool 内部已自记账，故钩子省略，
-    // 回传入口统一走 ipcMain.on('session:ack') → pool.acknowledgeDataEvent。
-  });
+function resolveSessionsDir(): string {
+  return process.env.PI_DESKTOP_SESSIONS_DIR ?? path.join(app.getPath('home'), '.pi', 'agent', 'sessions');
 }
 
 function createWindow() {
@@ -311,78 +269,89 @@ function createWindow() {
     }
   });
 
-  const pool = createPool(win);
-
-  // 集成终端池：独立运行的真实用户 shell 进程池，与 SessionPool（跑 pi 会话、写 .jsonl）
-  // 完全解耦（不写盘、不进会话索引），用于渲染层内嵌的集成终端抽屉。
-  const termPool = new IntegratedTerminalPool({
+  // ===== 统一终端池 + 会话文件管理器 =====
+  const sessionsDir = resolveSessionsDir();
+  const sessionFileManager = new SessionFileManager(sessionsDir);
+  const piBin = resolvePi();
+  const unifiedPool = new UnifiedTerminalPool({
     cols: 80, rows: 24,
+    piBin,
+    sessionsDir,
+    // 所有终端数据统一经 term:data 通道发送
     onData: (id, data) => { if (!win.isDestroyed()) win.webContents.send('term:data', { id, data }); },
-    // push the latest instance list on exit too, so the renderer's per-dir count stays live
+    // pi 会话状态变更（running / dead），供侧边栏绿点更新
+    onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
+    // 所有终端退出统一经 term:exit 通道发送
     onExit: (id) => { if (!win.isDestroyed()) { win.webContents.send('term:exit', { id }); pushTerminalList(); } },
-    // 实例列表变化（create/destroy/cwd 变更）时推送最新列表。
+    onRelink: (from, to) => { if (!win.isDestroyed()) win.webContents.send('session:relink', { from, to }); },
+    // 实例列表变化时推送
     onList: (list) => { if (!win.isDestroyed()) win.webContents.send('term:list', { list }); },
   });
 
-  // Push the current live integrated-terminal instance list (each with its cwd) to the
-  // renderer, which aggregates it into per-directory group counts. Called after
-  // every create/destroy/exit (see ADR integrated-terminal-dir-grouping.md §6).
   function pushTerminalList(): void {
     if (win.isDestroyed()) return;
-    // 注意：preload 的 onTerminalList 按 { list } 形状解构（见 preload/index.ts），
-    // 故此处必须发送 { list: [...] } 而非裸数组，否则渲染端收到 undefined →
-    // setTerminals(undefined) → useMemo 遍历时抛 "terminals is not iterable" 崩溃。
-    win.webContents.send('term:list', { list: termPool.list() });
+    win.webContents.send('term:list', { list: unifiedPool.list() });
   }
 
-  // 列出当前平台可用的终端 profile（供设置面板下拉 + 新建终端默认选择）
+  // ===== 统一终端 IPC =====
+  // terminal:spawn — 创建终端（pi 会话或 shell 终端，由 SpawnOptions.command 区分）
+  ipcMain.handle('terminal:spawn', async (_e, req: { command?: string; cwd: string; profile?: TerminalProfile; sessionFile?: string; name?: string; key?: string }) => {
+    try {
+      const info = unifiedPool.create(req);
+      pushTerminalList();
+      return info;
+    } catch (err) {
+      console.error('[terminal:spawn] failed:', err);
+      throw new Error('无法启动终端，请确认 pi 或 shell 可用');
+    }
+  });
+  // terminal:listProfiles — 列出可用 shell profile
   ipcMain.handle('terminal:listProfiles', () => detectTerminalProfiles());
-  // 用指定 profile 在 cwd 创建集成终端；profile 由渲染端从 listProfiles 结果传入（只需 id/path/args/platform），
-  // 或从 config 读取 defaultTerminalProfile 解析。此处直接接收完整 profile 对象即可。
+  // terminal:list — 旧版列出所有终端（保留向后兼容）
+  ipcMain.handle('terminal:list', () => unifiedPool.list());
+  // terminal:create — 旧版集成终端创建入口（先保留，App.tsx 仍在使用）
   ipcMain.handle('terminal:create', (_e, req: { profile: TerminalProfile; cwd: string }) => {
     try {
-      const info = termPool.create(req.profile, req.cwd);
+      const info = unifiedPool.create({ command: undefined, cwd: req.cwd, profile: req.profile });
       pushTerminalList();
       return info;
     } catch (err) {
       console.error('[terminal:create] failed:', err);
-      throw new Error('无法启动集成终端，请确认所选 shell 可用');
+      throw new Error('无法启动集成终端');
     }
   });
-  // 列出当前所有存活的集成终端实例信息（含 cwd），供渲染层按目录分组统计计数。
-  ipcMain.handle('terminal:list', () => termPool.list());
-  // 在「应用工作目录」分组下创建集成终端：cwd 取 config.appWorkDir（已确保存在）。
+  // terminal:createInAppWorkDir — 旧版，在工作目录创建
   ipcMain.handle('terminal:createInAppWorkDir', (_e, req: { profile: TerminalProfile }) => {
     try {
       const cwd = ensureAppWorkDir();
-      const info = termPool.create(req.profile, cwd);
+      const info = unifiedPool.create({ command: undefined, cwd, profile: req.profile });
       pushTerminalList();
       return info;
     } catch (err) {
       console.error('[terminal:createInAppWorkDir] failed:', err);
-      throw new Error('无法在应用工作目录启动集成终端，请确认所选 shell 可用');
+      throw new Error('无法在应用工作目录启动集成终端');
     }
   });
-  ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => termPool.write(m.id, m.data));
-  ipcMain.on('terminal:resize', (_e, m: { id: string; cols: number; rows: number }) => termPool.resize(m.id, m.cols, m.rows));
-  // 背压回传：渲染端每消费 N 字节即上报，推进该集成终端实例的背压水位
-  // （对齐 VS Code acknowledgeDataEvent 的真流控，见 integratedTerminalPool.acknowledgeDataEvent）。
-  ipcMain.on('terminal:ack', (_e, m: { id: string; bytes: number }) => termPool.acknowledgeDataEvent(m.id, m.bytes));
-  ipcMain.handle('terminal:destroy', (_e, id: string) => termPool.destroy(id));
+  // terminal:input — 键盘输入
+  ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => unifiedPool.write(m.id, m.data));
+  // terminal:resize — 调整尺寸
+  ipcMain.on('terminal:resize', (_e, m: { id: string; cols: number; rows: number }) => unifiedPool.resize(m.id, m.cols, m.rows));
+  // terminal:ack — 背压回传
+  ipcMain.on('terminal:ack', (_e, m: { id: string; bytes: number }) => unifiedPool.acknowledgeDataEvent(m.id, m.bytes));
+  // terminal:destroy — 销毁终端（用于 shell 终端，直接按 id 杀）
+  ipcMain.handle('terminal:destroy', (_e, id: string) => { unifiedPool.destroy(id); pushTerminalList(); });
+  // session:terminate — 终止 pi 会话（保留别名，含 live key 反查，侧边栏传入 .jsonl 路径）
+  ipcMain.handle('session:terminate', (_e, key: string) => { unifiedPool.terminate(key); pushTerminalList(); });
 
-  // 滚动缓冲区持久化（对齐 VS Code terminal.integrated.bufferState 的内存暂存版）：
-  // 集成终端销毁时渲染端经 saveBuffer 上报序列化的 VT 数据流，下次同 id 重建时经 loadBuffer
-  // 取回并 replay，避免重启丢终端内容。采用内存 map（不落盘），进程退出即清空——
-  // 足以覆盖「关闭终端抽屉又重开」的常见场景；跨进程持久化需接入 storage（后续 polish）。
+  // 滚动缓冲区持久化（内存暂存）
   const terminalBuffers = new Map<string, string>();
   ipcMain.on('terminal:saveBuffer', (_e, m: { id: string; data: string }) => {
     if (m?.id && typeof m.data === 'string') terminalBuffers.set(m.id, m.data);
   });
   ipcMain.handle('terminal:loadBuffer', (_e, id: string): string | undefined => terminalBuffers.get(id));
-  // 集成终端 cwd 变化（来自注入脚本的 OSC 633;P;Cwd=）：更新缓存并推送最新列表，
-  // 使侧边栏目录分组实时重排（对齐 VS Code CwdDetectionCapability）。
+  // terminal:updateCwd — shell integration cwd 更新（仅 shell 类型有效）
   ipcMain.on('terminal:updateCwd', (_e, m: { id: string; cwd: string }) => {
-    termPool.updateCwd(m.id, m.cwd);
+    unifiedPool.updateCwd(m.id, m.cwd);
     pushTerminalList();
   });
 
@@ -447,7 +416,47 @@ function createWindow() {
     if (!win.isDestroyed()) win.webContents.send('config:change', getConfig());
   });
 
-  // 弹出系统原生目录选择对话框（需求 1）。用户取消返回 null。
+  // ===== 会话文件管理 IPC（session:*） =====
+  // 会话写盘（用户发首条消息后 pi 写出 .jsonl）即视为"晋升"，推送最新索引给渲染进程。
+  // 300ms debounce 合并突发写入。recursive watch 在 Windows/macOS 原生支持。
+  let indexTimer: ReturnType<typeof setTimeout> | undefined;
+  const pushIndex = () => {
+    if (indexTimer) clearTimeout(indexTimer);
+    indexTimer = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      const groups = sessionFileManager.listFiles();
+      // Link freshly-written disk sessions to the live processes that created them
+      // so clicking a promoted sidebar entry reuses the same process.
+      unifiedPool.reconcile(groups);
+      win.webContents.send('session:index', groups);
+    }, 300);
+  };
+  try {
+    fs.watch(sessionsDir, { recursive: true }, pushIndex);
+  } catch (err) {
+    console.error('[session:index] fs.watch failed:', err);
+  }
+
+  ipcMain.handle('session:list', () => sessionFileManager.listFiles());
+  ipcMain.handle('session:delete', (_e, key: string) => {
+    sessionFileManager.deleteSession(key);
+    unifiedPool.terminate(key); // 同时杀掉运行中的进程（如有）
+    pushIndex();
+  });
+  ipcMain.handle('session:deleteMany', (_e, keys: string[]) => {
+    sessionFileManager.deleteMany(keys);
+    for (const k of keys) unifiedPool.terminate(k);
+    pushIndex();
+  });
+  ipcMain.handle('session:clearDirectory', (_e, cwd: string) => {
+    // 先杀掉该 cwd 下所有运行中的 pi 会话
+    for (const t of unifiedPool.list()) {
+      if (t.cwd === cwd && t.type === 'pi') unifiedPool.terminate(t.id);
+    }
+    sessionFileManager.clearDirectory(cwd);
+    pushIndex();
+  });
+  ipcMain.handle('session:debug', () => sessionFileManager.debugInfo(unifiedPool['entries'] as any));
   ipcMain.handle('session:pickDirectory', async () => {
     const result = await dialog.showOpenDialog(win, {
       title: '选择目录',
@@ -456,10 +465,7 @@ function createWindow() {
     if (result.canceled || result.filePaths.length === 0) return null;
     return result.filePaths[0];
   });
-
-  // 图片粘贴落盘：渲染端把系统剪贴板里的图片读成 base64 后传来，主进程写到系统临时目录，
-  // 返回绝对路径。前端再把该路径当文本粘贴进终端（模拟 VS Code「拖拽文件到终端」的 sendPath
-  // 行为——终端本身不渲染图片数据，只接收文件路径）。文件名带 uuid 防碰撞，扩展名取传入的 ext。
+  // session:saveImage — 图片粘贴落盘（保持不变）
   ipcMain.handle('session:saveImage', (_e, payload: { data: string; ext: string }) => {
     try {
       if (!payload || typeof payload.data !== 'string' || !payload.data) return null;
@@ -467,7 +473,6 @@ function createWindow() {
       const tmpDir = app.getPath('temp');
       const name = `pi-paste-${crypto.randomUUID()}.${ext}`;
       const filePath = path.join(tmpDir, name);
-      // payload.data 是 base64（不含 data: 前缀）；用 base64 解码写盘，避免 atob 的 Latin1 陷阱。
       const buf = Buffer.from(payload.data, 'base64');
       fs.writeFileSync(filePath, buf);
       return filePath;
@@ -476,68 +481,6 @@ function createWindow() {
       return null;
     }
   });
-
-  // 会话写盘（用户发首条消息后 pi 写出 .jsonl）即视为"晋升"，推送最新索引给渲染进程。
-  // 300ms debounce 合并突发写入。recursive watch 在 Windows/macOS 原生支持。
-  let indexTimer: ReturnType<typeof setTimeout> | undefined;
-  const pushIndex = () => {
-    if (indexTimer) clearTimeout(indexTimer);
-    indexTimer = setTimeout(() => {
-      if (win.isDestroyed()) return;
-      const groups = pool.listFiles();
-      // Link freshly-written disk sessions to the live processes that created them
-      // so clicking a promoted sidebar entry reuses the same process.
-      pool.reconcile(groups);
-      win.webContents.send('session:index', groups);
-    }, 300);
-  };
-  try {
-    fs.watch(SESSIONS_DIR, { recursive: true }, pushIndex);
-  } catch (err) {
-    console.error('[session:index] fs.watch failed:', err);
-  }
-
-  ipcMain.handle('session:list', () => pool.listFiles());
-  ipcMain.handle('session:open', (_e, req: { key?: string; cwd?: string; name?: string }) => {
-    try {
-      if (req.key) {
-        // Disk-backed session → reopen its file. Live session (key already in the
-        // pool, e.g. `live-<uuid>`) → return the existing entry so the UI can
-        // SWITCH to it instead of spawning a duplicate process.
-        if (req.key.endsWith('.jsonl')) return pool.openExisting(req.key);
-        const existing = pool.get(req.key);
-        if (existing) return existing;
-        // Unknown key → open a new session carrying that key.
-        return pool.openNew(req.cwd && fs.existsSync(req.cwd) ? req.cwd : process.cwd(), req.name, req.key);
-      }
-      // The renderer is sandboxed and has no `process`, so default the cwd here
-      // in the main process, and fall back to an existing directory to avoid
-      // node-pty's ERROR_DIRECTORY (267) on Windows.
-      const cwd = req.cwd && fs.existsSync(req.cwd) ? req.cwd : process.cwd();
-      return pool.openNew(cwd, req.name);
-    } catch (err) {
-      console.error('[session:open] failed:', err);
-      throw new Error('无法启动 pi 会话，请确认 pi 已在 PATH 中且目录可访问');
-    }
-  });
-  ipcMain.handle('session:terminate', (_e, key: string) => pool.terminate(key));
-  ipcMain.handle('session:delete', (_e, key: string) => {
-    pool.deleteSession(key);
-    pushIndex(); // 与 fs.watch debounce 互补，保证侧边栏即时更新
-  });
-  ipcMain.handle('session:deleteMany', (_e, keys: string[]) => {
-    pool.deleteMany(keys);
-    pushIndex(); // 与 fs.watch debounce 互补，保证侧边栏即时更新
-  });
-  ipcMain.handle('session:clearDirectory', (_e, cwd: string) => {
-    pool.clearDirectory(cwd);
-    pushIndex(); // 与 fs.watch debounce 互补，保证侧边栏即时更新
-  });
-  ipcMain.handle('session:debug', () => pool.debugInfo());
-  ipcMain.on('session:input', (_e, m: { key: string; data: string }) => pool.write(m.key, m.data));
-  ipcMain.on('session:resize', (_e, m: { key: string; cols: number; rows: number }) => pool.resize(m.key, m.cols, m.rows));
-  // 背压回传：渲染端每消费 N 字节即上报，主进程更新该会话的消费进度（对齐 VS Code acknowledgeDataEvent）。
-  ipcMain.on('session:ack', (_e, m: { key: string; bytes: number }) => pool.acknowledgeDataEvent(m.key, m.bytes));
 
   // ── 文件管理器（A + B 预览）只读/写 IPC ──
   // 注意：路径越权校验（allowedRoots / resolveSafe）已按产品决策整体移除，
@@ -687,8 +630,7 @@ function createWindow() {
   // 关闭按钮（minimize-to-tray）只隐藏窗口、不会触发 before-quit，故进程保持存活。
   app.on('before-quit', () => {
     quitting = true;
-    pool.killAll();
-    termPool.killAll();
+    unifiedPool.killAll();
   });
 
   // 启动动画（splash）：窗口以 show:false 创建，避免无边框窗口先闪白框。

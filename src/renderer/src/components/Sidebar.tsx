@@ -169,7 +169,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
               <div className="group-title">
                 <span className="group-name" title={g.cwd}>
                   {`📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
-                  {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>{termCount} Terminal</span>}
+                  {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>({termCount})</span>}
                 </span>
                 <span className="group-actions">
                   <button

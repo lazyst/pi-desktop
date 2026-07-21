@@ -213,7 +213,9 @@ export class XtermTerminal implements LiveTerminal {
       this.resizeDebouncer?.flush();
       this.doResize(true);
       // 隐藏期（visibility:hidden / display:none）WebGL 上下文可能被浏览器回收，
-      // 切回时强制 refresh 重绘已有缓冲区内容，避免“切回变空白新终端”。
+      // 切回时强制 refresh 重绘已有缓冲区内容，避免"切回变空白新终端"。
+      // 注意：refresh 必须在 doResize 之后（doResize 可能被零尺寸拦截而跳过），
+      // 此处直接用 this.term.rows 以确保至少重绘当前有效行数。
       try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
     }
   }
@@ -613,6 +615,8 @@ export class XtermTerminal implements LiveTerminal {
     if (this.disposed || !this.fit || !this.term || !this.host) return;
     const proposed = this.fit.proposeDimensions();
     if (!proposed) return;
+    // 零尺寸守卫（同 doResize）：Chromium 布局未就绪时跳过
+    if (proposed.cols <= 2 && proposed.rows <= 1) return;
     const smallBuffer = this._isSmallBuffer();
     this.resizeDebouncer?.resize(proposed.cols, proposed.rows, false, smallBuffer);
   }
@@ -1173,11 +1177,18 @@ export class XtermTerminal implements LiveTerminal {
 
   /** 立即用宿主最新尺寸校准终端并通知 PTY（首挂载 / 切回可见 / 会话结束收尾调用，force=true）。
    * 对齐 VS Code TerminalInstance.setVisible 的 _resize（open 后用真实容器尺寸重测）。
-   * 实际的分轴防抖 / 可见性 / idle 调度全部交给 TerminalResizeDebouncer 处理。 */
+   * 实际的分轴防抖 / 可见性 / idle 调度全部交给 TerminalResizeDebouncer 处理。
+   *
+   * 零尺寸守卫：当元素刚从 display:none 变为可见时，Chromium 可能尚未完成完整布局，
+   * proposeDimensions 会返回最小尺寸（2×1）。此时若 resize 到 2×1，xterm 会截断缓冲区
+   * 导致历史输出丢失（issue 07）。当提议列数 ≤2 且行数 ≤1 时跳过 resize，等候
+   * ResizeObserver 或下一次调度用真实尺寸校准。 */
   private doResize(force = false): void {
     if (this.disposed || !this.fit || !this.term || !this.host) return;
     const proposed = this.fit.proposeDimensions();
     if (!proposed) return;
+    // 零尺寸守卫：Chromium 布局未就绪时返回 2×1 最小值，跳过避免缓冲截断
+    if (proposed.cols <= 2 && proposed.rows <= 1) return;
     const smallBuffer = force || this._isSmallBuffer();
     this.resizeDebouncer?.resize(proposed.cols, proposed.rows, force, smallBuffer);
   }

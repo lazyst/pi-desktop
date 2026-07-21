@@ -68,7 +68,7 @@ export function IntegratedPane({ terminalId, active }: Props) {
       // 不杀主进程侧 pty：销毁 pty 的唯一入口是用户点 ×（App.handleCloseTab → pi.destroyTerminal）；
       // 此处若也调 destroyTerminal，会在 React StrictMode 的 mount→unmount→mount 双调用（dev）
       // 或抽屉收起隐藏时误杀刚创建的 pty，导致“新建即消失 / 闪退”。
-      // drawerOpen 收起只是 display:none 隐藏 Pane（不卸载），pty 自然保留（keep-alive）。
+      // 隐藏期只是 CSS opacity:0（不卸载），pty 自然保留（keep-alive）。
       // 卸载前序列化滚动缓冲区，供下次同 id 重建时 replay（对齐 VS Code 持久化）。
       const buf = term.serializeScrollback();
       if (buf) pi.saveTerminalBuffer?.(terminalId, buf);
@@ -78,18 +78,12 @@ export function IntegratedPane({ terminalId, active }: Props) {
   }, [terminalId]);
 
   // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时校准尺寸。
+  // 对齐 SessionPane：仅调 setActive，不做 restoreScrollback——同一 terminalId 不会复用
+  //（每次新建都是 term-<uuid>），且 StrictMode 双 mount 会残留过期序列化数据写入活终端。
   useEffect(() => {
     if (active) {
       mountPane(terminalId, hostRef.current!); // 幂等：已挂载则直接 return
       setPaneActive(terminalId, true);         // 切回：flush + 强制 resize 校准尺寸
-      // 切回可见时若已有持久化缓冲区，replay 还原（对齐 VS Code triggerReplay）。
-      // 需在 mount 之后、首帧数据到达前写入，故紧随 setPaneActive 调用。
-      const term = termRef.current;
-      if (term) {
-        pi.loadTerminalBuffer?.(terminalId).then((buf) => {
-          if (buf) term.restoreScrollback(buf);
-        }).catch(() => {});
-      }
     } else {
       setPaneActive(terminalId, false);
     }
@@ -136,7 +130,8 @@ export function IntegratedPane({ terminalId, active }: Props) {
     return () => window.removeEventListener('keydown', onKey);
   }, [active]);
 
-  // 非 active 时整块隐藏（keep-alive），CSS display:none。
+  // 非 active 时整块隐藏（keep-alive），CSS opacity:0 + pointer-events:none。
+  // opacity:0 保留完整布局尺寸，xterm canvas 不丢失 WebGL 上下文，切回时内容立即可见。
   const hidden = !active;
 
   return (

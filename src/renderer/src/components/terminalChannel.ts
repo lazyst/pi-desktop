@@ -5,8 +5,11 @@ import type { PiApi } from '../ipc';
  *
  * 把「PTY 进程 ↔ 渲染层」的数据流（输出订阅 / 退出订阅 / 键盘输入 / 尺寸通知）从具体 IPC
  * 信道中解耦出来，使同一个 XtermTerminal 封装既能驱动会话终端（SessionChannel，复用 session:*
- * IPC），也能驱动未来的集成终端（IntegratedChannel，复用 terminal:* IPC），而 XtermTerminal
- * 本身不感知差异。
+ * IPC），也能驱动集成终端（IntegratedChannel，复用 terminal:* IPC），还能驱动统一终端
+ * （UnifiedChannel，统一复用 term:* IPC），而 XtermTerminal 本身不感知差异。
+ *
+ * UnifiedChannel 收编了 SessionChannel + IntegratedChannel 的设计，统一通过 term:* IPC 通信，
+ * 是未来新代码的首选实现。SessionChannel 和 IntegratedChannel 保留作为向后兼容。
  *
  * 设计要点（与重构前会话终端行为 100% 等价）：
  *  - onData / onExit / send / resize 四个原语，覆盖原 XtermTerminal 内全部 `this.pi.input /
@@ -50,6 +53,35 @@ export class SessionChannel implements TerminalChannel {
 
   resize(cols: number, rows: number): void {
     this.pi.resize(this.sessionKey, cols, rows);
+  }
+}
+
+// 统一终端通道：同时支持 pi 会话和 shell 终端的 UnifiedChannel
+// 收编 SessionChannel + IntegratedChannel，统一通过 unified `term:*` IPC 通信。
+export class UnifiedChannel implements TerminalChannel {
+  constructor(
+    private readonly pi: PiApi,
+    private readonly id: string,
+  ) {}
+
+  onData(cb: (data: string) => void): () => void {
+    return this.pi.onTerminalData((id, data) => {
+      if (id === this.id) cb(data);
+    });
+  }
+
+  onExit(cb: () => void): () => void {
+    return this.pi.onTerminalExit((id) => {
+      if (id === this.id) cb();
+    });
+  }
+
+  send(data: string): void {
+    this.pi.terminalInput(this.id, data);
+  }
+
+  resize(cols: number, rows: number): void {
+    this.pi.terminalResize(this.id, cols, rows);
   }
 }
 

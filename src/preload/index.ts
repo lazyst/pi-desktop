@@ -16,13 +16,14 @@ const initialConfig = readInitialConfig();
 
 contextBridge.exposeInMainWorld('pi', {
   listSessions: (): Promise<SessionGroup[]> => ipcRenderer.invoke('session:list'),
-  openSession: (req: OpenRequest): Promise<SessionInfo> => ipcRenderer.invoke('session:open', req),
-  terminate: (key: string): Promise<void> => ipcRenderer.invoke('session:terminate', key),
+  openSession: (req: OpenRequest): Promise<SessionInfo> =>
+    ipcRenderer.invoke('terminal:spawn', { command: 'pi', cwd: req.cwd ?? '', sessionFile: req.key?.endsWith('.jsonl') ? req.key : undefined, key: req.key && !req.key.endsWith('.jsonl') ? req.key : undefined, name: req.name }),
+  terminate: (key: string): Promise<void> => ipcRenderer.invoke('session:terminate', key),  // 调用 session:terminate（main 中 UnifiedTerminalPool.terminate）
   deleteSession: (key: string): Promise<void> => ipcRenderer.invoke('session:delete', key),
   deleteMany: (keys: string[]): Promise<void> => ipcRenderer.invoke('session:deleteMany', keys),
   clearDirectory: (cwd: string): Promise<void> => ipcRenderer.invoke('session:clearDirectory', cwd),
-  input: (key: string, data: string) => ipcRenderer.send('session:input', { key, data }),
-  resize: (key: string, cols: number, rows: number) => ipcRenderer.send('session:resize', { key, cols, rows }),
+  input: (key: string, data: string) => ipcRenderer.send('terminal:input', { id: key, data }),
+  resize: (key: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id: key, cols, rows }),
   debug: (): Promise<{ count: number; pids: number[] }> => ipcRenderer.invoke('session:debug'),
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke('session:pickDirectory'),
   // 拖拽文件落终端：把渲染端拖入的 File 解析为绝对路径。
@@ -41,9 +42,9 @@ contextBridge.exposeInMainWorld('pi', {
   saveImage: (data: string, ext: string): Promise<string | null> =>
     ipcRenderer.invoke('session:saveImage', { data, ext }),
   onData: (cb: (key: string, data: string) => void) => {
-    const handler = (_e: unknown, m: { key: string; data: string }) => cb(m.key, m.data);
-    ipcRenderer.on('session:data', handler);
-    return () => ipcRenderer.removeListener('session:data', handler);
+    const handler = (_e: unknown, m: { id: string; data: string }) => cb(m.id, m.data);
+    ipcRenderer.on('term:data', handler);
+    return () => ipcRenderer.removeListener('term:data', handler);
   },
   onStatus: (cb: (key: string, status: SessionStatus) => void) => {
     const handler = (_e: unknown, m: { key: string; status: SessionStatus }) => cb(m.key, m.status);
@@ -51,9 +52,9 @@ contextBridge.exposeInMainWorld('pi', {
     return () => ipcRenderer.removeListener('session:status', handler);
   },
   onExit: (cb: (key: string) => void) => {
-    const handler = (_e: unknown, m: { key: string }) => cb(m.key);
-    ipcRenderer.on('session:exit', handler);
-    return () => ipcRenderer.removeListener('session:exit', handler);
+    const handler = (_e: unknown, m: { id: string }) => cb(m.id);
+    ipcRenderer.on('term:exit', handler);
+    return () => ipcRenderer.removeListener('term:exit', handler);
   },
   onRelink: (cb: (from: string, to: string) => void) => {
     const handler = (_e: unknown, m: { from: string; to: string }) => cb(m.from, m.to);
@@ -66,11 +67,9 @@ contextBridge.exposeInMainWorld('pi', {
     return () => ipcRenderer.removeListener('session:index', handler);
   },
   // 背压回传（对齐 VS Code acknowledgeDataEvent）：渲染端每消费 N 字节即通知主进程，
-  // 主进程据此对 PTY 做流控/消费进度记账。
-  // 按 key 前缀路由：集成终端 id 形如 'term-<uuid>' → terminal:ack；
-  // 会话 key（'live-<uuid>' / 磁盘 '.jsonl' / '/' 根） → session:ack。
-  acknowledgeDataEvent: (key: string, bytes: number) =>
-    ipcRenderer.send(key.startsWith('term-') ? 'terminal:ack' : 'session:ack', { key, bytes }),
+  // 主进程据此对 PTY 做流控/消费进度记账。统一使用 terminal:ack 通道。
+  acknowledgeDataEvent: (id: string, bytes: number) =>
+    ipcRenderer.send('terminal:ack', { id, bytes }),
   minimizeWindow: () => ipcRenderer.send('window:minimize'),
   toggleMaximizeWindow: () => ipcRenderer.send('window:toggle-maximize'),
   closeWindow: () => ipcRenderer.send('window:close'),
@@ -149,6 +148,8 @@ contextBridge.exposeInMainWorld('pi', {
   // 在系统文件管理器中打开文件/目录所在位置并选中。
   fsShowInFolder: (absPath: string): Promise<boolean> => ipcRenderer.invoke('fs:showInFolder', absPath),
   // ── 集成终端（抽屉内嵌的真实 shell）──
+  spawnTerminal: (req: { command?: string; cwd: string; profile?: any; sessionFile?: string; name?: string; key?: string }) =>
+    ipcRenderer.invoke('terminal:spawn', req),
   listTerminalProfiles: (): Promise<TerminalProfile[]> => ipcRenderer.invoke('terminal:listProfiles'),
   createTerminal: (req: { profile: TerminalProfile; cwd: string }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:create', req),
   createTerminalInAppWorkDir: (req: { profile: TerminalProfile }): Promise<IntegratedTerminalInfo> => ipcRenderer.invoke('terminal:createInAppWorkDir', req),

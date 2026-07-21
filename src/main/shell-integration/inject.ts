@@ -28,7 +28,22 @@ export interface IShellIntegrationInjection {
   filesToCopy: { source: string; dest: string }[];
 }
 
-const SCRIPTS_DIR = __dirname;
+// 脚本查找路径（兼容多种运行场景）：
+//   - vitest:     __dirname = src/main/shell-integration/（脚本在同一目录）
+//   - 打包后      __dirname = out/main/，且 copy-assets.mjs 已执行（脚本在 out/main/）
+//   - dev 模式    __dirname = out/main/，但 copy-assets.mjs 可能被 clean 掉 → 回退源码树
+// 对齐 index.ts 中 resolveTrayIcon 的 fallback 模式。
+const SCRIPTS_DIR = (() => {
+  if (fs.existsSync(path.join(__dirname, 'shellIntegration.ps1'))) {
+    return __dirname;
+  }
+  // dev 模式回退：out/main/ 向上两级到项目根，进 src/main/shell-integration/
+  const src = path.resolve(__dirname, '..', '..', 'src', 'main', 'shell-integration');
+  if (fs.existsSync(path.join(src, 'shellIntegration.ps1'))) {
+    return src;
+  }
+  return __dirname;
+})();
 
 /** 注入后脚本统一落地到临时目录下，带 sticky bit 防其他用户读取。 */
 function integrationTmpDir(shell: string): string {
