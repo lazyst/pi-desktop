@@ -36,11 +36,11 @@
   --border-strong: #36405a;
 
   /* Text */
-  --text: #c9d1d9;
-  --text-muted: #8b949e;
-  --text-faint: #6e7681;
+  --text: #e6edf3;
+  --text-muted: #b0b8c4;
+  --text-faint: #8b949e;
   /* --text-dim 别名：供移植自 web 版的图标组件（FileIcons）复用，与 --text-muted 同色 */
-  --text-dim: #8b949e;
+  --text-dim: #b0b8c4;
 
   /* Accent + semantic */
   --accent: #7c9cff;
@@ -141,10 +141,10 @@ body {
   --border-strong: #afb8c1;
 
   /* Text */
-  --text: #1f2328;
-  --text-muted: #656d76;
-  --text-faint: #6e7781;
-  --text-dim: #656d76;
+  --text: #0d1117;
+  --text-muted: #3b434d;
+  --text-faint: #656d76;
+  --text-dim: #3b434d;
 
   /* Accent + semantic */
   --accent: #3b5bdb;
