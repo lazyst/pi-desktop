@@ -5,16 +5,22 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { IconTrash } from './icons';
 import type { Theme, CloseBehavior, SessionGroup, TerminalProfile } from '../types';
 import { getFontSize, bumpFontSize, onFontSizeChange, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../fontSize';
+import { PiConfigEditor } from './pi-settings/PiConfigEditor';
+import { PiModelConfig } from './pi-settings/PiModelConfig';
+import { PiMcpManager } from './pi-settings/PiMcpManager';
+import { PiSkillsManager } from './pi-settings/PiSkillsManager';
+import { PiExtensionsManager } from './pi-settings/PiExtensionsManager';
 
 interface Props {
   onClose: () => void;
 }
 
-type NavKey = 'general' | 'sessions' | 'terminal';
+type NavKey = 'general' | 'sessions' | 'terminal' | 'pi-config' | 'pi-models' | 'pi-mcp' | 'pi-skills' | 'pi-extensions';
 
 // Modal settings panel with a left-hand navigation:
 //  - 常规：主题、关闭按钮行为（原有设置项迁移至此）。
 //  - 会话管理：展示全部磁盘会话（按目录分组），支持单条删除、清空目录、批量删除。
+//  - Pi 设置：集成 pi-tool 的配置管理功能（配置文件、模型、MCP、Skills、扩展）。
 export function SettingsPanel({ onClose }: Props) {
   const [nav, setNav] = useState<NavKey>('general');
 
@@ -53,9 +59,58 @@ export function SettingsPanel({ onClose }: Props) {
             >
               终端
             </button>
+            <div className="nav-separator" />
+            <span className="nav-section-label">Pi 配置</span>
+            <button
+              type="button"
+              className={`nav-item${nav === 'pi-config' ? ' active' : ''}`}
+              aria-current={nav === 'pi-config'}
+              onClick={() => setNav('pi-config')}
+            >
+              配置文件
+            </button>
+            <button
+              type="button"
+              className={`nav-item${nav === 'pi-models' ? ' active' : ''}`}
+              aria-current={nav === 'pi-models'}
+              onClick={() => setNav('pi-models')}
+            >
+              模型配置
+            </button>
+            <button
+              type="button"
+              className={`nav-item${nav === 'pi-mcp' ? ' active' : ''}`}
+              aria-current={nav === 'pi-mcp'}
+              onClick={() => setNav('pi-mcp')}
+            >
+              MCP 管理
+            </button>
+            <button
+              type="button"
+              className={`nav-item${nav === 'pi-skills' ? ' active' : ''}`}
+              aria-current={nav === 'pi-skills'}
+              onClick={() => setNav('pi-skills')}
+            >
+              Skills 管理
+            </button>
+            <button
+              type="button"
+              className={`nav-item${nav === 'pi-extensions' ? ' active' : ''}`}
+              aria-current={nav === 'pi-extensions'}
+              onClick={() => setNav('pi-extensions')}
+            >
+              扩展管理
+            </button>
           </nav>
           <div className="settings-content">
-            {nav === 'general' ? <GeneralSettings /> : nav === 'sessions' ? <SessionManagement /> : <TerminalSettings />}
+            {nav === 'general' ? <GeneralSettings /> :
+             nav === 'sessions' ? <SessionManagement /> :
+             nav === 'terminal' ? <TerminalSettings /> :
+             nav === 'pi-config' ? <PiConfigEditor /> :
+             nav === 'pi-models' ? <PiModelConfig /> :
+             nav === 'pi-mcp' ? <PiMcpManager /> :
+             nav === 'pi-skills' ? <PiSkillsManager /> :
+             <PiExtensionsManager />}
           </div>
         </div>
       </div>

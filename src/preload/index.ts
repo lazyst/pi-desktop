@@ -187,4 +187,36 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('term:list', handler);
     return () => ipcRenderer.removeListener('term:list', handler);
   },
+
+  // ╌╌ pi-tool 集成：Pi 配置、模型、MCP、Skills、扩展 ╌╌
+  piSettingsGet: (scope: 'global' | 'project'): Promise<{ data: unknown; raw: string; path: string; exists: boolean }> =>
+    ipcRenderer.invoke('pi:settings:get', scope),
+  piSettingsSet: (payload: { scope: 'global' | 'project'; data?: Record<string, unknown>; raw?: string }): Promise<{ success: boolean; path: string }> =>
+    ipcRenderer.invoke('pi:settings:set', payload),
+  piModelsGet: (): Promise<{ providers: Record<string, unknown> }> =>
+    ipcRenderer.invoke('pi:models:get'),
+  piModelsSet: (data: unknown): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('pi:models:set', data),
+  piMcpConfigs: (): Promise<Array<{ id: string; label: string; path: string; exists: boolean; config: unknown }>> =>
+    ipcRenderer.invoke('pi:mcp:configs'),
+  piMcpConfigsSave: (payload: { id: string; config: unknown }): Promise<{ success: boolean; path: string }> =>
+    ipcRenderer.invoke('pi:mcp:configs:save', payload),
+  piMcpStatus: (): Promise<{ installed: boolean; version?: string }> =>
+    ipcRenderer.invoke('pi:mcp:status'),
+  piSkillsList: (): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string }> }> =>
+    ipcRenderer.invoke('pi:skills:list'),
+  piSkillsDisable: (name: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('pi:skills:disable', name),
+  piSkillsEnable: (name: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('pi:skills:enable', name),
+  piSkillsDelete: (name: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('pi:skills:delete', name),
+  piExtensionsList: (): Promise<{ extensions: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> }> =>
+    ipcRenderer.invoke('pi:extensions:list'),
+  piExtensionsDisable: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('pi:extensions:disable', payload),
+  piExtensionsEnable: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('pi:extensions:enable', payload),
+  piExtensionsDelete: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('pi:extensions:delete', payload),
 });

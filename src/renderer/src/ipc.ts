@@ -94,6 +94,23 @@ export interface PiApi {
   // 集成终端 cwd 变化回传（对齐 VS Code CwdDetectionCapability → 侧边栏目录分组实时刷新）：
   // 注入脚本发的 OSC 633;P;Cwd= 检测到可信 cwd 后，渲染端经此更新主进程缓存并推送实例列表。
   updateTerminalCwd(id: string, cwd: string): void;
+
+  // ╌╌ pi-tool 集成：Pi 配置、模型、MCP、Skills、扩展 ╌╌
+  piSettingsGet(scope: 'global' | 'project'): Promise<{ data: unknown; raw: string; path: string; exists: boolean }>;
+  piSettingsSet(payload: { scope: 'global' | 'project'; data?: Record<string, unknown>; raw?: string }): Promise<{ success: boolean; path: string }>;
+  piModelsGet(): Promise<{ providers: Record<string, unknown> }>;
+  piModelsSet(data: unknown): Promise<{ success: boolean }>;
+  piMcpConfigs(): Promise<Array<{ id: string; label: string; path: string; exists: boolean; config: unknown }>>;
+  piMcpConfigsSave(payload: { id: string; config: unknown }): Promise<{ success: boolean; path: string }>;
+  piMcpStatus(): Promise<{ installed: boolean; version?: string }>;
+  piSkillsList(): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string }> }>;
+  piSkillsDisable(name: string): Promise<{ success: boolean; error?: string }>;
+  piSkillsEnable(name: string): Promise<{ success: boolean; error?: string }>;
+  piSkillsDelete(name: string): Promise<{ success: boolean; error?: string }>;
+  piExtensionsList(): Promise<{ extensions: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> }>;
+  piExtensionsDisable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
+  piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
+  piExtensionsDelete(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at
