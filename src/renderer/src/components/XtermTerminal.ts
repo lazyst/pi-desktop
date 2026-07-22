@@ -49,6 +49,7 @@ import { MarkNavigationAddon } from './markNavigationAddon';
 import { SessionChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import type { PiApi } from '../ipc';
+import { FlowControlConstants } from '../../../main/backpressure';
 import {
   TerminalCapability,
   TerminalCapabilityStore,
@@ -71,10 +72,6 @@ const FONT_MONO =
 // 对齐 VS Code TerminalDataBufferer 的固定时间窗（5ms）：窗口内累积到达的数据块，
 // 窗口结束一次性 term.write，消除流式高频重绘的中间帧闪烁。
 const WRITE_DEBOUNCE_MS = 5;
-
-// 对齐 VS Code FlowControlConstants.CharCountAckSize：渲染端累积消费字符数达到此值
-// 才发送一次 acknowledgeDataEvent IPC，减少高频小段写下的主进程通信量。
-const CHAR_COUNT_ACK_SIZE = 5000;
 
 export interface XtermTerminalOptions {
   // 数据通道抽象：PTY 输出订阅 / 退出订阅 / 键盘输入 / 尺寸通知全部走 channel，
@@ -144,7 +141,7 @@ export class XtermTerminal implements LiveTerminal {
   // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
   private _latestWriteSeq = 0;
   private _latestParsedSeq = 0;
-  // 背压累积缓冲（对齐 VS Code AckDataBufferer）：未达 CHAR_COUNT_ACK_SIZE 的 ack
+  // 背压累积缓冲（对齐 VS Code AckDataBufferer）：未达 FlowControlConstants.CharCountAckSize 的 ack
   // 暂存在这里，累积触发后再一次发送，减少 IPC 频次。
   private _unsentAckChars = 0;
   private _flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1165,9 +1162,9 @@ export class XtermTerminal implements LiveTerminal {
         // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
         // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
         this._unsentAckChars += data.length;
-        while (this._unsentAckChars > CHAR_COUNT_ACK_SIZE) {
-          this._unsentAckChars -= CHAR_COUNT_ACK_SIZE;
-          this.pi.acknowledgeDataEvent?.(this.sessionKey, CHAR_COUNT_ACK_SIZE);
+        while (this._unsentAckChars > FlowControlConstants.CharCountAckSize) {
+          this._unsentAckChars -= FlowControlConstants.CharCountAckSize;
+          this.pi.acknowledgeDataEvent?.(this.sessionKey, FlowControlConstants.CharCountAckSize);
         }
       });
     } catch {
