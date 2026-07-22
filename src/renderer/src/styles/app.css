@@ -160,7 +160,7 @@ html, body, #root {
 
 /* ── 集成终端：Tab 栏 / Tab / 新建按钮 / xterm 宿主 ──
    视觉语言复用 Sidebar 的 --bg-panel / --border / --accent / --bg-hover / --bg-active 体系。 */
-.terminal-tab-bar {
+.terminal-tabbar {
   display: flex;
   align-items: stretch;
   flex: none;
