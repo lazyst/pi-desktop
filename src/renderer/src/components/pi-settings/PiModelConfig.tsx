@@ -240,12 +240,12 @@ export function PiModelConfig() {
     });
   };
 
-  const updateThinkingLevel = (pIdx: number, mIdx: number, level: string, value: string | null) => {
+  const updateThinkingLevel = (pIdx: number, mIdx: number, level: string, value: string | null | undefined) => {
     setProviders(prev => {
       const next = [...prev];
       const models = [...(next[pIdx].models || [])];
       const tlMap = { ...(models[mIdx].thinkingLevelMap || {}) };
-      if (value === null) delete tlMap[level];
+      if (value === undefined) delete tlMap[level];
       else tlMap[level] = value;
       models[mIdx] = { ...models[mIdx], thinkingLevelMap: tlMap };
       next[pIdx] = { ...next[pIdx], models };
