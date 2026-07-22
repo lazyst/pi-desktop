@@ -24,7 +24,7 @@ import * as path from 'node:path';
 export function watchDir(
   root: string,
   dir: string,
-  onChange: () => void,
+  onChange: (filename: string | null) => void,
 ): () => void {
   const abs = path.resolve(root, dir);
   let watcher: fs.FSWatcher | undefined;
@@ -39,9 +39,10 @@ export function watchDir(
     }
   };
   try {
-    watcher = fs.watch(abs, { recursive: false }, (_event, _filename) => {
+    watcher = fs.watch(abs, { recursive: false }, (_event, filename) => {
       // _event: 'rename' | 'change'；我们关心任意直接子项变化。
-      onChange();
+      // 传递 filename（basename，可能为 null，取决于平台/编辑器）。
+      onChange(filename ?? null);
     });
     // 目录在监听期间被外部删除：底层会触发 'error'（如 EPERM/ENOENT），
     // 兜底关闭，避免句柄泄漏与重复回调。
@@ -51,6 +52,30 @@ export function watchDir(
     return stop;
   }
   return stop;
+}
+
+/**
+ * 监听某个文件的变更。监听其所在目录，当目录 fs.watch 回调中 filename 匹配目标文件时触发。
+ * 这是对 watchDir 的封装，用于编辑器自动监测外部修改。
+ *
+ * - 文件名匹配基于 fs.watch 提供的 basename（Windows 可靠，macOS 可能为 null）。
+ * - 当 filename 为 null 时，仍会触发 onChange（降级为「目录有变化就通知」）。
+ * - 目录不存在时静默返回 no-op。
+ * - 返回 unsubscribe 函数。
+ */
+export function watchFile(
+  root: string,
+  filePath: string,
+  onChange: () => void,
+): () => void {
+  const dir = path.dirname(filePath);
+  const targetName = path.basename(filePath);
+  return watchDir(root, dir, (changedName) => {
+    // 如果 filename 为 null（平台不提供），降级触发；否则精确匹配文件名。
+    if (changedName === null || changedName === targetName) {
+      onChange();
+    }
+  });
 }
 
 // Directory listing

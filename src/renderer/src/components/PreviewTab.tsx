@@ -50,6 +50,9 @@ function countLines(s: string): number {
 
 export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegisterCloseGuard, tabId }: Props) {
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+  // 同步 dirty state 到 ref，供外界 fsWatchFile 回调读取最新值（避免闭包过期）。
+  useEffect(() => { dirtyRef.current = dirty; }, [dirty]);
   const [initialContent, setInitialContent] = useState('');
   const [currentContent, setCurrentContent] = useState('');
   const [kind, setKind] = useState<'code' | 'image' | 'binary' | 'loading'>('loading');
@@ -100,6 +103,22 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
       }
     })();
     return () => { cancelled = true; };
+  }, [root, path]);
+
+  // 外部修改监听：当文件被其他编辑器或命令修改时，自动重载内容（仅非 dirty 时）。
+  useEffect(() => {
+    const unwatch = pi.fsWatchFile(root, path, () => {
+      // 如有未保存改动，不覆盖用户编辑，待下次打开文件时自然读到新内容。
+      // 通过 ref 而不是闭包捕获 latest dirty 值以避免 stale closure。
+      if (dirtyRef.current) return;
+      // 重新读取文件内容
+      pi.fsReadFile(root, path).then((res) => {
+        if (res.isBinary || res.isImage) return;
+        setCurrentContent(res.content);
+        setInitialContent(res.content);
+      }).catch(() => {});
+    });
+    return () => { unwatch(); };
   }, [root, path]);
 
   const doSave = useCallback(async () => {
