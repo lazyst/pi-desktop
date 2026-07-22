@@ -6,7 +6,7 @@ import * as crypto from 'node:crypto';
 import { UnifiedTerminalPool } from './unifiedTerminalPool';
 import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './sessionPool';
-import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir } from './fsBridge';
+import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir, watchFile } from './fsBridge';
 import { gitStatus, gitLog, gitDiff } from './gitBridge';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -513,7 +513,7 @@ function createWindow() {
       existing.refs += 1;
       return;
     }
-    const stop = watchDir(req.root, req.dir, () => {
+    const stop = watchDir(req.root, req.dir, (_filename) => {
       if (!win.isDestroyed()) win.webContents.send('fs:change', { dir: req.dir });
     });
     dirWatchers.set(key, { stop, refs: 1 });
@@ -526,6 +526,35 @@ function createWindow() {
     if (entry.refs <= 0) {
       entry.stop();
       dirWatchers.delete(key);
+    }
+  });
+
+  // ╌╌ 文件监听（外部修改自动刷新编辑器）╌╌
+  // 渲染端请求监控某个文件（root + path），主进程起 fs.watch 监听其所在目录，
+  // 当匹配到该文件变更时，经 'fs:fileChange' 通道推送 { root, path } 给渲染端。
+  // 使用引用计数，最后一处取消时才真正关闭底层 watcher。
+  const fileWatchers = new Map<string, { stop: () => void; refs: number }>();
+  const fileWatchKey = (root: string, path: string) => `${root} ${path}`;
+  ipcMain.on('fs:watchFile', (_e, req: { root: string; path: string }) => {
+    const key = fileWatchKey(req.root, req.path);
+    const existing = fileWatchers.get(key);
+    if (existing) {
+      existing.refs += 1;
+      return;
+    }
+    const stop = watchFile(req.root, req.path, () => {
+      if (!win.isDestroyed()) win.webContents.send('fs:fileChange', { root: req.root, path: req.path });
+    });
+    fileWatchers.set(key, { stop, refs: 1 });
+  });
+  ipcMain.on('fs:unwatchFile', (_e, req: { root: string; path: string }) => {
+    const key = fileWatchKey(req.root, req.path);
+    const entry = fileWatchers.get(key);
+    if (!entry) return;
+    entry.refs -= 1;
+    if (entry.refs <= 0) {
+      entry.stop();
+      fileWatchers.delete(key);
     }
   });
   ipcMain.handle('fs:readFile', (_e, req: { root: string; path: string; maxBytes?: number }) =>

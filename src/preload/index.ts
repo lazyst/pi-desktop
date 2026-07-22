@@ -122,6 +122,18 @@ contextBridge.exposeInMainWorld('pi', {
       ipcRenderer.send('fs:unwatch', { root, dir });
     };
   },
+  // 文件监听（外部修改自动刷新编辑器）：订阅某个文件，文件变更时回调；返回取消订阅函数。
+  fsWatchFile: (root: string, path: string, cb: () => void): (() => void) => {
+    const handler = (_e: unknown, m: { root: string; path: string }) => {
+      if (m.root === root && m.path === path) cb();
+    };
+    ipcRenderer.send('fs:watchFile', { root, path });
+    ipcRenderer.on('fs:fileChange', handler);
+    return () => {
+      ipcRenderer.removeListener('fs:fileChange', handler);
+      ipcRenderer.send('fs:unwatchFile', { root, path });
+    };
+  },
   // ── Git 只读查看（D）──
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),

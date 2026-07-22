@@ -2,7 +2,7 @@
 // 基于 TipTap 3 + tiptap-markdown：把 markdown 解析为可编辑文档，编辑后序列化回 markdown
 // （通过 editor.storage.markdown.getMarkdown()），由 PreviewTab 统一写盘。
 // 与 orca 的区别：不实现 orca 的 doc-link / 批注 / 斜杠菜单等内部特性，仅提供标准 GFM 编辑。
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
@@ -12,6 +12,8 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { Markdown } from 'tiptap-markdown';
+import { ContextMenu } from './ContextMenu';
+import { useMarkdownContextMenu, buildRichEditorContextMenu } from './editor/useMarkdownContextMenu';
 
 interface Props {
   /** 初始 markdown 文本（文件内容）。 */
@@ -23,6 +25,8 @@ interface Props {
 
 export function RichMarkdownEditor({ content, filePath, onChange }: Props) {
   const lastPath = useRef<string | undefined>(undefined);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
 
   const editor = useEditor({
     extensions: [
@@ -66,12 +70,42 @@ export function RichMarkdownEditor({ content, filePath, onChange }: Props) {
     }
   }, [editor, filePath, content]);
 
+  // 右键菜单：在容器上阻止默认 contextmenu，改由本组件接管
+  const onContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!editor) return;
+    const items = buildRichEditorContextMenu(editor, toggleLink, pickImage);
+    setMenuState({ x: e.clientX, y: e.clientY, items });
+  }, [editor, setMenuState]);
+
+  // Toolbar 中的链接/图片操作（与右键菜单共享）
+  const toggleLink = useCallback(() => {
+    if (!editor) return;
+    const prev = (editor.getAttributes('link').href as string | undefined) ?? 'https://';
+    const url = window.prompt('链接地址（http(s):// 或相对路径）：', prev);
+    if (url === null) return;
+    if (url === '') {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+  }, [editor]);
+
+  const pickImage = useCallback(() => {
+    if (!editor) return;
+    const url = window.prompt('图片地址（URL 或相对路径）：', '');
+    if (url) editor.chain().focus().setImage({ src: url }).run();
+  }, [editor]);
+
   return (
-    <div className="md-rich">
+    <div className="md-rich" ref={containerRef} onContextMenu={onContextMenu}>
       <div className="md-rich-toolbar">{editor && <RichToolbar editor={editor} />}</div>
       <div className="md-rich-body">
         <EditorContent editor={editor} />
       </div>
+      {menuState && (
+        <ContextMenu x={menuState.x} y={menuState.y} items={menuState.items} onClose={closeMenu} />
+      )}
     </div>
   );
 }

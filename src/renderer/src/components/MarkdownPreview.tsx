@@ -3,7 +3,7 @@
 // + rehype(raw → sanitize → slug → highlight → katex)。渲染产物套用 .markdown-file-preview 样式。
 // 与 orca 的区别：去掉 orca 特有的 runtime/doc-link/批注模块，链接路由改用 pi-desktop 的
 // linkUtils + openExternal，富文本编辑不在此组件（由 RichMarkdownEditor 负责）。
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
@@ -21,6 +21,8 @@ import { MermaidBlock } from './MermaidBlock';
 import { pi } from '../ipc';
 import { isExternalHref } from '../linkUtils';
 import { basenameOf, resolveImageSrc, resolveLinkTarget } from '../lib/mdPath';
+import { ContextMenu } from './ContextMenu';
+import { useMarkdownContextMenu, buildPreviewContextMenu, findLinkHref } from './editor/useMarkdownContextMenu';
 
 // 与 orca 一致的 sanitize schema：放行 GFM 表格/任务列表用的 input、details/summary、
 // 标题 id（slug）、代码块 language-/hljs 类、file:// 协议（留给点击处理器做安全决策）。
@@ -88,6 +90,7 @@ interface Props {
 export function MarkdownPreview({ content, filePath, root, onOpenFile }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [toc, setToc] = useState<TocItem[]>([]);
+  const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
 
   // 渲染后从 DOM 收集标题（id 由 rehype-slug 生成），保证 TOC 锚点与正文一致。
   useEffect(() => {
@@ -158,8 +161,17 @@ export function MarkdownPreview({ content, filePath, root, onOpenFile }: Props) 
     },
   };
 
+  // 右键菜单：接管 contextmenu，构建预览菜单项
+  const onContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const target = e.target instanceof HTMLElement ? e.target : null;
+    const linkHref = target ? findLinkHref(target) : null;
+    const items = buildPreviewContextMenu(linkHref);
+    setMenuState({ x: e.clientX, y: e.clientY, items });
+  }, [setMenuState]);
+
   return (
-    <div className="md-preview">
+    <div className="md-preview" onContextMenu={onContextMenu}>
       <div className="markdown-file-preview" ref={bodyRef}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
@@ -195,6 +207,9 @@ export function MarkdownPreview({ content, filePath, root, onOpenFile }: Props) 
             ))}
           </div>
         </aside>
+      )}
+      {menuState && (
+        <ContextMenu x={menuState.x} y={menuState.y} items={menuState.items} onClose={closeMenu} />
       )}
     </div>
   );

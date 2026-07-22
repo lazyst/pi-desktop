@@ -809,6 +809,11 @@ html, body, #root {
   background: rgba(248, 81, 73, 0.12);
   color: var(--danger-hover);
 }
+.context-menu-separator {
+  height: 1px;
+  margin: var(--sp-1) var(--sp-2);
+  background: var(--border);
+}
 
 /* 确认弹窗 */
 .confirm-overlay {

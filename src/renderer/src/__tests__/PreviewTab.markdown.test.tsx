@@ -23,6 +23,7 @@ function makePi(content = '# 标题\n正文段落 [内部](./x.md)。') {
     }),
     fsWriteFile: vi.fn().mockResolvedValue(undefined),
     fsOpenWithSystem: vi.fn().mockResolvedValue(true),
+    fsWatchFile: vi.fn().mockReturnValue(() => {}),
   };
 }
 

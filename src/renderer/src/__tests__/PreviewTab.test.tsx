@@ -17,6 +17,7 @@ function makePi(content = 'hello world') {
     fsReadFile: vi.fn().mockResolvedValue({ content, isImage: false, isBinary: false }),
     fsWriteFile: vi.fn().mockResolvedValue(undefined),
     fsOpenWithSystem: vi.fn().mockResolvedValue(true),
+    fsWatchFile: vi.fn().mockReturnValue(() => {}),
   };
 }
 

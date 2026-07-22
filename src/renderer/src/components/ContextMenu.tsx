@@ -3,7 +3,9 @@ import { useEffect, useRef } from 'react';
 export interface ContextMenuItem {
   label: string;
   danger?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
+  /** 'separator' 表示渲染为分隔线，此时 label/onClick/danger 均忽略。 */
+  kind?: 'separator';
 }
 interface Props {
   x: number;
@@ -44,17 +46,22 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
 
   return (
     <div ref={ref} className="context-menu" style={{ left, top }} role="menu" onClick={(e) => e.stopPropagation()}>
-      {items.map((it, i) => (
-        <button
-          key={i}
-          type="button"
-          role="menuitem"
-          className={`context-menu-item${it.danger ? ' danger' : ''}`}
-          onClick={() => { it.onClick(); onClose(); }}
-        >
-          {it.label}
-        </button>
-      ))}
+      {items.map((it, i) => {
+        if (it.kind === 'separator') {
+          return <div key={i} className="context-menu-separator" />;
+        }
+        return (
+          <button
+            key={i}
+            type="button"
+            role="menuitem"
+            className={`context-menu-item${it.danger ? ' danger' : ''}`}
+            onClick={() => { it.onClick?.(); onClose(); }}
+          >
+            {it.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
