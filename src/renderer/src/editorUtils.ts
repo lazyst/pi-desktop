@@ -21,13 +21,17 @@ export function getFontScale(): number {
   return Number.isFinite(n) && n > 0 ? n : 1;
 }
 
-/** 当前应设的 Monaco 字号（基准 13px × 缩放比例，取整）。 */
+/** 当前应设的 Monaco 字号（基准 13px × 缩放比例，取整，钳制在 8–32px 安全区间）。
+ *  参考 orca `computeEditorFontSize` 的 min/max 防护，避免极端缩放值导致
+ *  编辑器文字不可读或布局崩坏。 */
 export function getMonacoFontSize(): number {
-  return Math.round(13 * getFontScale());
+  return Math.max(8, Math.min(32, Math.round(13 * getFontScale())));
 }
 
 /**
- * 主题跟随：监听根节点 data-theme，切换 vs-dark / light（与 Monaco 主题体系一致）。
+ * 主题跟随：监听根节点 data-theme，切换 vs-dark / vs（Monaco 内置主题）。
+ * 编辑器背景色通过 CSS --editor-surface 变量在 app.css 中覆盖，避免自定义主题
+ * 与 @monaco-editor/react 内部 theme 处理机制之间的冲突。
  * Monaco 的 setTheme 是全局单例，故任意编辑器组件调用都等价；在各自组件内调用
  * 即可保证挂载时立即对齐当前主题。
  * 被 MonacoCodeEditor / MonacoDiffEditor 共用，避免重复实现。

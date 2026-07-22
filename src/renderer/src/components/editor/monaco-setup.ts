@@ -1,8 +1,11 @@
 // Monaco 本地化集成骨架（非 CDN）。
-// 参考 orca `lib/monaco-setup.ts`，但为 pi 的最小骨架：仅建立本地打包与
+// 参考 orca `lib/monaco-setup.ts`，为 pi 的最小骨架：仅建立本地打包与
 // worker 分发、关掉 TS/JS 校验、开 jsx: Preserve，挂载 loader 本地实例。
-// 暂不引入任何业务装饰（astro/vue/svelte 语言、context-menu paste 等），
-// 也不被任何业务组件引用——本文件只作为阶段3 Monaco 编辑器的接入点。
+//
+// 核心设计决策：使用 Monaco 内置 vs-dark/vs 主题（不支持自定义主题），
+// 编辑器背景色通过 CSS --editor-surface 变量 + app.css 中的选择器覆盖。
+// 这与 orca 的做法一致（orca 也只使用内置主题），避免自定义主题注册
+// 与 @monaco-editor/react 内部 theme 处理机制之间的冲突。
 import { loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import 'monaco-editor/min/vs/editor/editor.main.css';
@@ -68,5 +71,5 @@ monacoTS.javascriptDefaults.setCompilerOptions({
 // 配置 Monaco 使用本地打包的编辑器，而非 CDN。
 loader.config({ monaco });
 
-// 便于后续组件直接 import 已配置好的 monaco 实例。
+// 导出 monaco 实例供组件使用。
 export { monaco };
