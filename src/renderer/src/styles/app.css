@@ -1831,6 +1831,74 @@ html, body, #root {
 .diff-tab-title { font-weight: var(--fw-semibold); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 .diff-tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
+/* ── SingleDiffView（单栏 unified diff，按文件分块折叠）── */
+/* 设计参考 pi-web 的 DiffView，适配 pi-desktop 的 CSS 变量体系。 */
+:root {
+  --diff-added: #4ade80;
+  --diff-added-bg: rgba(0, 200, 80, 0.12);
+  --diff-removed: #f87171;
+  --diff-removed-bg: rgba(240, 60, 60, 0.14);
+}
+.sdv { flex: 1; overflow-y: auto; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; }
+.sdv-file { border-bottom: 1px solid var(--border); }
+.sdv-file-header {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--bg-panel);
+  cursor: pointer;
+  user-select: none;
+  position: sticky; top: 0; z-index: 1;
+  border-bottom: 1px solid var(--border);
+}
+.sdv-file-header:hover { background: var(--bg-hover); }
+.sdv-file-header:focus-visible { outline: 2px solid var(--bg-active); outline-offset: -2px; }
+.sdv-file-header-icon { font-size: 10px; color: var(--text-dim); flex-shrink: 0; width: 12px; text-align: center; }
+.sdv-file-header-dir { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sdv-file-header-name { font-size: 13px; font-weight: var(--fw-semibold); color: var(--text); flex-shrink: 0; }
+.sdv-file-header-stats { margin-left: auto; display: flex; gap: var(--sp-2); font-size: 11px; font-weight: var(--fw-semibold); flex-shrink: 0; }
+.sdv-stat-added { color: var(--diff-added); }
+.sdv-stat-removed { color: var(--diff-removed); }
+
+.sdv-lines { overflow-x: auto; }
+.sdv-hunk {
+  padding: 2px var(--sp-3);
+  color: var(--text-dim);
+  font-size: 11px;
+  background: var(--bg-app);
+  border-bottom: 1px solid var(--border);
+}
+.sdv-line {
+  display: flex;
+  align-items: stretch;
+  min-height: 21px;
+}
+.sdv-line-no {
+  min-width: 44px;
+  padding: 0 8px 0 16px;
+  text-align: right;
+  color: var(--text-dim);
+  user-select: none;
+  font-size: 11px;
+  line-height: 1.6;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  flex-shrink: 0;
+}
+.sdv-line-prefix {
+  min-width: 16px;
+  padding: 0 6px;
+  user-select: none;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.sdv-line-text {
+  flex: 1;
+  padding: 0 8px 0 0;
+  white-space: pre;
+  color: var(--text);
+  overflow-x: auto;
+}
+
 /* ── 右栏（文件树 / Git）Tab 容器 ── */
 .right-panel {
   flex: none;
