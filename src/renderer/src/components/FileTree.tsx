@@ -677,37 +677,75 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     setSelection(new Set());
   }, [root, selection, refreshDir]);
 
-  // 菜单项构造
+  // 菜单项构造（布局参考 VSCode Explorer 右键菜单）
   const menuItems: ContextMenuItem[] = useMemo(() => {
     if (!menu) return [];
     const clip = clipboard.get();
     const hasClip = !!clip && clip.items.length > 0;
+
     if (menu.target == null) {
       // 空白区域（目录内）
       const items: ContextMenuItem[] = [
         { label: '📄 新建文件', onClick: () => startNew(currentDirForMenu, false) },
         { label: '📁 新建目录', onClick: () => startNew(currentDirForMenu, true) },
       ];
-      if (hasClip) items.push({ label: '📋 粘贴', onClick: () => void doPaste(currentDirForMenu) });
+      if (hasClip) {
+        items.push({ label: '分隔线', kind: 'separator' });
+        items.push({ label: '📋 粘贴', onClick: () => void doPaste(currentDirForMenu) });
+      }
       return items;
     }
+
     const { relPath, isDir } = menu.target;
     // 选集：若右键目标在选集中 → 操作整个选集；否则只操作目标
     const targets: ClipItem[] = selection.has(relPath)
       ? [...selection].map((p) => ({ root, relPath: p, isDir: false }))
       : [{ root, relPath, isDir }];
+
+    const pasteDir = isDir ? relPath : parentOf(relPath);
     const items: ContextMenuItem[] = [];
+
+    // ── 目录专属：新建 ──
     if (isDir) {
-      // 在目录自身内新建（伪节点渲染在其 children 顶部）。
       items.push({ label: '📄 新建文件', onClick: () => startNew(relPath, false) });
       items.push({ label: '📁 新建目录', onClick: () => startNew(relPath, true) });
+      items.push({ label: '分隔线', kind: 'separator' });
     }
-    items.push({ label: '✂️ 剪切', onClick: () => doCut(targets) });
+
+    // ── 复制 / 剪切 / 粘贴 ──
     items.push({ label: '📋 复制', onClick: () => doCopy(targets) });
-    if (hasClip) items.push({ label: '📋 粘贴', onClick: () => void doPaste(relPath) });
+    items.push({ label: '✂️ 剪切', onClick: () => doCut(targets) });
+    if (hasClip) items.push({ label: '📋 粘贴', onClick: () => void doPaste(pasteDir) });
+    items.push({ label: '分隔线', kind: 'separator' });
+
+    // ── 路径 / 名称复制 ──
+    items.push({
+      label: '📋 复制绝对路径',
+      onClick: () => {
+        const paths = targets.map((t) => toAbsolutePath(root, t.relPath));
+        void navigator.clipboard.writeText(paths.join('\n')).catch(() => {});
+      },
+    });
+    items.push({
+      label: '📋 复制文件名',
+      onClick: () => {
+        const names = targets.map((t) => basename(t.relPath));
+        void navigator.clipboard.writeText(names.join('\n')).catch(() => {});
+      },
+    });
+    items.push({ label: '分隔线', kind: 'separator' });
+
+    // ── 重命名 / 删除 ──
     items.push({ label: '✏️ 重命名', onClick: () => startRename(relPath) });
-    items.push({ label: '📂 在文件管理器打开', onClick: () => { void pi.fsShowInFolder(toAbsolutePath(root, relPath)); } });
     items.push({ label: '🗑️ 删除', danger: true, onClick: () => requestDelete(targets) });
+    items.push({ label: '分隔线', kind: 'separator' });
+
+    // ── 在文件管理器打开 ──
+    items.push({
+      label: '📂 在文件管理器打开',
+      onClick: () => { void pi.fsShowInFolder(toAbsolutePath(root, relPath)); },
+    });
+
     return items;
   }, [menu, selection, root, startNew, startRename, doCut, doCopy, doPaste, requestDelete]);
 

@@ -713,12 +713,12 @@ html, body, #root {
   color: var(--accent-hover);
 }
 
-/* 右键上下文菜单 */
+/* 右键上下文菜单 —— VSCode 风格 */
 .context-menu {
   position: fixed;
   z-index: 1000;
-  min-width: 160px;
-  padding: var(--sp-1) 0;
+  min-width: 180px;
+  padding: 4px 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -726,21 +726,39 @@ html, body, #root {
   overflow: hidden;
 }
 .context-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 2ch;
   width: 100%;
-  text-align: left;
-  padding: var(--sp-2) var(--sp-3);
+  min-height: 28px;
+  padding: 4px 12px;
   background: transparent;
   border: none;
   color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-md);
   cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
 }
 .context-menu-item:hover,
 .context-menu-item:focus-visible {
   background: var(--bg-hover);
   outline: none;
+}
+.context-menu-item:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent-soft);
+}
+.context-menu-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.context-menu-item-shortcut {
+  margin-left: auto;
+  padding-left: 4ch;
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
 }
 .context-menu-item.danger {
   color: var(--danger);
@@ -750,9 +768,14 @@ html, body, #root {
   background: rgba(248, 81, 73, 0.12);
   color: var(--danger-hover);
 }
+.context-menu-item.disabled {
+  opacity: 0.38;
+  cursor: default;
+  pointer-events: none;
+}
 .context-menu-separator {
   height: 1px;
-  margin: var(--sp-1) var(--sp-2);
+  margin: 4px 8px;
   background: var(--border);
 }
 
