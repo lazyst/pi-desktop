@@ -15,7 +15,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession } from './icons';
+import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal } from './icons';
 import { buildGroupedRows } from './tabGrouping';
 export type { RenderedRow } from './tabGrouping';
 
@@ -58,6 +58,8 @@ const renderKindIcon = (kind: TabKind) => {
       return <IconFile size={14} />;
     case 'diff':
       return <IconGitDiff size={14} />;
+    case 'integrated-terminal':
+      return <IconTerminal size={14} />;
     default:
       return null;
   }
