@@ -391,8 +391,418 @@ function createWindow() {
     catch { return false; }
   });
 
-  // 在系统文件管理器中打开文件/目录所在位置并选中（等同资源管理器“打开所在文件夹”）。
-  // 文件：打开父目录并高亮该文件；目录：直接打开该目录。
+  // ╌╌ pi-tool 集成：模型配置、MCP、Skills、扩展、Pi 配置 ╌╌
+
+  /** 深度合并 source 到 target（仅对象，数组直接替换） */
+  function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+    const result: Record<string, unknown> = { ...target };
+    for (const key of Object.keys(source)) {
+      const sv = source[key];
+      const tv = result[key];
+      if (sv !== null && typeof sv === 'object' && !Array.isArray(sv) &&
+          tv !== null && typeof tv === 'object' && !Array.isArray(tv)) {
+        result[key] = deepMerge(tv as Record<string, unknown>, sv as Record<string, unknown>);
+      } else {
+        result[key] = sv;
+      }
+    }
+    return result;
+  }
+
+  // Pi 配置文件 (~/.pi/agent/settings.json)
+  const piAgentDir = path.join(os.homedir(), '.pi', 'agent');
+
+  ipcMain.handle('pi:settings:get', (_e, scope: 'global' | 'project') => {
+    const settingsPath = scope === 'project'
+      ? path.join(process.cwd(), '.pi', 'settings.json')
+      : path.join(piAgentDir, 'settings.json');
+    const exists = fs.existsSync(settingsPath);
+    let data: unknown = null;
+    let raw = '';
+    if (exists) {
+      raw = fs.readFileSync(settingsPath, 'utf-8');
+      try { data = JSON.parse(raw); } catch { /* 不合法 JSON 也能编辑 */ }
+    }
+    return { data, raw, path: settingsPath, exists };
+  });
+
+  ipcMain.handle('pi:settings:set', (_e, payload: { scope: 'global' | 'project'; data?: Record<string, unknown>; raw?: string }) => {
+    const settingsPath = payload.scope === 'project'
+      ? path.join(process.cwd(), '.pi', 'settings.json')
+      : path.join(piAgentDir, 'settings.json');
+    const dir = path.dirname(settingsPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    if (payload.raw !== undefined) {
+      // 源文件模式：直接写 raw 字符串
+      fs.writeFileSync(settingsPath, payload.raw, 'utf-8');
+    } else if (payload.data !== undefined) {
+      // 表单模式：深度合并到现有配置
+      let existing: Record<string, unknown> = {};
+      if (fs.existsSync(settingsPath)) {
+        try { existing = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch { /* 忽略损坏的现有文件 */ }
+      }
+      const merged = deepMerge(existing, payload.data);
+      fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+    }
+    return { success: true, path: settingsPath };
+  });
+
+  // 模型配置 (~/.pi/agent/models.json)
+  const modelsPath = path.join(piAgentDir, 'models.json');
+
+  ipcMain.handle('pi:models:get', () => {
+    if (fs.existsSync(modelsPath)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(modelsPath, 'utf-8'));
+        return data;
+      } catch { /* fall through */ }
+    }
+    return { providers: {} };
+  });
+
+  ipcMain.handle('pi:models:set', (_e, data: unknown) => {
+    if (!fs.existsSync(piAgentDir)) fs.mkdirSync(piAgentDir, { recursive: true });
+    fs.writeFileSync(modelsPath, JSON.stringify(data, null, 2), 'utf-8');
+    return { success: true };
+  });
+
+  // MCP 管理
+  ipcMain.handle('pi:mcp:configs', () => {
+    const cwd = process.cwd();
+    const home = os.homedir();
+    const files = [
+      { id: 'user-global', label: '用户全局配置 (Shared)', path: path.join(home, '.config', 'mcp', 'mcp.json') },
+      { id: 'pi-global', label: 'Pi 全局覆盖 (Pi Agent)', path: path.join(piAgentDir, 'mcp.json') },
+      { id: 'project-shared', label: '项目共享 (Project)', path: path.join(cwd, '.mcp.json') },
+      { id: 'project-pi', label: 'Pi 项目覆盖 (Project Pi)', path: path.join(cwd, '.pi', 'mcp.json') },
+    ];
+    return files.map(f => {
+      const exists = fs.existsSync(f.path);
+      let config: unknown = null;
+      if (exists) {
+        try { config = JSON.parse(fs.readFileSync(f.path, 'utf-8')); } catch { /* empty */ }
+      }
+      return { ...f, exists, config };
+    });
+  });
+
+  ipcMain.handle('pi:mcp:configs:save', (_e, payload: { id: string; config: unknown }) => {
+    const home = os.homedir();
+    const cwd = process.cwd();
+    const fileDefs: Record<string, string> = {
+      'user-global': path.join(home, '.config', 'mcp', 'mcp.json'),
+      'pi-global': path.join(piAgentDir, 'mcp.json'),
+      'project-shared': path.join(cwd, '.mcp.json'),
+      'project-pi': path.join(cwd, '.pi', 'mcp.json'),
+    };
+    const filePath = fileDefs[payload.id];
+    if (!filePath) throw new Error('Unknown MCP config: ' + payload.id);
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(payload.config, null, 2), 'utf-8');
+    return { success: true, path: filePath };
+  });
+
+  ipcMain.handle('pi:mcp:status', () => {
+    const locations = [
+      path.join(piAgentDir, 'npm', 'node_modules', 'pi-mcp-adapter', 'package.json'),
+      path.join(piAgentDir, 'node_modules', 'pi-mcp-adapter', 'package.json'),
+    ];
+    for (const loc of locations) {
+      if (fs.existsSync(loc)) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(loc, 'utf-8'));
+          return { installed: true, version: pkg.version };
+        } catch { /* ignore */ }
+      }
+    }
+    return { installed: false };
+  });
+
+  // Skills 管理
+  const skillsDir = path.join(piAgentDir, 'skills');
+  const disabledSkillsDir = path.join(piAgentDir, 'skills', '.disabled');
+
+  function listSkills(): Array<{ name: string; dir: string; disabled: boolean; description?: string }> {
+    const result: Array<{ name: string; dir: string; disabled: boolean; description?: string }> = [];
+    if (fs.existsSync(skillsDir)) {
+      for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          const skillDir = path.join(skillsDir, entry.name);
+          const skillMd = path.join(skillDir, 'SKILL.md');
+          let description: string | undefined;
+          if (fs.existsSync(skillMd)) {
+            const content = fs.readFileSync(skillMd, 'utf-8');
+            const match = content.match(/description:\s*"([^"]+)"|description:\s*([^\r\n]+)/);
+            description = match?.[1] || match?.[2]?.trim() || undefined;
+          }
+          result.push({ name: entry.name, dir: skillDir, disabled: false, description });
+        }
+      }
+    }
+    if (fs.existsSync(disabledSkillsDir)) {
+      for (const entry of fs.readdirSync(disabledSkillsDir, { withFileTypes: true })) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) {
+          const skillDir = path.join(disabledSkillsDir, entry.name);
+          const skillMd = path.join(skillDir, 'SKILL.md');
+          let description: string | undefined;
+          if (fs.existsSync(skillMd)) {
+            const content = fs.readFileSync(skillMd, 'utf-8');
+            const match = content.match(/description:\s*"([^"]+)"|description:\s*([^\r\n]+)/);
+            description = match?.[1] || match?.[2]?.trim() || undefined;
+          }
+          result.push({ name: entry.name, dir: skillDir, disabled: true, description });
+        }
+      }
+    }
+    return result;
+  }
+
+  ipcMain.handle('pi:skills:list', () => ({ skills: listSkills() }));
+
+  ipcMain.handle('pi:skills:disable', (_e, name: string) => {
+    const src = path.join(skillsDir, name);
+    const dst = path.join(disabledSkillsDir, name);
+    if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) return { success: false, error: 'Skill not found' };
+    if (!fs.existsSync(disabledSkillsDir)) fs.mkdirSync(disabledSkillsDir, { recursive: true });
+    fs.renameSync(src, dst);
+    return { success: true };
+  });
+
+  ipcMain.handle('pi:skills:enable', (_e, name: string) => {
+    const src = path.join(disabledSkillsDir, name);
+    const dst = path.join(skillsDir, name);
+    if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) return { success: false, error: 'Disabled skill not found' };
+    fs.renameSync(src, dst);
+    return { success: true };
+  });
+
+  ipcMain.handle('pi:skills:delete', (_e, name: string) => {
+    const normal = path.join(skillsDir, name);
+    const disabled = path.join(disabledSkillsDir, name);
+    if (fs.existsSync(normal)) {
+      fs.rmSync(normal, { recursive: true, force: true });
+      return { success: true };
+    }
+    if (fs.existsSync(disabled)) {
+      fs.rmSync(disabled, { recursive: true, force: true });
+      return { success: true };
+    }
+    return { success: false, error: 'Skill not found' };
+  });
+
+  // 扩展管理
+  const extDir = path.join(piAgentDir, 'extensions');
+  const disabledExtDir = path.join(piAgentDir, 'extensions', '.disabled');
+
+  function getPackageSourceString(pkg: unknown): string {
+    if (typeof pkg === 'string') return pkg;
+    if (pkg && typeof pkg === 'object') {
+      const s = (pkg as Record<string, unknown>).source;
+      return typeof s === 'string' ? s : '';
+    }
+    return '';
+  }
+
+  function getPackageDisplayName(source: string): string {
+    if (source.startsWith('npm:')) return source.slice(4);
+    if (source.startsWith('git:')) {
+      const parts = source.split('/');
+      return parts[parts.length - 1] || source;
+    }
+    return path.basename(source.replace(/\\/g, '/'));
+  }
+
+  function readSettingsPackages(settingPath: string): { packages: unknown[]; extensions: string[] } {
+    if (!fs.existsSync(settingPath)) return { packages: [], extensions: [] };
+    try {
+      const data = JSON.parse(fs.readFileSync(settingPath, 'utf-8'));
+      return {
+        packages: Array.isArray(data.packages) ? data.packages : [],
+        extensions: Array.isArray(data.extensions) ? data.extensions : [],
+      };
+    } catch {
+      return { packages: [], extensions: [] };
+    }
+  }
+
+  function readPiToolState(): Record<string, unknown> {
+    const statePath = path.join(piAgentDir, 'pi-tool-state.json');
+    if (fs.existsSync(statePath)) {
+      try { return JSON.parse(fs.readFileSync(statePath, 'utf-8')); } catch { /* empty */ }
+    }
+    return {};
+  }
+
+  function writePiToolState(state: Record<string, unknown>): void {
+    fs.writeFileSync(path.join(piAgentDir, 'pi-tool-state.json'), JSON.stringify(state, null, 2), 'utf-8');
+  }
+
+  ipcMain.handle('pi:extensions:list', () => {
+    const result: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> = [];
+
+    // 本地目录扩展
+    if (fs.existsSync(extDir)) {
+      for (const entry of fs.readdirSync(extDir, { withFileTypes: true })) {
+        if (!entry.name.startsWith('.') && (entry.isDirectory() || entry.isFile())) {
+          result.push({ name: entry.name, type: 'local', source: path.join(extDir, entry.name), disabled: false, managed: true, dir: path.join(extDir, entry.name) });
+        }
+      }
+    }
+    if (fs.existsSync(disabledExtDir)) {
+      for (const entry of fs.readdirSync(disabledExtDir, { withFileTypes: true })) {
+        if (!entry.name.startsWith('.') && (entry.isDirectory() || entry.isFile())) {
+          result.push({ name: entry.name, type: 'local', source: path.join(disabledExtDir, entry.name), disabled: true, managed: true, dir: path.join(disabledExtDir, entry.name) });
+        }
+      }
+    }
+
+    // 包扩展
+    const globalSettingsPath = path.join(piAgentDir, 'settings.json');
+    const projectSettingsPath = path.join(process.cwd(), '.pi', 'settings.json');
+    const globalPkgs = readSettingsPackages(globalSettingsPath);
+    const projectPkgs = readSettingsPackages(projectSettingsPath);
+    const state = readPiToolState();
+    const disabledPackages: string[] = (state.disabledExtensions as string[]) || [];
+
+    const seenPkgSources = new Set<string>();
+    for (const pkg of [...globalPkgs.packages, ...projectPkgs.packages]) {
+      const source = getPackageSourceString(pkg);
+      if (!source || seenPkgSources.has(source)) continue;
+      seenPkgSources.add(source);
+      result.push({ name: getPackageDisplayName(source), type: 'package', source, disabled: disabledPackages.includes(source), managed: true });
+    }
+    for (const source of disabledPackages) {
+      if (seenPkgSources.has(source)) continue;
+      seenPkgSources.add(source);
+      result.push({ name: getPackageDisplayName(source), type: 'package', source, disabled: true, managed: true });
+    }
+
+    return { extensions: result };
+  });
+
+  ipcMain.handle('pi:extensions:disable', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
+    if (payload.type === 'local' && payload.dir) {
+      const src = payload.dir;
+      const dst = path.join(disabledExtDir, payload.name);
+      if (!fs.existsSync(src)) return { success: false, error: 'Extension not found' };
+      if (!fs.existsSync(disabledExtDir)) fs.mkdirSync(disabledExtDir, { recursive: true });
+      fs.renameSync(src, dst);
+      return { success: true };
+    }
+    if (payload.type === 'package') {
+      // 从 settings.json 移除
+      const settingsPaths = [path.join(piAgentDir, 'settings.json'), path.join(process.cwd(), '.pi', 'settings.json')];
+      let changed = false;
+      for (const sp of settingsPaths) {
+        if (fs.existsSync(sp)) {
+          try {
+            const settings = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+            if (Array.isArray(settings.packages)) {
+              const before = settings.packages.length;
+              settings.packages = settings.packages.filter((p: unknown) => getPackageSourceString(p) !== payload.source);
+              if (settings.packages.length !== before) {
+                changed = true;
+                fs.writeFileSync(sp, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+              }
+            }
+          } catch { /* empty */ }
+        }
+      }
+      if (changed) {
+        const st = readPiToolState();
+        const list: string[] = (st.disabledExtensions as string[]) || [];
+        if (!list.includes(payload.source)) {
+          list.push(payload.source);
+          st.disabledExtensions = list;
+          writePiToolState(st);
+        }
+      }
+      return { success: changed };
+    }
+    return { success: false, error: 'Unsupported extension type' };
+  });
+
+  ipcMain.handle('pi:extensions:enable', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
+    if (payload.type === 'local' && payload.dir) {
+      const src = payload.dir;
+      const dst = path.join(extDir, payload.name);
+      if (!fs.existsSync(src)) return { success: false, error: 'Extension not found' };
+      if (!fs.existsSync(extDir)) fs.mkdirSync(extDir, { recursive: true });
+      fs.renameSync(src, dst);
+      return { success: true };
+    }
+    if (payload.type === 'package') {
+      const st = readPiToolState();
+      const list: string[] = (st.disabledExtensions as string[]) || [];
+      const idx = list.indexOf(payload.source);
+      if (idx === -1) return { success: false, error: 'Extension not found in disabled list' };
+      list.splice(idx, 1);
+      st.disabledExtensions = list;
+      writePiToolState(st);
+      // 写回 settings.json
+      const globalSettingsPath = path.join(piAgentDir, 'settings.json');
+      try {
+        const settings = fs.existsSync(globalSettingsPath)
+          ? JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8'))
+          : {};
+        if (!Array.isArray(settings.packages)) settings.packages = [];
+        if (!settings.packages.includes(payload.source)) {
+          settings.packages.push(payload.source);
+          const dir = path.dirname(globalSettingsPath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(globalSettingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+        }
+        return { success: true };
+      } catch {
+        return { success: false, error: 'Failed to write settings' };
+      }
+    }
+    return { success: false, error: 'Unsupported extension type' };
+  });
+
+  ipcMain.handle('pi:extensions:delete', (_e, payload: { name: string; type: string; source: string; dir?: string }) => {
+    if (payload.type === 'local' && payload.dir) {
+      if (!fs.existsSync(payload.dir)) return { success: false, error: 'Extension not found' };
+      fs.rmSync(payload.dir, { recursive: true, force: true });
+      return { success: true };
+    }
+    if (payload.type === 'package') {
+      const settingsPaths = [path.join(piAgentDir, 'settings.json'), path.join(process.cwd(), '.pi', 'settings.json')];
+      let changed = false;
+      for (const sp of settingsPaths) {
+        if (fs.existsSync(sp)) {
+          try {
+            const settings = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+            if (Array.isArray(settings.packages)) {
+              const before = settings.packages.length;
+              settings.packages = settings.packages.filter((p: unknown) => getPackageSourceString(p) !== payload.source);
+              if (settings.packages.length !== before) {
+                changed = true;
+                fs.writeFileSync(sp, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+              }
+            }
+          } catch { /* empty */ }
+        }
+      }
+      if (changed) {
+        const st = readPiToolState();
+        const list: string[] = (st.disabledExtensions as string[]) || [];
+        const idx = list.indexOf(payload.source);
+        if (idx !== -1) {
+          list.splice(idx, 1);
+          st.disabledExtensions = list;
+          writePiToolState(st);
+        }
+      }
+      return { success: changed };
+    }
+    return { success: false, error: 'Unsupported extension type' };
+  });
+
+  // 在系统文件管理器中打开文件/目录所在位置并选中（等同资源管理器"打开所在文件夹"）。
+  // 文件：打开父目录并高亮该文件；目录：直接打开该
   ipcMain.handle('fs:showInFolder', async (_e, absPath: string): Promise<boolean> => {
     if (typeof absPath !== 'string' || !absPath) return false;
     try { shell.showItemInFolder(absPath); return true; }
