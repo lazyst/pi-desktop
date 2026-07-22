@@ -25,8 +25,8 @@ const ANSI: Record<'dark' | 'light', Omit<ITheme, 'background' | 'foreground' | 
     brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364',
     brightYellow: '#e3b341', brightBlue: '#79c0ff', brightMagenta: '#d2a8ff',
     brightCyan: '#56d4dd', brightWhite: '#f0f6fc',
-    scrollbarSliderBackground: 'rgba(201, 209, 217, 0.15)',
-    scrollbarSliderHoverBackground: 'rgba(201, 209, 217, 0.40)',
+    scrollbarSliderBackground: 'rgba(230, 237, 243, 0.15)',
+    scrollbarSliderHoverBackground: 'rgba(230, 237, 243, 0.40)',
     scrollbarSliderActiveBackground: 'rgba(124, 156, 255, 0.60)',
   },
   light: {
@@ -61,7 +61,7 @@ export function resolveTerminalForeground(theme: Theme): string {
     const v = getComputedStyle(root).getPropertyValue('--text').trim();
     if (v) return v;
   } catch { /* 非浏览器环境（测试）回退 */ }
-  return theme === 'light' ? '#1f2328' : '#c9d1d9';
+  return theme === 'light' ? '#0d1117' : '#e6edf3';
 }
 
 /** 构造指定主题的 xterm ITheme：背景取容器 --bg-app、前景/光标取容器 --text，
