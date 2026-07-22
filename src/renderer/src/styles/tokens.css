@@ -27,6 +27,9 @@
   --bg-hover: #1c2230;
   --bg-active: rgba(124, 156, 255, 0.10);
   --bg-elevated: #1b2230;
+  /* 编辑器专用表面背景：与 --bg-panel 一致（GitHub Dark 冷色板 #161b22），
+     使编辑器区与四周面板无缝融合，避免 Monaco 默认暖灰 #1e1e1e 造成的冷暖不搭。 */
+  --editor-surface: #161b22;
 
   /* Borders */
   --border: #283040;
@@ -130,6 +133,8 @@ body {
   --bg-hover: #eaeef2;
   --bg-active: rgba(59, 91, 219, 0.10);
   --bg-elevated: #ffffff;
+  /* 编辑器专用表面背景：浅色模式下 vs 主题内置背景为 #fffffe，与面板 #f6f8fa 接近，故沿用。 */
+  --editor-surface: #fffffe;
 
   /* Borders */
   --border: #d0d7de;

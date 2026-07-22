@@ -16,7 +16,6 @@
 import { useRef } from 'react';
 import { DiffEditor, type DiffOnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
-import { monaco } from './monaco-setup';
 import { themeIsDark, getMonacoFontSize, useMonacoThemeFollow, useMonacoFontFollow } from '../../editorUtils';
 
 interface Props {
@@ -48,6 +47,7 @@ export function MonacoDiffEditor({ original, modified, language }: Props) {
       original={original}
       modified={modified}
       language={language || 'plaintext'}
+      // 使用 Monaco 内置 vs-dark/vs 主题，不自定义主题。
       theme={themeIsDark() ? 'vs-dark' : 'vs'}
       options={{
         readOnly: true,
@@ -64,6 +64,10 @@ export function MonacoDiffEditor({ original, modified, language }: Props) {
         diffWordWrap: 'on',
         originalAriaLabel: '原始内容',
         modifiedAriaLabel: '修改后内容',
+        // 以下选项参考 orca，对齐代码编辑器的编辑体验
+        renderLineHighlight: 'line',
+        smoothScrolling: true,
+        padding: { top: 0 },
       }}
       className="monaco-diff-editor"
       onMount={handleMount}

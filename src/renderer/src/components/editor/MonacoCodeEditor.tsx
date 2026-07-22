@@ -6,7 +6,8 @@
 //     不一致才 reconcile 覆盖，避免编辑中回写造成的光标跳动 / 内容丢失。
 //   • onChange → 通知父组件计算 dirty / 缓存当前文本。
 //   • onSave：Ctrl/Cmd+S 触发（仅在有未保存改动时拦截，由父组件决定是否落盘）。
-//   • 主题跟随：监听根节点 data-theme，切换 vs-dark / light。
+//   • 主题跟随：监听根节点 data-theme，切换 vs-dark / vs（Monaco 内置主题，不自定义）。
+//     编辑器背景色通过 CSS --editor-surface 变量覆盖，与面板色调一致。
 //   • 字号跟随：监听 --font-scale（fontSize.ts 写入根节点），按比例设 editor fontSize。
 //   • keep-alive：用 `keepCurrentModel` 让每个 path 的 model 跨 tab 切换保留（不 dispose），
 //     自然支持 keep-alive、不丢滚动与光标。saveViewState 关掉，由本组件缓存/恢复视图状态。
@@ -15,8 +16,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
-import { monaco } from './monaco-setup';
-import { themeIsDark, getMonacoFontSize, useMonacoThemeFollow, useMonacoFontFollow } from '../../editorUtils';
+import { themeIsDark, getMonacoFontSize, useMonacoFontFollow } from '../../editorUtils';
 
 interface Props {
   /** 仓库根目录，用于构造稳定的 model path（uri）。 */
@@ -55,8 +55,6 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
 
   const uri = modelUri(root, path);
 
-  // 主题跟随：监听根节点 data-theme（与 diff 编辑器同源）。
-  useMonacoThemeFollow();
   // 字号跟随：监听 --font-scale（fontSize.ts 写到根节点）。
   useMonacoFontFollow(() => editorRef.current);
 
@@ -95,6 +93,8 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
       path={uri}
       language={language || 'plaintext'}
       value={content}
+      // 使用 Monaco 内置 vs-dark/vs 主题，不自定义主题。
+      // 编辑器背景色通过 CSS --editor-surface 变量在 app.css 中覆盖。
       theme={themeIsDark() ? 'vs-dark' : 'vs'}
       keepCurrentModel
       saveViewState={false}
@@ -108,6 +108,17 @@ export function MonacoCodeEditor({ root, path, language, content, onChange, onSa
         wordWrap: 'on',
         tabSize: 2,
         renderWhitespace: 'none',
+        // 以下选项参考 orca MonacoEditor，优化编辑体验
+        lineNumbers: 'on',
+        renderLineHighlight: 'line', // 仅高亮当前行（而非全行+左边距），减少视觉噪声
+        smoothScrolling: true, // 滚动平滑
+        cursorSmoothCaretAnimation: 'off',
+        padding: { top: 0 },
+        find: {
+          addExtraSpaceOnTop: false,
+          autoFindInSelection: 'never',
+          seedSearchStringFromSelection: 'never',
+        },
       }}
       className="monaco-code-editor"
       onMount={handleMount}

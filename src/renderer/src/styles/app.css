@@ -1495,15 +1495,48 @@ html, body, #root {
 .code-preview .cm-editor { height: 100%; }
 
 /* Monaco 编辑器容器（取代原 CodeMirror .code-preview）。填满 .preview-tab-body，
-   内部自带滚动，不抢父容器滚动。 */
-.monaco-code-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+   内部自带滚动，不抢父容器滚动。
+   背景走 --editor-surface 变量，与 Monaco 内置 vs-dark/#1e1e1e 对齐，
+   使编辑器与容器无缝融合（参考 orca 的 --editor-surface 设计）。
+   同时显式覆盖 --vscode-editor-* CSS 变量，避免 Monaco 主题系统未正确生成导致的红色残留。 */
+.monaco-code-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; background: var(--editor-surface); }
 .monaco-code-editor .monaco-editor,
 .monaco-code-editor .monaco-editor .overflow-guard { height: 100% !important; }
 /* Monaco diff 编辑器容器（取代原自研 SplitDiffView）。填满 .diff-tab-body，
    内部自带滚动，不抢父容器滚动；与 .monaco-code-editor 同视觉语言。 */
-.monaco-diff-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+.monaco-diff-editor { flex: 1; min-height: 0; overflow: hidden; display: flex; background: var(--editor-surface); }
 .monaco-diff-editor .monaco-editor,
 .monaco-diff-editor .monaco-editor .overflow-guard { height: 100% !important; }
+
+/* ── 覆盖 Monaco --vscode-editor-* CSS 变量 ──
+   Monaco 的 standaloneThemeService 通过 <style class="monaco-colors"> 动态设置这些变量。
+   有时因主题系统未正确初始化，变量被覆写为 #ff0000。这里用更高特指度的选择器强制覆盖。 */
+[data-theme="dark"] .monaco-editor {
+  --vscode-editor-selectionBackground: rgba(124, 156, 255, 0.25);
+  --vscode-editor-inactiveSelectionBackground: rgba(124, 156, 255, 0.12);
+  --vscode-editor-selectionHighlightBackground: rgba(124, 156, 255, 0.06);
+  --vscode-editor-findMatchBackground: rgba(124, 156, 255, 0.20);
+  --vscode-editor-findMatchHighlightBackground: rgba(124, 156, 255, 0.12);
+  --vscode-editor-findRangeHighlightBackground: rgba(124, 156, 255, 0.06);
+  --vscode-editor-rangeHighlightBackground: rgba(124, 156, 255, 0.06);
+  --vscode-editor-wordHighlightBackground: rgba(124, 156, 255, 0.10);
+  --vscode-editor-wordHighlightStrongBackground: rgba(124, 156, 255, 0.14);
+  --vscode-editor-hoverHighlightBackground: rgba(124, 156, 255, 0.04);
+  --vscode-editor-lineHighlightBackground: rgba(124, 156, 255, 0.08);
+}
+[data-theme="light"] .monaco-editor {
+  --vscode-editor-selectionBackground: #ADD6FF;
+  --vscode-editor-inactiveSelectionBackground: rgba(173, 214, 255, 0.50);
+  --vscode-editor-selectionHighlightBackground: rgba(173, 214, 255, 0.30);
+  --vscode-editor-findMatchBackground: #A8AC94;
+  --vscode-editor-findMatchHighlightBackground: rgba(234, 92, 0, 0.33);
+  --vscode-editor-findRangeHighlightBackground: rgba(180, 180, 180, 0.30);
+  --vscode-editor-rangeHighlightBackground: rgba(253, 255, 0, 0.20);
+  --vscode-editor-wordHighlightBackground: rgba(173, 214, 255, 0.30);
+  --vscode-editor-wordHighlightStrongBackground: rgba(173, 214, 255, 0.50);
+  --vscode-editor-hoverHighlightBackground: rgba(173, 214, 255, 0.15);
+  --vscode-editor-lineHighlightBackground: rgba(238, 238, 238, 0.50);
+}
 /* Markdown preview wrapper + toolbar (inside CodePreview) */
 .code-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* Markdown 预览模式：内容可能超出视口，需可上下滚动（编辑模式由 CodeMirror
@@ -1641,7 +1674,7 @@ html, body, #root {
   flex: none;
 }
 .preview-tab-title { font-weight: var(--fw-semibold); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-.preview-tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.preview-tab-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--editor-surface); }
 
 /* ── Markdown 预览（orca 风格）── */
 .md-preview { flex: 1; min-height: 0; display: flex; overflow: hidden; }
