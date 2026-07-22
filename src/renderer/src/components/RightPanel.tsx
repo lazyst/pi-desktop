@@ -137,8 +137,8 @@ export function RightPanel({
     <div className="right-panel" ref={rightPanelRef} style={{ width: rpWidth }}>
       <TabBar
         tabs={[
-          { id: 'files', title: '文件', kind: 'preview' },
-          { id: 'git', title: 'Git', kind: 'diff' },
+          { id: 'files', title: '文件', kind: 'preview', closable: false },
+          { id: 'git', title: 'Git', kind: 'diff', closable: false },
         ]}
         activeId={tab}
         onSelect={(id) => setTab(id as RightTab)}
