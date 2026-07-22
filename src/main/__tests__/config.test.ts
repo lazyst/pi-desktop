@@ -37,7 +37,6 @@ describe('config (pure)', () => {
   it('defaultConfig includes integrated terminal fields with correct defaults', () => {
     const c = defaultConfig();
     expect(c.defaultTerminalProfile).toBeNull();
-    expect(c.terminalDrawerHeight).toBe(220);
     expect(c.terminalProfiles).toEqual({});
   });
 

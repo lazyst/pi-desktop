@@ -109,8 +109,7 @@ export function mountPane(key: string, host: HTMLElement): void {
 /**
  * 真正销毁实例：从注册表移除并 unmount（释放所有监听与定时器、显式 loseContext 释放 WebGL）。
  * 会话终端：仅卸载渲染实例（会话 pty 由主进程会话生命周期管理，此处不杀）。
- * 集成终端：卸载实例后由调用方（用户点 × → App.handleCloseTab → pi.destroyTerminal）杀掉主进程 pty；
- * 抽屉收起（drawerOpen=false→display:none 隐藏）只是隐藏、不调 releasePane，pty 自然保留（keep-alive）。
+ * 集成终端：卸载实例后由调用方（用户点 × → App.handleCloseTab → pi.destroyTerminal）杀掉主进程 pty。
  */
 export function releasePane(key: string): void {
   const term = panes.get(key);

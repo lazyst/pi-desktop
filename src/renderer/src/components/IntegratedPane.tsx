@@ -20,8 +20,8 @@ interface Props {
   active: boolean;
 }
 
-// 集成终端壳（替代原 IntegratedTerminalPane）：仿 SessionPane，但驱动的是集成终端抽屉里的真实
-// shell 实例。关键差异（已收编进 PaneManager.acquirePane 的 channel 选择）：
+// 集成终端壳（替代原 IntegratedTerminalPane）：仿 SessionPane，但驱动集成终端实例。
+// 关键差异（已收编进 PaneManager.acquirePane 的 channel 选择）：
 //  - 数据通道用 IntegratedChannel（terminal:* IPC），而非 SessionChannel。
 //  - 卸载实例由 PaneManager.releasePane 完成；杀掉主进程侧 pty 的唯一入口是用户点 ×
 //    （App.handleCloseTab → pi.destroyTerminal），本壳不负责。
@@ -67,9 +67,8 @@ export function IntegratedPane({ terminalId, active }: Props) {
       // 清理时只卸载 xterm 渲染实例（经 PaneManager.releasePane 注销），
       // 不杀主进程侧 pty：销毁 pty 的唯一入口是用户点 ×（App.handleCloseTab → pi.destroyTerminal）；
       // 此处若也调 destroyTerminal，会在 React StrictMode 的 mount→unmount→mount 双调用（dev）
-      // 或抽屉收起隐藏时误杀刚创建的 pty，导致“新建即消失 / 闪退”。
+      // 时误杀刚创建的 pty，导致"新建即消失 / 闪退"。
       // 隐藏期只是 CSS opacity:0（不卸载），pty 自然保留（keep-alive）。
-      // 卸载前序列化滚动缓冲区，供下次同 id 重建时 replay（对齐 VS Code 持久化）。
       const buf = term.serializeScrollback();
       if (buf) pi.saveTerminalBuffer?.(terminalId, buf);
       releasePane(terminalId);

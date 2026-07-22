@@ -32,7 +32,7 @@ interface Entry {
 
 /**
  * 集成终端 PTY 池——独立运行的真实用户 shell 进程池，与 SessionPool（跑 pi 会话、
- * 写 .jsonl）完全解耦：不写盘、不进会话索引。用于渲染层内嵌的集成终端抽屉。
+ * 写 .jsonl）完全解耦：不写盘、不进会话索引。用于渲染层内嵌的集成终端。
  *
  * 区别要点：
  *  - env 默认不声明 TERM_PROGRAM='vscode'（那是给 pi-tui 看的，对真实用户 shell 无意义）；

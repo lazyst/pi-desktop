@@ -45,8 +45,6 @@ export interface AppConfig {
   fontSize: number;
   // 集成终端：默认终端 profile 的 id；null 表示用探测到的第一个 / 平台默认。
   defaultTerminalProfile: string | null;
-  // 集成终端抽屉的高度（像素）。
-  terminalDrawerHeight: number;
   // 用户自定义的终端 profile 覆盖（key 为 profile id，如 'custom'），覆盖探测到的 profile。
   terminalProfiles: Record<string, { path: string; args: string[] }>;
   // 应用工作目录分组的根目录：用于收容与具体项目无关、与 pi-agent 闲聊或临时用的集成终端。
@@ -56,37 +54,6 @@ export interface AppConfig {
 }
 
 export type Platform = 'windows' | 'macos' | 'linux';
-
-export type TabKind = 'session' | 'preview' | 'diff';
-
-// 通用 Tab 模型：中间区统一 Tab 条承载三种 tab 类型（session 终端会话 / preview 文件预览 / diff git diff）。
-// keep-alive：所有 tab 内容都渲染，非 active 的 display:none 隐藏（对齐现有 TerminalPane / IntegratedTerminalPane）。
-export interface BaseTab {
-  id: string;        // 唯一 id（session 用 sessionKey；preview 用 `preview:${root}//${path}`；diff 用 `diff:${cwd}//${commitHash ?? 'work'}`）
-  kind: TabKind;
-  title: string;     // Tab 条显示的标题
-}
-
-export interface SessionTab extends BaseTab {
-  kind: 'session';
-  key: string;       // sessionKey（.jsonl 绝对路径 / live-<uuid>）
-  cwd: string;
-  name: string;
-}
-
-export interface PreviewTab extends BaseTab {
-  kind: 'preview';
-  root: string;      // 仓库根目录
-  path: string;      // 相对 root 的文件路径
-}
-
-export interface DiffTab extends BaseTab {
-  kind: 'diff';
-  cwd: string;
-  commitHash: string | null;  // null = 工作区 diff
-}
-
-export type AnyTab = SessionTab | PreviewTab | DiffTab;
 
 // 一个可用的终端 profile（shell 描述）。id 稳定（如 'pwsh' / 'cmd' / 'git-bash' / 'default' / 'custom'）。
 export interface TerminalProfile {
