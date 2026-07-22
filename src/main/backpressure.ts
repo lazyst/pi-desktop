@@ -18,6 +18,9 @@ export const FlowControlConstants = {
   HighWatermarkChars: 100000,
   /** 降到此以下才 resume PTY（VS Code: 5000 ≈ 4.9KB）。 */
   LowWatermarkChars: 5000,
+  /** 渲染端累积消费字符数达此值才发送一次 ack IPC（VS Code: 5000）。
+   * 减少高频小段 term.write 回调下主进程 ↔ 渲染程通信量。 */
+  CharCountAckSize: 5000,
 } as const;
 
 export class BackpressureController {
