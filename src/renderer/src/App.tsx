@@ -45,8 +45,8 @@ export default function App() {
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // 集成终端抽屉的开关 / 实例列表 / 激活终端 / 高度已收编进 useTabStore（see issue 03）。
-  // App 仅保留「终端新建 / 销毁 / 高度拖拽」所需的主进程 IPC 协调逻辑（见下方 handler）。
+  // 集成终端实例列表 / 激活状态已收编进 useTabStore（see issue 03）。
+  // App 仅保留「终端新建 / 销毁」所需的主进程 IPC 协调逻辑（见下方 handler）。
   // 缓存探测到的 profile 列表，避免每次新建都探测。
   const profilesRef = useRef<TerminalProfile[] | null>(null);
   // 当前激活会话（从 store tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
@@ -62,7 +62,7 @@ export default function App() {
   const [lastSessionCwd, setLastSessionCwd] = useState<string | null>(null);
   useEffect(() => { if (activeCwd) setLastSessionCwd(activeCwd); }, [activeCwd]);
   const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
-  // 文件预览抽屉：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
+  // 文件预览：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
   // Same mapping held in a ref so the `onRelink` handler (which fires right after
   const liveToDiskRef = useRef<Record<string, string>>({});
 
@@ -248,7 +248,7 @@ export default function App() {
     });
   };
 
-  // 点击文件树中的文件 → 中间区新增/激活预览 tab（单文件），而非旧式右下抽屉。
+  // 点击文件树中的文件 → 中间区新增/激活预览 tab（单文件）。
   const handleOpenFile = (relPath: string, fileName: string, root: string) => {
     // 统一收编进 store（openPreview action 封装「已存在则激活、不存在则新增」）。
     // title 由 store 按 fileName 或 path 末段计算，对应用户可见的文件名。

@@ -159,7 +159,7 @@ contextBridge.exposeInMainWorld('pi', {
   fsOpenWithSystem: (absPath: string): Promise<boolean> => ipcRenderer.invoke('fs:openWithSystem', absPath),
   // 在系统文件管理器中打开文件/目录所在位置并选中。
   fsShowInFolder: (absPath: string): Promise<boolean> => ipcRenderer.invoke('fs:showInFolder', absPath),
-  // ── 集成终端（抽屉内嵌的真实 shell）──
+  // ── 集成终端（真实 shell）──
   spawnTerminal: (req: { command?: string; cwd: string; profile?: any; sessionFile?: string; name?: string; key?: string }) =>
     ipcRenderer.invoke('terminal:spawn', req),
   listTerminalProfiles: (): Promise<TerminalProfile[]> => ipcRenderer.invoke('terminal:listProfiles'),
