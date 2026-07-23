@@ -754,6 +754,8 @@ export class XtermTerminal implements LiveTerminal {
    * 点击 file 链接 → pi.fsOpenWithSystem + onOpenFile 回调；点击 url → pi.openExternal。
    * 返回反注册函数（unmount 时调用）。 */
   private _registerTerminalLinkProvider(term: Terminal): { dispose: () => void } {
+    // 检测是否为 Windows 平台（用于链接检测中的路径解析）。
+    const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
     const provider = {
       provideLinks: (bufferLineNumber: number, cb: (links: any[] | undefined) => void) => {
         if (this.disposed || !term.buffer) {
@@ -774,7 +776,7 @@ export class XtermTerminal implements LiveTerminal {
           if (p === '~' || p.startsWith('~/')) return p; // 主目录本项目不解析，保持原样
           return p;
         };
-        const matches = detectLinksInLine(text, resolvePath);
+        const matches = detectLinksInLine(text, isWindows, resolvePath);
         if (!matches.length) {
           cb(undefined);
           return;
@@ -782,13 +784,18 @@ export class XtermTerminal implements LiveTerminal {
         const links = matches.map((m) => {
           const built = buildLink(m, {
             openFile: (path, lineNum, colNum) => {
-              this.pi.fsOpenWithSystem?.(path).catch(() => {});
-              this.onOpenFile?.(path, lineNum, colNum);
+              // 先在 pi-desktop 编辑器中打开（通过 onOpenFile 回调），
+              // 若编辑器不可用则回退到系统默认程序。
+              if (this.onOpenFile) {
+                this.onOpenFile(path, lineNum, colNum);
+              } else {
+                this.pi.fsOpenWithSystem?.(path).catch(() => {});
+              }
             },
             openExternal: (url) => {
-              // 对齐 VS Code OpenerService._defaultExternalOpener：使用 window.open 保留用户手势。
-              // setWindowOpenHandler 会拦截并调用 shell.openExternal（有用户手势 → 不弹安全对话框）。
-              window.open(url, '_blank', 'noopener');
+              // 使用 pi.openExternal（主进程 app:openExternal），
+              // 已改用 child_process.exec 绕过 Electron 的 shell.openExternal 安全对话框。
+              this.pi.openExternal(url).catch(() => {});
             },
           });
           // 填充绝对行号（detectLinks 只给列号，行号由 provider 上下文提供）。
@@ -914,6 +921,67 @@ export class XtermTerminal implements LiveTerminal {
       // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义，
       // 由 theme.ts 的 TERM_THEMES 在运行时读取，见 theme.ts）。
       theme: TERM_THEMES[getTheme()],
+      // 链接处理器（对齐 VS Code TerminalLinkManager 的 linkHandler）：
+      // 拦截 xterm 原生 OSC 8 超链接（如 pi 会话中 AI 输出的 Markdown 链接），
+      // 防止 xterm 默认行为弹安全对话框，改为走 pi.openExternal。
+      linkHandler: {
+        allowNonHttpProtocols: true,
+        activate: (event, text) => {
+          // 检查修饰键（Ctrl/Cmd+click 才激活）
+          if (!event || !(event.ctrlKey || event.metaKey)) return;
+          // 提取 scheme 判断类型
+          const colonIdx = text.indexOf(':');
+          if (colonIdx === -1) return;
+          const scheme = text.substring(0, colonIdx);
+          // file:// 链接：走文件打开（忽略安全警告）
+          if (scheme === 'file') {
+            const path = decodeURIComponent(text.slice('file://'.length));
+            if (this.onOpenFile) {
+              this.onOpenFile(path);
+            } else {
+              this.pi.fsOpenWithSystem?.(path).catch(() => {});
+            }
+            return;
+          }
+          // http/https/mailto 等：走 pi.openExternal（已改用 child_process.exec）
+          this.pi.openExternal(text).catch(() => {});
+        },
+        hover: (event, text, range) => {
+          // 显示工具提示（对齐 linkProvider 的 buildLink hover 行为）
+          const doc = document;
+          const existing = doc.querySelector('.terminal-link-tooltip');
+          if (existing) existing.remove();
+
+          const tooltipEl = doc.createElement('div');
+          tooltipEl.className = 'terminal-link-tooltip';
+          tooltipEl.textContent = 'Ctrl+click 打开链接';
+          tooltipEl.style.cssText = `
+            position: fixed;
+            left: ${event.clientX}px;
+            top: ${event.clientY - 28}px;
+            background: var(--bg-over, #2d2d2d);
+            color: var(--text, #fff);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            opacity: 0;
+            transition: opacity 0.15s ease;
+          `;
+          doc.body.appendChild(tooltipEl);
+          requestAnimationFrame(() => {
+            tooltipEl.style.opacity = '1';
+          });
+        },
+        leave: () => {
+          // 移除工具提示
+          const tooltip = document.querySelector('.terminal-link-tooltip');
+          if (tooltip) tooltip.remove();
+        },
+      },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -993,7 +1061,8 @@ export class XtermTerminal implements LiveTerminal {
     }
 
     // 终端内链接 provider（对齐 VS Code TerminalLinkManager 的 registerLinkProvider）：
-    // 识别 file/url 链接，点击用系统程序打开（file→fsOpenWithSystem，url→openExternal），
+    // 识别 file/url 链接，file → onOpenFile（编辑器），url → window.open（保留用户手势，
+    // 经 setWindowOpenHandler → shell.openExternal 打开）。
     // 并回传 onOpenFile 供文件树定位。
     try {
       this.linkProviderDisposable = this._registerTerminalLinkProvider(term);

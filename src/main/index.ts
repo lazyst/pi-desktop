@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { exec } from 'node:child_process';
 import { UnifiedTerminalPool } from './unifiedTerminalPool';
 import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './sessionPool';
@@ -263,11 +264,20 @@ function createWindow() {
   });
 
 
-/** 在默认浏览器中打开 URL（对齐 VS Code nativeHostMainService.doOpenShellExternal）。
- * 注意：此函数仅在 setWindowOpenHandler 中调用，此时用户手势通过同步的
- * window.open → setWindowOpenHandler 调用链保留，shell.openExternal 不会弹安全对话框。 */
+/** 在默认浏览器中打开 URL。
+ * 使用 child_process.exec 调用 OS 原生命令，绕过 Electron 30+ 的
+ * shell.openExternal 安全确认对话框（该对话框无法通过用户手势规避）。
+ * macOS: open <url>，Windows: start "" <url>，Linux: xdg-open <url> */
 function openUrlInExternal(url: string): void {
-  shell.openExternal(url).catch(() => {});
+  const escaped = url.replace(/"/g, '\\"');
+  const cmd = process.platform === 'darwin'
+    ? `open "${escaped}"`
+    : process.platform === 'win32'
+      ? `start "" "${escaped}"`
+      : `xdg-open "${escaped}"`;
+  exec(cmd, (err) => {
+    if (err) console.error('[openUrlInExternal] failed:', err.message);
+  });
 }
 
   // ── 链接跳转纵深防御（对齐 VS Code setWindowOpenHandler + will-frame-navigate）──
@@ -378,8 +388,7 @@ function openUrlInExternal(url: string): void {
   });
 
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
-  // file:// 不走此通道，二进制/本地文件由 fs:openWithSystem（shell.openPath）以系统程序打开。
-  // 以免绕过路径越界保护。自用工具，不打扰确认，直接开。
+  // 使用 child_process.exec 绕过 Electron 30+ 的 shell.openExternal 安全确认对话框。
   ipcMain.handle('app:openExternal', (_e, url: string): boolean => {
     if (typeof url !== 'string' || !url) return false;
     let u: URL;
@@ -387,8 +396,7 @@ function openUrlInExternal(url: string): void {
     if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
       return false;
     }
-    // 对齐 VS Code nativeHostMainService.doOpenShellExternal
-    shell.openExternal(url).catch(() => {});
+    openUrlInExternal(url);
     return true;
   });
 

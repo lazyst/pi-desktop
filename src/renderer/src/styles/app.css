@@ -2591,3 +2591,32 @@ html, body, #root {
   color: var(--text-faint);
   margin-top: var(--sp-2);
 }
+
+/* 终端内链接工具提示（对齐 VS Code TerminalHover） */
+.terminal-link-tooltip {
+  position: fixed;
+  pointer-events: none;
+  z-index: 1000;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: var(--bg-elevated, #2d2d2d);
+  color: var(--text, #e0e0e0);
+  border: 1px solid var(--border, #444);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+/* 终端链接 hover 指针样式：xterm 用 .xterm-cursor-pointer 控制，
+   但某些版本/配置可能不生效，这里兜底确保所有终端内链接显示手指光标。
+   同时覆盖 xterm 默认的 text 光标。 */
+.integrated-terminal-host .xterm a,
+.integrated-terminal-host .xterm .xterm-cursor-pointer,
+.terminal-host .xterm a,
+.terminal-host .xterm .xterm-cursor-pointer,
+.xterm .xterm-link {
+  cursor: pointer !important;
+}
