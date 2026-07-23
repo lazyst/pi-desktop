@@ -39,6 +39,8 @@ export default function App() {
   const [appWorkDir, setAppWorkDir] = useState<string>('');
   // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
   const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
+  // 侧边栏已折叠的分组 cwd 列表（持久化于 config.collapsedGroups）。
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(defaultConfig().collapsedGroups);
   // 右栏（文件树 / Git）宽度（持久化于 config.rightPanelWidth）。
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(defaultConfig().rightPanelWidth);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
@@ -106,7 +108,7 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); if (Array.isArray(cfg.collapsedGroups)) setCollapsedGroups(cfg.collapsedGroups.filter((x) => typeof x === 'string')); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then((diskList) => {
@@ -269,6 +271,16 @@ export default function App() {
     pi.setConfig({ sidebarWidth: w }).catch(() => {});
   };
 
+  const handleCollapseGroup = (cwd: string, collapsed: boolean) => {
+    setCollapsedGroups((prev) => {
+      const next = collapsed
+        ? [...prev, cwd]
+        : prev.filter((d) => d !== cwd);
+      pi.setConfig({ collapsedGroups: next }).catch(() => {});
+      return next;
+    });
+  };
+
   // 右栏（文件树 / Git）拖拽右缘实时改宽后回写 config 并同步本地 state。
   const handleRightPanelResize = (w: number) => {
     setRightPanelWidth(w);
@@ -405,6 +417,8 @@ export default function App() {
         onNewTerminalInAppWorkDir={handleNewTerminalInAppWorkDir}
         onNewTerminalInCwd={handleNewTerminalInCwd}
         onSelectCwd={handleSelectCwd}
+        collapsedGroups={collapsedGroups}
+        onCollapseGroup={handleCollapseGroup}
       />
       <CenterPane
         onOpenFile={handleOpenFile}

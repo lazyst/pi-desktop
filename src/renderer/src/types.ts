@@ -53,6 +53,8 @@ export interface AppConfig {
   // 默认 ~/piDesktop（见 config.defaultConfig）；可在「设置 → 终端」中改为其他目录。
   // 该目录下的集成终端统一归入侧边栏的「应用工作目录」分组，不挂靠任何项目 cwd。
   appWorkDir: string;
+  // 侧边栏中已折叠的目录分组 cwd 列表，用于跨会话持久化折叠状态。
+  collapsedGroups: string[];
 }
 
 export type Platform = 'windows' | 'macos' | 'linux';

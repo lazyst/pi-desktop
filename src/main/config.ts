@@ -34,6 +34,8 @@ export function defaultConfig(): AppConfig {
     appWorkDir: getDefaultAppWorkDir(),
     // 终端 scrollback 行数，默认 5000
     scrollback: 5000,
+    // 侧边栏折叠的目录分组（cwd 列表），初始全部展开
+    collapsedGroups: [],
   };
 }
 

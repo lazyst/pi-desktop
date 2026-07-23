@@ -406,6 +406,30 @@ html, body, #root {
 
 /* Group */
 .group { margin-bottom: var(--sp-1); }
+
+/* 折叠箭头：默认占用 1em 宽，hover 高亮，点击切换展开/折叠 */
+.group-collapse-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  flex: none;
+  font-size: 1em;
+  color: var(--text-faint);
+  cursor: pointer;
+  transition: color var(--transition), transform var(--transition);
+  user-select: none;
+}
+.group-collapse-icon:hover {
+  color: var(--accent);
+}
+
+/* 折叠态：分组标题淡化，提示用户可展开 */
+.group.collapsed .group-title {
+  opacity: 0.65;
+}
+
 .group-title {
   display: flex;
   align-items: center;

@@ -46,11 +46,16 @@ interface Props {
   onNewTerminalInCwd?: (cwd: string) => void;
   /** 点击目录名称 → 切换到该目录的 tab 条。 */
   onSelectCwd?: (cwd: string) => void;
+  // 已折叠的分组 cwd 列表（持久化），用于跨会话记住折叠状态。
+  collapsedGroups?: string[];
+  // 折叠状态变更回调：与 onSidebarResize 同模式，由 App 回写 config。
+  onCollapseGroup?: (cwd: string, collapsed: boolean) => void;
 }
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
-  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd }: Props) {
+  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd,
+  collapsedGroups, onCollapseGroup }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -164,6 +169,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
       <div className="session-list">
         {groups.map((g) => {
           const isPinned = pinnedSet.has(g.cwd);
+          const isCollapsed = collapsedGroups?.includes(g.cwd) ?? false;
           const isOpen = !!expanded[g.cwd];
           const items = sortedItems(g.items);
           const visible = isOpen ? items : items.slice(0, 5);
@@ -171,9 +177,17 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           const termCount = terminalCount(g.cwd);
           const showTermBadge = termCount > 0;
           return (
-            <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}`}>
-              <div className="group-title" onClick={() => onSelectCwd?.(g.cwd)}>
-                <span className="group-name" title={g.cwd}>
+            <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}${isCollapsed ? ' collapsed' : ''}`}>
+              <div className="group-title">
+                <span
+                  className="group-collapse-icon"
+                  title={isCollapsed ? '展开' : '折叠'}
+                  aria-label={isCollapsed ? '展开分组' : '折叠分组'}
+                  onClick={() => onCollapseGroup?.(g.cwd, !isCollapsed)}
+                >
+                  {isCollapsed ? '▶' : '▼'}
+                </span>
+                <span className="group-name" title={g.cwd} onClick={() => onSelectCwd?.(g.cwd)}>
                   {`📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
                   {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>({termCount})</span>}
                 </span>
@@ -229,6 +243,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   </button>
                 </span>
               </div>
+              {!isCollapsed && (<>
               {visible.map((s) => {
                 const running = statusMap[s.key] === 'running';
                 // 仅当会话明确处于 'running' 时才显示「终止进程」。磁盘历史/未启动会话
@@ -313,6 +328,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                   {isOpen ? '收起' : `展开 ${hidden} 个更多`}
                 </div>
               )}
+              </>)}
             </div>
           );
         })}
