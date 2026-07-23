@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils, shell } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, TerminalProfile, IntegratedTerminalInfo } from '../renderer/src/types';
 
 // 读取主进程经 webPreferences.additionalArguments 同步注入的初始 config（窗口创建时
@@ -153,10 +153,10 @@ contextBridge.exposeInMainWorld('pi', {
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。
   splashDone: () => ipcRenderer.send('splash:done'),
   // 受控外部链接通道：请求主进程用系统默认程序打开 URL（浏览器/mail 客户端）。
-  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不在此通道（本地文件走 fsOpenWithSystem）。
-  // 直接在渲染进程调用 shell.openExternal（保留用户手势上下文），
-  // 不走 IPC 主进程，避免 Electron 32 丢失用户手势导致的安全确认对话框。
-  openExternal: (url: string): Promise<boolean> => shell.openExternal(url).then(() => true).catch(() => false),
+  // 协议白名单（http(s)/mailto）在主进程集中校验，file:// 不走此通道。
+  // 注意：终端链接使用 window.open 方式（保留手势），不走此 IPC 通道。
+  // 此通道供 Markdown 预览等组件使用（非手势上下文，用 shell.openExternal 直接打开）。
+  openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('app:openExternal', url),
   // 用系统默认程序打开本地文件（二进制/无内置预览器的文件），等效双击文件。
   fsOpenWithSystem: (absPath: string): Promise<boolean> => ipcRenderer.invoke('fs:openWithSystem', absPath),
   // 在系统文件管理器中打开文件/目录所在位置并选中。

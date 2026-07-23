@@ -263,34 +263,18 @@ function createWindow() {
   });
 
 
-/** 在默认浏览器中打开 URL（使用系统命令，避免 Electron shell 安全对话框）。 */
+/** 在默认浏览器中打开 URL（对齐 VS Code nativeHostMainService.doOpenShellExternal）。
+ * 注意：此函数仅在 setWindowOpenHandler 中调用，此时用户手势通过同步的
+ * window.open → setWindowOpenHandler 调用链保留，shell.openExternal 不会弹安全对话框。 */
 function openUrlInExternal(url: string): void {
-  const { exec } = require('child_process');
-  const escaped = url.replace(/&/g, '^&');
-  const cmd = process.platform === 'win32'
-    ? `start "" "${escaped}"`
-    : process.platform === 'darwin'
-      ? `open '${escaped}'`
-      : `xdg-open '${escaped}'`;
-  exec(cmd, { shell: true }, () => {});
+  shell.openExternal(url).catch(() => {});
 }
 
-  // ── 链接跳转纵深防御（见 grilling 会话结论）──
-  // 应用内渲染层未来可能渲染可点击外部链接（文档/设置/预览）。Electron 默认对
-  // <a target="_blank"> / window.open 在新版 Chromium 下仅静默 block，且 will-navigate
-  // 不拦截时恶意/意外链接可把整个 BrowserWindow 带离本地上下文。故在此做双重锁：
-  //  1) setWindowOpenHandler 一律 deny——应用内不需要弹新窗口。
-  //  2) will-navigate 只放行应用自身来源（生产 loadFile 的 file://、开发 Vite 的
-  //     http://localhost HMR）；其余 URL 一律拦截并甩给系统默认程序（shell.openExternal）。
+  // ── 链接跳转纵深防御（对齐 VS Code setWindowOpenHandler + will-frame-navigate）──
+  // 终端链接通过 window.open(url, '_blank', 'noopener') 保留用户手势上下文，
+  // setWindowOpenHandler 拦截后调用 shell.openExternal（有用户手势 → 不弹安全对话框）。
+  // will-frame-navigate 做双重保险，阻止外部 URL 在窗口内导航。
   // 注意：本项目未注册自定义 app:// 协议，生产以 file:// 加载，故放行集为 file:// + 本地 dev。
-  // setWindowOpenHandler：拦截 window.open，对外部 URL 用 system 命令在默认浏览器中打开。
-  // 终端链接的 activate 回调使用 window.open(url, '_blank') 保留用户手势上下文，
-  // 这里拦截后直接走系统命令打开浏览器。
-  // 使用 child_process.exec 代替 shell.openExternal，
-  // 避免 Electron 32 在 IPC/非用户手势上下文中可能弹出的安全确认对话框。
-  // setWindowOpenHandler：拦截 window.open，对外部 URL 用系统命令在默认浏览器中打开。
-  // 使用 child_process.exec 代替 shell.openExternal，
-  // 避免 Electron 32 在 IPC/非用户手势上下文中可能弹出的安全确认对话框。
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       openUrlInExternal(url);
@@ -403,8 +387,8 @@ function openUrlInExternal(url: string): void {
     if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
       return false;
     }
-    // 用 child_process.exec 代替 shell.openExternal，避免 Electron 32 的安全确认对话框
-    openUrlInExternal(url);
+    // 对齐 VS Code nativeHostMainService.doOpenShellExternal
+    shell.openExternal(url).catch(() => {});
     return true;
   });
 

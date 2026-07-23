@@ -786,9 +786,9 @@ export class XtermTerminal implements LiveTerminal {
               this.onOpenFile?.(path, lineNum, colNum);
             },
             openExternal: (url) => {
-              // 通过 IPC 到主进程打开 URL（主进程用 child_process.exec 绕过 Electron shell API）。
-              // 不使用 window.open 因为 Electron 32 的 will-frame-navigate 默认对话框会拦截。
-              this.pi.openExternal?.(url).catch(() => {});
+              // 对齐 VS Code OpenerService._defaultExternalOpener：使用 window.open 保留用户手势。
+              // setWindowOpenHandler 会拦截并调用 shell.openExternal（有用户手势 → 不弹安全对话框）。
+              window.open(url, '_blank', 'noopener');
             },
           });
           // 填充绝对行号（detectLinks 只给列号，行号由 provider 上下文提供）。
