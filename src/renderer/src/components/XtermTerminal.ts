@@ -49,6 +49,7 @@ import { MarkNavigationAddon } from './markNavigationAddon';
 import { SessionChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import type { PiApi } from '../ipc';
+import { defaultConfig, SCROLLBACK_MIN, SCROLLBACK_MAX } from '../../../main/config';
 import { FlowControlConstants } from '../../../main/backpressure';
 import {
   TerminalCapability,
@@ -72,6 +73,21 @@ const FONT_MONO =
 // 对齐 VS Code TerminalDataBufferer 的固定时间窗（5ms）：窗口内累积到达的数据块，
 // 窗口结束一次性 term.write，消除流式高频重绘的中间帧闪烁。
 const WRITE_DEBOUNCE_MS = 5;
+
+/** 从主进程注入的初始配置读取 scrollback 值，进程内恒定（不热更新）。
+ * 新建终端时构造 xterm 选项用此值，已存在的终端不受滚动设置变更影响。
+ * 回退默认 5000，夹在 [SCROLLBACK_MIN, SCROLLBACK_MAX] 区间。 */
+function getScrollback(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.scrollback === 'number') {
+      return Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(cfg.scrollback)));
+    }
+  } catch {
+    /* 无注入配置（如测试）时回退默认 */
+  }
+  return defaultConfig().scrollback;
+}
 
 export interface XtermTerminalOptions {
   // 数据通道抽象：PTY 输出订阅 / 退出订阅 / 键盘输入 / 尺寸通知全部走 channel，
@@ -137,6 +153,11 @@ export class XtermTerminal implements LiveTerminal {
   onOpenFile: ((path: string, line?: number, col?: number) => void) | null = null;
   // 命令完成回调（供未来「重跑 / 复制命令」等能力使用）。
   onCommandFinished: ((command: string) => void) | null = null;
+
+  // —— 写前/写后通知（对齐 VS Code TerminalInstance._onWillData / _onData）——
+  // 外部消费者可在 onWillData 中保存滚动状态、在 onData 中恢复。
+  onWillData: ((data: string) => void) | null = null;
+  onData: ((data: string) => void) | null = null;
 
   // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
   private _latestWriteSeq = 0;
@@ -732,7 +753,7 @@ export class XtermTerminal implements LiveTerminal {
   serializeScrollback(): string | null {
     if (!this.serializeAddon || this.disposed || !this.term) return null;
     try {
-      return this.serializeAddon.serialize({ scrollback: (this.term as any).options?.scrollback ?? 1000 });
+      return this.serializeAddon.serialize({ scrollback: (this.term as any).options?.scrollback ?? getScrollback() });
     } catch {
       return null;
     }
@@ -917,7 +938,7 @@ export class XtermTerminal implements LiveTerminal {
       fontSize: getFontSize(),
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
       lineHeight: 1.0,
-      scrollback: 1000,
+      scrollback: getScrollback(),
       // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义，
       // 由 theme.ts 的 TERM_THEMES 在运行时读取，见 theme.ts）。
       theme: TERM_THEMES[getTheme()],
@@ -1226,14 +1247,29 @@ export class XtermTerminal implements LiveTerminal {
   }
 
   /** 写入一段数据并回传背压（对齐 VS Code TerminalInstance._writeProcessData）。
-   * 单一 term.write（无行切片/rAF 逐批 hack），回调里推进解析序号 + acknowledgeDataEvent。 */
+   * 单一 term.write（无行切片/rAF 逐批 hack），回调里推进解析序号 + acknowledgeDataEvent。
+   *
+   * 对齐 VS Code：写前/写后分别触发 onWillData / onData 事件，并在写前后自动 save/restore
+   * 滚动位置，防止新增输出导致用户已上滚的视口意外跳到底部或顶部。 */
   private _writeProcessData(data: string): void {
     if (this.disposed || !this.term) return;
     const term = this.term;
     const seq = ++this._latestWriteSeq;
+
+    // 对齐 VS Code _onWillData：写前通知外部消费者
+    this.onWillData?.(data);
+
+    // 对齐 VS Code：写前保存滚动位置，防止写入过程中 xterm 因 buffer 滚动/ED2/ED3 等
+    // 操作意外改变视口位置。captureScrollState 使用 marker 做精确逻辑行跟踪。
+    const savedState = this.captureScrollState();
+
     try {
       term.write(data, () => {
         this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+
+        // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
+        this.restoreScrollState(savedState);
+
         // 背压回传（对齐 VS Code AckDataBufferer）：累积消费字符数到阈值再发 IPC，
         // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
         // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
@@ -1242,37 +1278,50 @@ export class XtermTerminal implements LiveTerminal {
           this._unsentAckChars -= FlowControlConstants.CharCountAckSize;
           this.pi.acknowledgeDataEvent?.(this.sessionKey, FlowControlConstants.CharCountAckSize);
         }
+
+        // 对齐 VS Code _onData：写解析完毕后通知外部消费者
+        this.onData?.(data);
       });
     } catch {
       /* 终端已销毁等边界 */
     }
   }
 
-  /** resize 回调：X/Y 同时变化（立即/小 buffer 路径，对齐 VS Code _resizeBothCallback）。 */
+  /** resize 回调：X/Y 同时变化（立即/小 buffer 路径，对齐 VS Code _resizeBothCallback）。
+   * 对齐 VS Code：resize（尤其列宽变化导致的 reflow）会触发 xterm 内部
+   * buffer.ydisp = buffer.ybase 重置视口到底部，故在 resize 前后 save/restore 滚动位置。 */
   private _resizeBoth(cols: number, rows: number): void {
     if (this.disposed || !this.fit || !this.term) return;
+    const savedState = this.captureScrollState();
     try {
       this.fit.fit();
     } catch {
       /* fit 失败（尺寸为 0 等边界）时跳过 */
     }
+    this.restoreScrollState(savedState);
     this._notifyPtyIfChanged();
   }
 
-  /** resize 回调：仅 X（列宽）变化（防抖路径，对齐 VS Code _resizeXCallback）。 */
+  /** resize 回调：仅 X（列宽）变化（防抖路径，对齐 VS Code _resizeXCallback）。
+   * 对齐 VS Code：列宽变化引发 reflow，可能改变 ybase/ydisp，故 save/restore。 */
   private _resizeX(cols: number): void {
     if (this.disposed || !this.fit || !this.term) return;
+    const savedState = this.captureScrollState();
     try {
       this.fit.fit();
     } catch {
       /* fit 失败边界 */
     }
+    this.restoreScrollState(savedState);
     this._notifyPtyIfChanged();
   }
 
-  /** resize 回调：仅 Y（行数）变化（即时路径，对齐 VS Code _resizeYCallback）。 */
+  /** resize 回调：仅 Y（行数）变化（即时路径，对齐 VS Code _resizeYCallback）。
+   * 对齐 VS Code：xterm 的 resize 内部会重置 buffer.ydisp = buffer.ybase，
+   * 导致用户已上滚的视口 snap 到底部，故在 resize 前后 save/restore 滚动位置。 */
   private _resizeY(rows: number): void {
     if (this.disposed || !this.term) return;
+    const savedState = this.captureScrollState();
     if (rows !== this.term.rows) {
       try {
         this.term.resize(this.term.cols, rows);
@@ -1280,6 +1329,7 @@ export class XtermTerminal implements LiveTerminal {
         /* resize 边界 */
       }
     }
+    this.restoreScrollState(savedState);
     this._notifyPtyIfChanged();
   }
 

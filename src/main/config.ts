@@ -32,6 +32,8 @@ export function defaultConfig(): AppConfig {
     terminalProfiles: {},
     // app work dir group root (defaults to ~/piDesktop)
     appWorkDir: getDefaultAppWorkDir(),
+    // 终端 scrollback 行数，默认 5000
+    scrollback: 5000,
   };
 }
 
@@ -39,11 +41,22 @@ export function defaultConfig(): AppConfig {
 export const FONT_SIZE_MIN = 8;
 export const FONT_SIZE_MAX = 28;
 
+// 终端 scrollback 行数范围。
+export const SCROLLBACK_MIN = 1000;
+export const SCROLLBACK_MAX = 100_000;
+
 /** 把任意输入夹进 [FONT_SIZE_MIN, FONT_SIZE_MAX] 且取整；非法输入回退默认 13。 */
 export function clampFontSize(n: unknown): number {
   const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
   if (!Number.isFinite(v)) return defaultConfig().fontSize;
   return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, v));
+}
+
+/** 把任意输入夹进 [SCROLLBACK_MIN, SCROLLBACK_MAX] 且取整；非法输入回退默认 5000。 */
+export function clampScrollback(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().scrollback;
+  return Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, v));
 }
 
 // 解析 config.json 原文；损坏 / 非对象时回退默认（不抛异常，保证启动不崩）。
@@ -55,6 +68,7 @@ export function parseConfig(raw: string | null): AppConfig {
     const merged = mergeConfig(defaultConfig(), parsed as Partial<AppConfig>);
     // 数值字段单独校准，避免损坏/越界值污染全局（见 FONT_SIZE_MIN/MAX）。
     merged.fontSize = clampFontSize((parsed as Partial<AppConfig>).fontSize);
+    merged.scrollback = clampScrollback((parsed as Partial<AppConfig>).scrollback);
     return merged;
   } catch {
     console.warn('[config] config.json corrupt, using defaults');

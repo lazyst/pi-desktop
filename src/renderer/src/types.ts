@@ -47,6 +47,8 @@ export interface AppConfig {
   defaultTerminalProfile: string | null;
   // 用户自定义的终端 profile 覆盖（key 为 profile id，如 'custom'），覆盖探测到的 profile。
   terminalProfiles: Record<string, { path: string; args: string[] }>;
+  // 终端 scrollback 行数（xterm scrollback 选项）。默认 5000，范围 1000–100000。
+  scrollback: number;
   // 应用工作目录分组的根目录：用于收容与具体项目无关、与 pi-agent 闲聊或临时用的集成终端。
   // 默认 ~/piDesktop（见 config.defaultConfig）；可在「设置 → 终端」中改为其他目录。
   // 该目录下的集成终端统一归入侧边栏的「应用工作目录」分组，不挂靠任何项目 cwd。

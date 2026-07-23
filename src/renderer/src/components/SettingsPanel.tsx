@@ -406,10 +406,11 @@ function TerminalSettings() {
   const [customArgs, setCustomArgs] = useState('');
   const [customError, setCustomError] = useState<string | null>(null);
   const [appWorkDir, setAppWorkDir] = useState('');
+  const [scrollback, setScrollback] = useState<number>(5000);
 
   useEffect(() => {
     pi.getConfig()
-      .then((cfg) => { setDefaultId(cfg.defaultTerminalProfile); setAppWorkDir(cfg.appWorkDir ?? ''); })
+      .then((cfg) => { setDefaultId(cfg.defaultTerminalProfile); setAppWorkDir(cfg.appWorkDir ?? ''); setScrollback(cfg.scrollback ?? 5000); })
       .catch(() => {});
     pi.listTerminalProfiles()
       .then(setProfiles)
@@ -504,6 +505,27 @@ function TerminalSettings() {
         </div>
       )}
       <p className="settings-hint">提示：新建集成终端时会使用此处选择的默认终端。</p>
+      <div className="settings-row">
+        <span className="settings-label">滚动缓冲区</span>
+        <input
+          type="number"
+          className="app-work-dir-input"
+          style={{ width: 100, textAlign: 'right' }}
+          aria-label="滚动缓冲区行数"
+          min={1000}
+          max={100000}
+          step={1000}
+          value={scrollback}
+          onChange={(e) => setScrollback(Number(e.target.value))}
+          onBlur={() => {
+            const clamped = Math.min(100000, Math.max(1000, Math.round(scrollback)));
+            setScrollback(clamped);
+            pi.setConfig({ scrollback: clamped }).catch(() => {});
+          }}
+        />
+        <span className="settings-unit">行</span>
+      </div>
+      <p className="settings-hint">范围 1000–100000，修改后只影响之后新建的终端。</p>
       <div className="settings-row">
         <span className="settings-label">应用工作目录</span>
         <div className="app-work-dir">

@@ -279,7 +279,8 @@ html, body, #root {
 .profile-select,
 .custom-path-input,
 .custom-args-input,
-.app-work-dir-input {
+.app-work-dir-input,
+.scrollback-input {
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
   color: var(--text);
@@ -293,20 +294,27 @@ html, body, #root {
 /* 文本框占据剩余空间（.settings-row 为 space-between，label 在左、控件在右） */
 .app-work-dir { display: flex; flex: 1; }
 .app-work-dir-input { flex: 1; min-width: 0; }
+.settings-unit {
+  font-size: var(--fs-sm);
+  color: var(--text-faint);
+  margin-left: var(--sp-2);
+}
 .profile-select,
 .custom-path-input,
 .custom-args-input { flex: 1; min-width: 0; }
 .profile-select:focus,
 .custom-path-input:focus,
 .custom-args-input:focus,
-.app-work-dir-input:focus {
+.app-work-dir-input:focus,
+.scrollback-input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-soft);
 }
 .profile-select:hover,
 .custom-path-input:hover,
 .custom-args-input:hover,
-.app-work-dir-input:hover {
+.app-work-dir-input:hover,
+.scrollback-input:hover {
   border-color: var(--border-strong);
 }
 /* 下拉框选项（option）在多数浏览器中无法完全自定义，但至少保证控件本体深色 */
