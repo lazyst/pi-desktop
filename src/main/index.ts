@@ -283,22 +283,28 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
       // 用 exec 打开 URL，彻底绕过 Electron 的 shell API 安全对话框
-      // 通过 shell.openExternal 在系统默认程序中打开外部 URL
-      shell.openExternal(url).catch(() => {});
+      const { exec } = require('child_process');
+      const escaped = url.replace(/&/g, '^&');
+      const cmd = process.platform === 'win32'
+        ? `start "" "${escaped}"`
+        : process.platform === 'darwin'
+          ? `open '${escaped}'`
+          : `xdg-open '${escaped}'`;
+      exec(cmd, { shell: true }).catch(() => {});
     }
     // 一律 deny 新窗口：应用内不需要弹新窗口。
     return ({ action: 'deny' });
   });
-  // will-navigate：拦截窗口内导航，阻止外部 URL 在窗口内打开
   win.webContents.on('will-navigate', (e, url) => {
     const allowed =
       url.startsWith('file://') || // 生产 loadFile / 本地文件系统
       /^https?:\/\/localhost(:\d+)?\//.test(url); // 开发 Vite dev server（HMR）
     if (!allowed) {
       e.preventDefault();
+      // 不再调 shell.openExternal（避免与各组件自身的 URL 打开逻辑重复，
+      // 导致系统弹出安全确认对话框）。URL 打开由具体 handler 负责。
     }
   });
-
 
   // ===== 统一终端池 + 会话文件管理器 =====
   const sessionsDir = resolveSessionsDir();
@@ -397,10 +403,14 @@ function createWindow() {
       return false;
     }
     // 用 exec 替代 shell.openExternal，避免 Electron 32 的安全确认对话框
-    // 用 shell.openExternal 打开（app:openExternal 由 Markdown/其他组件调用，
-    // 不在用户手势上下文中，但 Electron 32 的 OpenExternal 不需要手势，
-    // 用 shell.openExternal 最直接）
-    shell.openExternal(url).catch(() => {});
+    const { exec } = require('child_process');
+    const escaped = url.replace(/&/g, '^&');
+    const cmd = process.platform === 'win32'
+      ? `start "" "${escaped}"`
+      : process.platform === 'darwin'
+        ? `open '${escaped}'`
+        : `xdg-open '${escaped}'`;
+    exec(cmd, { shell: true }).catch(() => {});
     return true;
   });
 
