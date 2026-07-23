@@ -812,8 +812,9 @@ export class XtermTerminal implements LiveTerminal {
             },
             text: built.text,
             activate: built.activate,
-            // 显示下划线和指针光标，让用户直观知道可点击（对齐 VS Code 高置信度链接）。
-            decorations: { pointerCursor: true, underline: true },
+            hover: built.hover,
+            leave: built.leave,
+            decorations: { pointerCursor: false, underline: false },
           };
         });
         cb(links);
