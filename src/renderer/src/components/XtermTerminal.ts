@@ -1360,7 +1360,8 @@ export class XtermTerminal implements LiveTerminal {
       // 无 OSC 序列：单段，正常跟踪 ack + trackCommit
       this._writeProcessData(data, true);
     } else {
-      // 对齐 VS Code：前导段（OSC 633 标记）trackCommit=false，仅最后一段 trackCommit=true
+      // 对齐 VS Code：前导段（OSC 633 标记）trackCommit=false（无 writePromise），仅最后一段
+      // trackCommit=true（有 writePromise），但所有段都调 ackBufferer.ack 确保背压水位准确
       for (let i = 0; i < segments.length - 1; i++) {
         this._writeProcessDataUnsafe(segments[i]);
       }
@@ -1428,15 +1429,17 @@ export class XtermTerminal implements LiveTerminal {
     cwdCap?.handleProperty(body);
   }
 
-  /** 写入一段数据（无 commit 跟踪，对齐 VS Code 前导 OSC 633 段的写入方式）。
-   * 用于 _onProcessData 中前导段（leading segments）的写入：它们只是 OSC 633 标记，
-   * 不携带实际输出数据，无需跟踪 commit 和 ack，减少不必要的序列号开销。
-   * 回调中恢复滚动位置 + 触发 onData + 推进 _latestParsedSeq 以支持 flush 写完成确认。
+  /** 写入一段数据，回复背压 ack，但**不创建 writePromise**（对齐 VS Code _writeProcessData 的 trackCommit=false 语义）。
+   * 用于 shell integration 的 OSC 633 前导标记（如 \x1b]633;C\x07 等），不携带实际输出，
+   * 不需要调用方 await 写完成，故不创建 writePromise。
    *
-   * 与 VSCode 对齐：VSCode 在 _writeProcessData 中为所有写入（包括前导段）递增 _latestXtermWriteData，
-   * 使 flush 可正确等待所有写入完成。此前本方法不递增序列，导致 flush 不等待前导段。
-   * 现改为虽不跟踪 ack（不调 ackBufferer.ack），但递增 _latestWriteSeq 并在回调中推进 _latestParsedSeq，
-   * 确保 flush 的写完成确认涵盖所有写入段。 */
+   * 与 VSCode 对齐：VSCode 在 _writeProcessData 中为所有写入（包括前导段）都调用
+   * acknowledgeDataEvent(data.length)，本方法同样调用 ackBufferer.ack(data.length)，
+   * 使 inflight 准确反映所有已发出但未确认的字符（含 OSC 标记），确保背压水位正确。
+   * 此前版本跳过 ack 导致 OSC 标记字符不计入背压，inflight 偏低，PTY 暂停不够及时。
+   *
+   * flush 对齐：递增 _latestWriteSeq 并在回调中推进 _latestParsedSeq，
+   * 使 flush 的写完成确认涵盖所有写入段。 */
   private _writeProcessDataUnsafe(data: string): void {
     if (this.disposed || !this.term) return;
     const term = this.term;
@@ -1452,6 +1455,9 @@ export class XtermTerminal implements LiveTerminal {
       term.write(data, () => {
         // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
         this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+
+        // 背压 ack：对齐 VS Code，所有写入段（含前导 OSC 标记）都调 acknowledgeDataEvent
+        this.ackBufferer?.ack(data.length);
 
         // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
         this.restoreScrollState(savedState);
