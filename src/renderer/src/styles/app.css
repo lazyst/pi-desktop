@@ -439,8 +439,9 @@ html, body, #root {
   font-size: var(--fs-xs);
   word-break: break-all;
   letter-spacing: var(--ls-label);
+  position: relative;
 }
-.group-name { flex: 1; min-width: 0; }
+.group-name { flex: 1; min-width: 0; padding-right: calc(var(--sp-3) * 5); }
 
 /* 运行中终端计数徽标：(n) 高亮药丸 */
 .terminal-count {
@@ -462,8 +463,14 @@ html, body, #root {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
-  flex: none;
+  position: absolute;
+  right: var(--sp-3);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-panel);
+  padding-left: var(--sp-2);
   opacity: 0;
+  z-index: 1;
   transition: opacity var(--transition);
 }
 .group:hover .group-actions,
