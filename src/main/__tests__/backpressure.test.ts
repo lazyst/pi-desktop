@@ -74,4 +74,46 @@ describe('BackpressureController (aligned with VS Code pty pause/resume)', () =>
     bp.dispose();
     expect(resumeCalls).toBe(0);
   });
+
+  // —— writeSync 模式（对齐 VS Code _blockedOnWriteSync）——
+
+  it('enterWriteSync: onData does not count toward inflight', () => {
+    bp.enterWriteSync();
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    expect(bp.isPaused()).toBe(false);
+    expect(pauseCalls).toBe(0);
+    expect(bp.isWriteSyncMode()).toBe(true);
+  });
+
+  it('exitWriteSync: restores normal backpressure accounting', () => {
+    bp.enterWriteSync();
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    expect(bp.isPaused()).toBe(false);
+
+    bp.exitWriteSync();
+    expect(bp.isWriteSyncMode()).toBe(false);
+    // 退出后 onData 正常计数
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    expect(bp.isPaused()).toBe(true);
+    expect(pauseCalls).toBe(1);
+  });
+
+  it('enterWriteSync/exitWriteSync pairs are idempotent', () => {
+    bp.enterWriteSync();
+    bp.enterWriteSync(); // 两次 enter 幂等
+    expect(bp.isWriteSyncMode()).toBe(true);
+    bp.exitWriteSync();
+    expect(bp.isWriteSyncMode()).toBe(false);
+    bp.exitWriteSync(); // 两次 exit 幂等
+    expect(bp.isWriteSyncMode()).toBe(false);
+  });
+
+  it('dispose works correctly in writeSync mode', () => {
+    bp.enterWriteSync();
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    bp.dispose();
+    expect(bp.isPaused()).toBe(false);
+    expect(resumeCalls).toBe(0); // 从未 pause
+    expect(bp.isWriteSyncMode()).toBe(false); // dispose 不改变 writeSync 模式
+  });
 });

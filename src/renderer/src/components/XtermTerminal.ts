@@ -43,6 +43,7 @@ import { getTheme, TERM_THEMES, getTermTheme, type Theme } from '../theme';
 import { getFontSize } from '../fontSize';
 import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
 import { TerminalDataBufferer } from './terminalDataBufferer';
+import { AckDataBufferer } from './ackDataBufferer';
 import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
 import { DecorationAddon } from './decorationAddon';
 import { MarkNavigationAddon } from './markNavigationAddon';
@@ -50,7 +51,6 @@ import { SessionChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import type { PiApi } from '../ipc';
 import { defaultConfig, SCROLLBACK_MIN, SCROLLBACK_MAX } from '../../../main/config';
-import { FlowControlConstants } from '../../../main/backpressure';
 import {
   TerminalCapability,
   TerminalCapabilityStore,
@@ -58,6 +58,7 @@ import {
   CwdDetectionCapability,
 } from './terminalCapabilities';
 import { detectLinksInLine, buildLink } from './terminalLinks';
+import { MouseWheelClassifier } from './mouseWheelClassifier';
 import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
 
@@ -87,6 +88,15 @@ function getScrollback(): number {
     /* 无注入配置（如测试）时回退默认 */
   }
   return defaultConfig().scrollback;
+}
+
+/** 对齐 VS Code IProcessDataEvent：携带 trackCommit 标记的数据事件。
+ * 最后一段数据（实际输出）标记 trackCommit=true，携带 writePromise 供调用方等待写完成。
+ * 前导段（OSC 633 标记）标记 trackCommit=false，不跟踪写完成确认。 */
+export interface IProcessDataEvent {
+  data: string;
+  trackCommit: boolean;
+  writePromise?: Promise<void>;
 }
 
 export interface XtermTerminalOptions {
@@ -159,13 +169,32 @@ export class XtermTerminal implements LiveTerminal {
   onWillData: ((data: string) => void) | null = null;
   onData: ((data: string) => void) | null = null;
 
+  // —— 铃响 / 选区变化 / 缓冲区变化（对齐 VS Code onBell / onSelectionChange / onBufferChange）——
+  /** 铃响回调：终端发出 BEL 时触发，供壳播放提示音或视觉指示。 */
+  onBell: (() => void) | null = null;
+  /** 选区变化回调：选区变化时触发，供壳更新菜单状态（复制按钮可用性等）。 */
+  onSelectionChange: (() => void) | null = null;
+  /** 缓冲区变化回调：alt/normal buffer 切换时触发，供壳更新状态栏/上下文键。 */
+  onBufferChange: ((bufferType: 'normal' | 'alt') => void) | null = null;
+
   // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
   private _latestWriteSeq = 0;
   private _latestParsedSeq = 0;
-  // 背压累积缓冲（对齐 VS Code AckDataBufferer）：未达 FlowControlConstants.CharCountAckSize 的 ack
-  // 暂存在这里，累积触发后再一次发送，减少 IPC 频次。
-  private _unsentAckChars = 0;
+  // 背压累积缓冲（对齐 VS Code AckDataBufferer 独立类）：累积 xterm.write 回调上报的已消费字符数，
+  // 达到 CharCountAckSize 阈值时一次性发送 ack IPC，减少高频小段通信量。
+  private ackBufferer: AckDataBufferer | null = null;
+  // 空闲 flush 定时器：终端空闲一段时间后刷出剩余 ack 字符，避免尾部 ack 积压
+  // （对齐 VS Code AckDataBufferer 的闲置清理策略）。
+  private _idleFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private _flushTimer: ReturnType<typeof setTimeout> | null = null;
+  // 空闲阈值（ms）：lastWrite 超过此值视为空闲，触发 flushAck 刷出剩余 ack 字符。
+  // 100ms 兼顾「快速连续输出时不频繁触发」与「空闲时及时刷出」。
+  private static readonly IDLE_FLUSH_MS = 100;
+
+  // —— 写完成 Promise（对齐 VS Code IProcessDataEvent.writePromise）——
+  // 由 _writeProcessData 在 trackCommit=true 时设置，供 flush() 等待实际输出被 xterm 解析完成。
+  // 替代此前 (this as any)._pendingWritePromise 的类型 hack。
+  private _pendingWritePromise: Promise<void> | undefined;
 
   // —— 反注册函数 ——
   private offExit: (() => void) | null = null;
@@ -188,6 +217,9 @@ export class XtermTerminal implements LiveTerminal {
   // 最近一次计算出的 cols/rows，仅在真变时才通知 PTY（对齐 VS Code 整数比较、避免无谓 resize）。
   private _lastCols = 0;
   private _lastRows = 0;
+
+  // 物理滚轮检测 wheel 事件处理器引用（unmount 时清理，对齐 VS Code MouseWheelClassifier）。
+  private _wheelHandler: ((e: globalThis.WheelEvent) => void) | null = null;
 
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
@@ -238,11 +270,21 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /** 非 active / 卸载时销毁终端，释放所有监听与定时器。 */
+  /** 非 active / 卸载时销毁终端，释放所有监听与定时器。
+   * 在销毁前 flush 剩余 ack 字符，确保主进程背压控制器水位准确。
+   * 对齐 VS Code clearUnacknowledgedChars + dispose 语义：
+   * 先 flush 剩余 ack，再 dispose ackBufferer（强制 resume PTY 避免 inflight 不归零）。 */
   unmount(): void {
     this.disposed = true;
+    // 对齐 VS Code：先 flush 待写数据，确保所有写入完成
+    this.ackBufferer?.flush();
+    this.ackBufferer?.dispose();
+    this.ackBufferer = null;
     if (this._flushTimer != null) clearTimeout(this._flushTimer);
     this._flushTimer = null;
+    if (this._idleFlushTimer != null) clearTimeout(this._idleFlushTimer);
+    this._idleFlushTimer = null;
+    this._pendingWritePromise = undefined;
     this.stopBuffering?.();
     this.stopBuffering = null;
     this.dataBufferer?.dispose();
@@ -277,6 +319,11 @@ export class XtermTerminal implements LiveTerminal {
     }
     this._dragOverHandler = null;
     this._dropHandler = null;
+    // 物理滚轮 wheel 事件处理器解绑（对齐 VS Code MouseWheelClassifier）。
+    if (this._wheelHandler && this.term?.element) {
+      this.term.element.removeEventListener('wheel', this._wheelHandler);
+      this._wheelHandler = null;
+    }
     // 治本：显式释放 WebGL context，避免关闭 tab 卸载实例时 context 泄漏累积。
     // @xterm/addon-webgl 的 dispose() 不调用 WEBGL_lose_context.loseContext()，导致浏览器
     // WebGL context 上限（~16）到达后，新实例 new WebglAddon() 创建失败、降级为 DOM 渲染器；
@@ -301,26 +348,52 @@ export class XtermTerminal implements LiveTerminal {
 
   /**
    * 写完成确认（对齐 VS Code _flushXtermData）：轮询确认所有已 term.write 的数据都被 xterm
-   * 解析完（_latestWriteSeq === _latestParsedSeq），最多重试若干次。供会话结束/卸载前 await，
-   * 避免尾部帧撕裂或丢失。无待写或已销毁时立即 resolve。
+   * 解析完（_latestWriteSeq === _latestParsedSeq），最多重试 5 次 × 20ms。
+   * 在会话结束/卸载前 await，避免尾部帧撕裂或丢失。
+   * resolve 前 flush 剩余 ack 字符，确保主进程背压控制器水位准确。
+   *
+   * 对齐 VS Code IProcessDataEvent.writePromise：若有待完成的 writePromise（来自最近一段
+   * trackCommit=true 的写入），先 await 它，确保实际输出已被 xterm 解析完成。
+   *
+   * 对齐 VS Code _flushXtermData 的轮询策略：使用 20ms 间隔、最多 5 次重试。
+   * 不同于 setTimeout 的开销，用 setInterval 避免每次重试重新创建定时器，
+   * 消除在高速写入时 flush 被尾部写入不断推迟的竞态窗口。
    */
-  flush(): Promise<void> {
+  async flush(): Promise<void> {
+    // 对齐 VS Code：先 await 最近一段 trackCommit 写入的 writePromise，
+    // 确保实际输出已被 xterm 解析完成，而非仅靠轮询 _latestWriteSeq === _latestParsedSeq。
+    const pendingPromise = this._pendingWritePromise;
+    if (pendingPromise && !this.disposed) {
+      try { await pendingPromise; } catch { /* 写完成 promise 异常忽略 */ }
+    }
+    this._pendingWritePromise = undefined;
+
     if (this.disposed || !this.term || this._latestWriteSeq === this._latestParsedSeq) {
-      return Promise.resolve();
+      this.ackBufferer?.flush();
+      return;
     }
     let retries = 0;
     return new Promise<void>((resolve) => {
-      const tick = () => {
+      const interval = setInterval(() => {
         if (this.disposed || this._latestWriteSeq === this._latestParsedSeq || ++retries > 5) {
+          clearInterval(interval);
           if (this._flushTimer != null) clearTimeout(this._flushTimer);
           this._flushTimer = null;
+          this.ackBufferer?.flush();
           resolve();
-        } else {
-          this._flushTimer = setTimeout(tick, 20);
         }
-      };
-      this._flushTimer = setTimeout(tick, 20);
+      }, 20);
     });
+  }
+
+  /** 刷出剩余未确认的 ack 字符（对齐 VS Code AckDataBufferer 的闲置清理策略）。
+   * 当终端输出停止后，ackBufferer 中剩余的不足 CharCountAckSize 的字符需要被立即
+   * 发送，否则主进程 BackpressureController.inflight 无法归零，可能导致 PTY 永不被恢复
+   * （如果 inflight 恰好卡在 LowWatermark 以上）。
+   * 在 unmount/flush/空闲定时器触发时调用。
+   * 代理到 ackBufferer.flush()，确保状态单一来源。 */
+  private flushAck(): void {
+    this.ackBufferer?.flush();
   }
 
   /**
@@ -839,11 +912,13 @@ export class XtermTerminal implements LiveTerminal {
   }
 
   /** 当前视口是否贴底（对齐 VS Code：viewportY >= baseY 即贴底）。xterm 6 WebGL 下
-   * scrollTop 恒为 0，故用 buffer 的 viewportY/baseY 判定，而非 DOM 原生 scroll。 */
+   * scrollTop 恒为 0，故用 buffer 的 viewportY/baseY 判定，而非 DOM 原生 scroll。
+   * 注意：VSCode 用 `viewportY >= baseY`（非 `baseY - 1`），以确保「新建终端/清屏后」
+   * 首次输出时 scrollState 正确为贴底，避免浮钮误显。 */
   private isAtBottom(): boolean {
     const buf = (this.term as any)?.buffer?.active;
     if (!buf) return true;
-    return buf.viewportY >= buf.baseY - 1;
+    return buf.viewportY >= buf.baseY;
   }
 
   /** 视口贴底状态变化时通知 React 壳（驱动浮钮显隐），仅在状态翻转时回调以省渲染。 */
@@ -919,6 +994,9 @@ export class XtermTerminal implements LiveTerminal {
       rescaleOverlappingGlyphs: true,
       // 不启用透明度（你用实色主题背景，allowTransparency 会引发合成层开销与过滚动露黑边）。
       allowTransparency: false,
+      // windowsPty：对齐 VS Code，在 processReady 时根据 conpty 信息设置，
+      // 此处先设置 undefined（默认），后续由 processReady 回调更新。
+      windowsPty: undefined,
       // 窗口尺寸查询：对齐 VS Code 默认开启，使 TUI 能经 escape 序列获取像素/字符尺寸。
       windowOptions: {
         getWinSizePixels: true,
@@ -931,8 +1009,14 @@ export class XtermTerminal implements LiveTerminal {
       reflowCursorLine: true,
       // 自定义字形（连字/组合字渲染）：对齐 VS Code 默认 true。
       customGlyphs: true,
-      // 滚动条：xterm 6 无 scrollbar option；本应用全屏 TUI 且 CSS 已 overflow:hidden，
-      // 原生/内部滚动条均禁用，滑块配色由 theme.scrollbarSlider* 注入（见 theme.ts）。
+      // 滚动条宽度：对齐 VS Code 默认（14px）。xterm 6 支持 scrollbar 选项配置宽度与
+      // overview ruler。本应用全屏 TUI 场景下 CSS 已 overflow:hidden 禁用滚动条，但
+      // 配置此值确保 xterm 内部布局计算与 VSCode 一致，避免因缺省值导致的 cell 度量差异。
+      // 滑块配色由 theme.scrollbarSlider* 注入（见 theme.ts）。
+      scrollbar: {
+        width: 14,
+        overviewRuler: { showTopBorder: true },
+      },
       fontFamily: FONT_MONO,
       // 跟随全局字体大小（fontSize.ts）：默认基准 13px，可 8–28px 调节。
       fontSize: getFontSize(),
@@ -1104,6 +1188,55 @@ export class XtermTerminal implements LiveTerminal {
     } catch {
       /* 旧版 xterm 无 onScroll：降级为始终贴底，浮钮不出现 */
     }
+
+    // 铃响（对齐 VS Code onBell）：终端响铃时触发，供壳播放提示音或闪烁标签。
+    try {
+      term.onBell(() => this.onBell?.());
+    } catch {
+      /* 旧版 xterm 无 onBell */
+    }
+
+    // 选区变化（对齐 VS Code onSelectionChange）：选区变化时触发，供壳更新菜单状态。
+    try {
+      term.onSelectionChange(() => this.onSelectionChange?.());
+    } catch {
+      /* 旧版 xterm 无 onSelectionChange */
+    }
+
+    // 缓冲区变化（对齐 VS Code onBufferChange）：alt/normal buffer 切换时触发，
+    // 供壳在 alt buffer 模式下禁用历史滚轮等。
+    try {
+      term.buffer.onBufferChange(() => {
+        const buf = term.buffer.active;
+        const isAlt = (buf as any).type === 'alternate';
+        this.onBufferChange?.(isAlt ? 'alt' : 'normal');
+      });
+    } catch {
+      /* 旧版 xterm 无 onBufferChange */
+    }
+
+    // 物理滚轮检测（对齐 VS Code MouseWheelClassifier）：监听终端元素的滚轮事件，
+    // 通过分析 delta 模式判断是否为物理滚轮，用于控制平滑滚动动画。
+    // 触控板/魔术鼠标禁用平滑滚动，避免与系统触控板手势冲突。
+    try {
+      const wheelHandler = (e: globalThis.WheelEvent) => {
+        const classifier = MouseWheelClassifier.INSTANCE;
+        classifier.accept(e.deltaX, e.deltaY);
+        const isPhysical = classifier.isPhysicalMouseWheel();
+        // 如果物理滚轮状态变化，更新平滑滚动配置
+        const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
+        const expectedDuration = isPhysical ? 125 : 0;
+        if (currentDuration !== expectedDuration) {
+          this.setSmoothScrolling(isPhysical, true);
+        }
+      };
+      term.element?.addEventListener('wheel', wheelHandler, { passive: true });
+      // 挂载到实例上以便 unmount 时清理
+      this._wheelHandler = wheelHandler;
+    } catch {
+      /* 旧版 xterm 无 element 或 wheel 事件 */
+    }
+
     // 初始状态：新终端默认贴底。
     this._lastAtBottom = true;
 
@@ -1124,6 +1257,13 @@ export class XtermTerminal implements LiveTerminal {
       // 使 downstream dataBufferer / handleProcessData 的 (id, data) 契约与原实现一致。
       (handler) => this.channel.onData((data) => handler(this.sessionKey, data)),
       WRITE_DEBOUNCE_MS,
+    );
+
+    // 背压累积缓冲（对齐 VS Code AckDataBufferer 独立类）：
+    // 在 _writeProcessData 的 xterm.write 回调中调用 ackBufferer.ack(data.length)，
+    // 累积到 CharCountAckSize 阈值时发送 ack IPC，减少通信频次。
+    this.ackBufferer = new AckDataBufferer(
+      (len) => this.pi.acknowledgeDataEvent?.(this.sessionKey, len),
     );
 
     // 进程退出（含会话结束 onStatus('dead')）统一走 channel.onExit：exit 即 dead，语义等价。
@@ -1195,36 +1335,78 @@ export class XtermTerminal implements LiveTerminal {
   }
 
 
-  /** 滚动到指定 buffer 行（对齐 VS Code MarkNavigationAddon.scrollToLine）。（对齐 VS Code TerminalInstance._onProcessData）：
+  /** （对齐 VS Code TerminalInstance._onProcessData）：
    * 按 shell integration 的 OSC 633 序列（命令开始/结束）做语义切分，各段按序 term.write，
    * 使命令边界成为独立写入单元。xterm 原生处理 ?2026 同步输出序列（DEC 同步输出），会自行
    * 合并未闭合的同步帧再呈现，故无需自研同步帧切分。
-   * 写后回传 acknowledgeDataEvent（对齐 VS Code _writeProcessData 的背压流控）。 */
+   * 写后回传 acknowledgeDataEvent（对齐 VS Code _writeProcessData 的背压流控）。
+   *
+   * 优化：对齐 VS Code TerminalInstance._onProcessData，仅最后一段数据跟踪 commit。
+   * 前导段（OSC 633 标记）使用 _writeProcessDataUnsafe（跳过 ack 跟踪），
+   * 最后一段使用 _writeProcessData（带 ack 跟踪 + trackCommit 写完成 Promise）。
+   * 这消除了大量小段 OSC 标记的冗余 ack 计数，减少 IPC 通信量，同时保持最后一段
+   * 实际输出的背压准确。
+   *
+   * 与 VS Code 对齐的 IProcessDataEvent 契约：
+   *   - 前导段: { data, trackCommit: false }
+   *   - 最后一段: { data, trackCommit: true, writePromise }
+   * writePromise 使调用方（如 flush()）可 await 实际输出的写完成，
+   * 而不必等待 OSC 标记这种零输出的写完成确认。 */
   private handleProcessData(id: string, data: string): void {
     if (id !== this.sessionKey || !this.term) return;
     this._lastWriteAt = Date.now();
     const segments = this._segmentByShellIntegration(data);
-    for (const seg of segments) {
-      this._writeProcessData(seg);
+    if (segments.length <= 1) {
+      // 无 OSC 序列：单段，正常跟踪 ack + trackCommit
+      this._writeProcessData(data, true);
+    } else {
+      // 对齐 VS Code：前导段（OSC 633 标记）trackCommit=false，仅最后一段 trackCommit=true
+      for (let i = 0; i < segments.length - 1; i++) {
+        this._writeProcessDataUnsafe(segments[i]);
+      }
+      this._writeProcessData(segments[segments.length - 1], true);
     }
+    // 每次数据到达后重置空闲 flush 定时器：终端输出停止后 IDLE_FLUSH_MS 毫秒自动刷出
+    // 剩余 ack 字符（对齐 VS Code 的闲置清理策略，避免尾部 ack 积压）。
+    this._scheduleIdleFlush();
+  }
+
+  /** 调度空闲 flush 定时器：终端输出停止后 IDLE_FLUSH_MS 自动刷出剩余 ack 字符。
+   * 每次 handleProcessData 调用时重置，确保连续输出时不触发。 */
+  private _scheduleIdleFlush(): void {
+    if (this._idleFlushTimer != null) {
+      clearTimeout(this._idleFlushTimer);
+    }
+    this._idleFlushTimer = setTimeout(() => {
+      this._idleFlushTimer = null;
+      this.flushAck();
+    }, XtermTerminal.IDLE_FLUSH_MS);
   }
 
   /** 按 shell integration 的 OSC 序列切分输入为语义段（对齐 VS Code TerminalInstance._onProcessData）。
    * 匹配 VS Code 系 \x1b]633;A/B/C/D/F/G 与 FinalTerm 系 \x1b]133;A/B/C/D（\x1b]([16]33;...），
    * 在标记边界把数据切成多段，使命令级输出可被差分写入；xterm 原生处理 ?2026 同步输出，
    * 故无需自研同步帧切分。无 OSC 序列时原样返回单段（零开销）。
-   * 注意：仅做「输出分段」这一层（消除闪烁），不解析命令/cwd/mark 语义——后者本项目无宿主消费。 */
+   * 注意：仅做「输出分段」这一层（消除闪烁），不解析命令/cwd/mark 语义——后者本项目无宿主消费。
+   *
+   * 对齐 VS Code _onProcessData 的 /(?<seq>\x1b\][16]33;(?:C|D(?:;\d+)?)\x07)/ 正则：
+   * 使用具名捕获组 <seq> 提取完整 OSC 序列，与 VSCode 完全一致。 */
   private _segmentByShellIntegration(data: string): string[] {
     // 对齐 VS Code 的 /(?<seq>\x1b\][16]33;(?:C|D(?:;\d+)?)\x07)/：
     // [16]33 同时覆盖 VS Code(633) 与 FinalTerm/iTerm(133) 两系标记。
-    const re = /\x1b\][16]33;(?:A|B|C|D|F|G)(?:;\d+)?\x07/g;
+    // 使用具名捕获组 <seq> 提取完整序列，与 VSCode 完全一致。
+    const re = /(?<seq>\x1b\][16]33;(?:A|B|C|D|F|G)(?:;\d+)?\x07)/g;
     const segments: string[] = [];
     let last = 0;
     let m: RegExpExecArray | null;
     re.lastIndex = 0;
     while ((m = re.exec(data)) !== null) {
+      if (m.groups?.seq === undefined) {
+        // 不可能发生——正则定义保证了 seq 必有值，但防御性处理
+        continue;
+      }
       if (m.index > last) segments.push(data.slice(last, m.index));
-      const seq = m[0];
+      const seq = m.groups.seq;
       segments.push(seq);
       // 路由给命令检测 capability（去掉 \x1b]633; 前缀与 \x07 ST 后缀，对齐 VS Code _doHandleVSCodeSequence）。
       this._routeOscToCapabilities(seq);
@@ -1246,12 +1428,54 @@ export class XtermTerminal implements LiveTerminal {
     cwdCap?.handleProperty(body);
   }
 
+  /** 写入一段数据（无 commit 跟踪，对齐 VS Code 前导 OSC 633 段的写入方式）。
+   * 用于 _onProcessData 中前导段（leading segments）的写入：它们只是 OSC 633 标记，
+   * 不携带实际输出数据，无需跟踪 commit 和 ack，减少不必要的序列号开销。
+   * 回调中恢复滚动位置 + 触发 onData + 推进 _latestParsedSeq 以支持 flush 写完成确认。
+   *
+   * 与 VSCode 对齐：VSCode 在 _writeProcessData 中为所有写入（包括前导段）递增 _latestXtermWriteData，
+   * 使 flush 可正确等待所有写入完成。此前本方法不递增序列，导致 flush 不等待前导段。
+   * 现改为虽不跟踪 ack（不调 ackBufferer.ack），但递增 _latestWriteSeq 并在回调中推进 _latestParsedSeq，
+   * 确保 flush 的写完成确认涵盖所有写入段。 */
+  private _writeProcessDataUnsafe(data: string): void {
+    if (this.disposed || !this.term) return;
+    const term = this.term;
+    const seq = ++this._latestWriteSeq;
+
+    // 对齐 VS Code _onWillData：写前通知外部消费者
+    this.onWillData?.(data);
+
+    // 对齐 VS Code：写前保存滚动位置
+    const savedState = this.captureScrollState();
+
+    try {
+      term.write(data, () => {
+        // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
+        this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+
+        // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
+        this.restoreScrollState(savedState);
+
+        // 对齐 VS Code _onData：写解析完毕后通知外部消费者
+        this.onData?.(data);
+      });
+    } catch {
+      /* 终端已销毁等边界 */
+    }
+  }
+
   /** 写入一段数据并回传背压（对齐 VS Code TerminalInstance._writeProcessData）。
    * 单一 term.write（无行切片/rAF 逐批 hack），回调里推进解析序号 + acknowledgeDataEvent。
    *
    * 对齐 VS Code：写前/写后分别触发 onWillData / onData 事件，并在写前后自动 save/restore
-   * 滚动位置，防止新增输出导致用户已上滚的视口意外跳到底部或顶部。 */
-  private _writeProcessData(data: string): void {
+   * 滚动位置，防止新增输出导致用户已上滚的视口意外跳到底部或顶部。
+   *
+   * 与 _writeProcessDataUnsafe 的区别：本方法带 commit 跟踪（推进 _latestParsedSeq）
+   * 和背压回传（通过 ackBufferer.ack），适用于携带实际输出数据的最后一段。
+   *
+   * @param trackCommit 是否跟踪写完成确认。true 时记录 writePromise 供外部 await。
+   *                    对齐 VS Code IProcessDataEvent.trackCommit 语义。 */
+  private _writeProcessData(data: string, trackCommit = false): void {
     if (this.disposed || !this.term) return;
     const term = this.term;
     const seq = ++this._latestWriteSeq;
@@ -1263,27 +1487,41 @@ export class XtermTerminal implements LiveTerminal {
     // 操作意外改变视口位置。captureScrollState 使用 marker 做精确逻辑行跟踪。
     const savedState = this.captureScrollState();
 
+    // 对齐 VS Code IProcessDataEvent.writePromise：当 trackCommit=true 时，
+    // 创建一个 Promise 供调用方（如 flush()）等待写完成确认。
+    let resolveWrite: (() => void) | null = null;
+    const writePromise = trackCommit ? new Promise<void>((r) => { resolveWrite = r; }) : undefined;
+
     try {
       term.write(data, () => {
         this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
 
-        // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-        this.restoreScrollState(savedState);
-
-        // 背压回传（对齐 VS Code AckDataBufferer）：累积消费字符数到阈值再发 IPC，
+        // 背压回传（对齐 VSCode AckDataBufferer 独立类）：
+        // 通过 ackBufferer.ack 累积消费字符数到阈值再发 IPC，
         // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
         // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
-        this._unsentAckChars += data.length;
-        while (this._unsentAckChars > FlowControlConstants.CharCountAckSize) {
-          this._unsentAckChars -= FlowControlConstants.CharCountAckSize;
-          this.pi.acknowledgeDataEvent?.(this.sessionKey, FlowControlConstants.CharCountAckSize);
-        }
+        this.ackBufferer?.ack(data.length);
+
+        // 对齐 VS Code cb?.()：写完成回调（resolve writePromise），
+        // 在 onData 之前触发，与 VSCode 的 cb?.() → _onData 顺序一致。
+        resolveWrite?.();
 
         // 对齐 VS Code _onData：写解析完毕后通知外部消费者
         this.onData?.(data);
+
+        // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
+        this.restoreScrollState(savedState);
       });
     } catch {
       /* 终端已销毁等边界 */
+      resolveWrite?.();
+    }
+
+    // 对齐 VS Code：将 writePromise 挂载到 _pendingWritePromise 私有字段上
+    // 供外部调用方（如 flush）等待实际输出的写完成确认。
+    // 替代此前 (this as any)._pendingWritePromise 的类型 hack。
+    if (trackCommit && writePromise) {
+      this._pendingWritePromise = writePromise;
     }
   }
 
@@ -1341,6 +1579,112 @@ export class XtermTerminal implements LiveTerminal {
     this._lastCols = cols;
     this._lastRows = rows;
     this.channel.resize(cols, rows);
+  }
+
+  // —— 配置热更新方法（对齐 VS Code XtermTerminal.updateConfig）——
+  /** 运行时更新游标闪烁（对齐 VS Code _setCursorBlink）。
+   * 配置变更时由外部调用，无需重建 xterm 实例。 */
+  setCursorBlink(blink: boolean): void {
+    if (!this.term || this.disposed) return;
+    if (this.term.options.cursorBlink !== blink) {
+      this.term.options.cursorBlink = blink;
+      this.term.refresh(0, this.term.rows - 1);
+    }
+  }
+
+  /** 运行时更新游标样式（对齐 VS Code _setCursorStyle）。
+   * 配置变更时由外部调用，无需重建 xterm 实例。 */
+  setCursorStyle(style: 'block' | 'bar' | 'underline'): void {
+    if (!this.term || this.disposed) return;
+    if (this.term.options.cursorStyle !== style) {
+      this.term.options.cursorStyle = style;
+    }
+  }
+
+  /** 运行时更新非活跃游标样式（对齐 VS Code _setCursorStyleInactive）。 */
+  setCursorInactiveStyle(style: 'none' | 'outline' | 'block' | 'bar' | 'underline'): void {
+    if (!this.term || this.disposed) return;
+    if (this.term.options.cursorInactiveStyle !== style) {
+      this.term.options.cursorInactiveStyle = style;
+    }
+  }
+
+  /** 运行时更新游标宽度（对齐 VS Code _setCursorWidth）。 */
+  setCursorWidth(width: number): void {
+    if (!this.term || this.disposed) return;
+    if (this.term.options.cursorWidth !== width) {
+      this.term.options.cursorWidth = width;
+    }
+  }
+
+  /** 运行时更新 scrollback 值（对齐 VS Code raw.options.scrollback）。 */
+  setScrollback(scrollback: number): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.scrollback = Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, Math.round(scrollback)));
+  }
+
+  /** 运行时更新字体（对齐 VS Code raw.options.fontFamily / fontSize / lineHeight / letterSpacing）。 */
+  setFont(fontFamily: string, fontSize: number, lineHeight?: number, letterSpacing?: number): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.fontFamily = fontFamily;
+    this.term.options.fontSize = fontSize;
+    if (lineHeight !== undefined) this.term.options.lineHeight = lineHeight;
+    if (letterSpacing !== undefined) this.term.options.letterSpacing = letterSpacing;
+    this.doResize(true);
+    this.forceRedraw();
+  }
+
+  /** 运行时更新平滑滚动（对齐 VS Code _updateSmoothScrolling）。
+   * @param enabled 是否启用平滑滚动
+   * @param isPhysicalMouseWheel 是否为物理滚轮（触控板应禁用平滑滚动） */
+  setSmoothScrolling(enabled: boolean, isPhysicalMouseWheel?: boolean): void {
+    if (!this.term || this.disposed) return;
+    const useSmooth = enabled && (isPhysicalMouseWheel ?? true);
+    this.term.options.smoothScrollDuration = useSmooth ? 125 : 0;
+  }
+
+  /** 运行时更新 scrollbar 宽度（对齐 VS Code scrollbarWidth + _getScrollbarOptions）。 */
+  setScrollbarWidth(width: number): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.scrollbar = { width, overviewRuler: { showTopBorder: true } };
+  }
+
+  /** 运行时批量更新配置（对齐 VS Code XtermTerminal.updateConfig）。
+   * 一次性应用多个配置项，避免逐个调用导致多次 xterm 内部重排。
+   * @param config 部分配置项，未提供的项保持不变。 */
+  updateConfig(config: Partial<{
+    cursorBlink: boolean;
+    cursorStyle: 'block' | 'bar' | 'underline';
+    cursorInactiveStyle: 'none' | 'outline' | 'block' | 'bar' | 'underline';
+    cursorWidth: number;
+    scrollback: number;
+    fontFamily: string;
+    fontSize: number;
+    lineHeight: number;
+    letterSpacing: number;
+    smoothScrolling: boolean;
+    isPhysicalMouseWheel: boolean;
+    scrollbarWidth: number;
+  }>): void {
+    if (!this.term || this.disposed) return;
+    if (config.cursorBlink !== undefined) this.setCursorBlink(config.cursorBlink);
+    if (config.cursorStyle !== undefined) this.setCursorStyle(config.cursorStyle);
+    if (config.cursorInactiveStyle !== undefined) this.setCursorInactiveStyle(config.cursorInactiveStyle);
+    if (config.cursorWidth !== undefined) this.setCursorWidth(config.cursorWidth);
+    if (config.scrollback !== undefined) this.setScrollback(config.scrollback);
+    if (config.smoothScrolling !== undefined) {
+      this.setSmoothScrolling(config.smoothScrolling, config.isPhysicalMouseWheel);
+    }
+    if (config.scrollbarWidth !== undefined) this.setScrollbarWidth(config.scrollbarWidth);
+    if (config.fontFamily !== undefined || config.fontSize !== undefined ||
+        config.lineHeight !== undefined || config.letterSpacing !== undefined) {
+      this.setFont(
+        config.fontFamily ?? this.term.options.fontFamily,
+        config.fontSize ?? this.term.options.fontSize,
+        config.lineHeight ?? this.term.options.lineHeight,
+        config.letterSpacing ?? this.term.options.letterSpacing,
+      );
+    }
   }
 
   /** 立即用宿主最新尺寸校准终端并通知 PTY（首挂载 / 切回可见 / 会话结束收尾调用，force=true）。

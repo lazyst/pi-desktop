@@ -122,8 +122,13 @@ export class SessionPool {
     });
     pty.on('exit', (code: number | null, signal: string | null) => {
       e.info.status = 'dead';
+      this.clearDataBuffer(e.info.key);
+      e.bp.clearUnacknowledgedChars();
       this.opts.onStatus(e.info.key, 'dead');
-      if (e.diskKey) this.opts.onStatus(e.diskKey, 'dead');
+      if (e.diskKey) {
+        this.clearDataBuffer(e.diskKey);
+        this.opts.onStatus(e.diskKey, 'dead');
+      }
       this.opts.onExit(e.info.key);
     });
     this.entries.set(mapKey, e);

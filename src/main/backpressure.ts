@@ -32,6 +32,13 @@ export class BackpressureController {
   private readonly onPause: () => void;
   /** 翻转至低水位时调用：恢复底层 PTY 输出。 */
   private readonly onResume: () => void;
+  /**
+   * 同步写路径的「无需等待 ack」标记（对齐 VS Code _blockedOnWriteSync）。
+   * 在高优先级写（如 exit 消息、关键状态通知）时临时标记，避免 PTY pause 后
+   * 等待 ack 队列排空才写入——同步写直接写入内核 PTY 缓冲，不受背压水位影响。
+   * 当标记为 true 时，onData 不计入 inflight，也不触发 pause。
+   */
+  private _writeSyncMode = false;
 
   constructor(onPause: () => void, onResume: () => void) {
     this.onPause = onPause;
@@ -41,8 +48,10 @@ export class BackpressureController {
   /**
    * 主进程从 PTY 读到一块数据时调用，累加未确认计数；
    * 若未暂停且超过高水位，触发 onPause（暂停 PTY 输出）。
+   * 在 writeSync 模式下不计入 inflight，也不触发 pause。
    */
   onData(charCount: number): void {
+    if (this._writeSyncMode) return;
     this.inflight += charCount;
     if (!this.paused && this.inflight > FlowControlConstants.HighWatermarkChars) {
       this.paused = true;
@@ -62,12 +71,51 @@ export class BackpressureController {
     }
   }
 
-  /** 实例销毁 / 进程退出时强制恢复（对齐 VS Code clearUnacknowledgedChars）。 */
+  /**
+   * 进入同步写模式（对齐 VS Code _blockedOnWriteSync 的语义）。
+   * 在此模式下，onData 不计入 inflight，不回传背压，直接写入 PTY。
+   * 使用场景：高优先级写入（如 exit 通知、关键 OSC 序列），
+   * 避免被已暂停的背压阻塞。
+   * 调用 exitWriteSync() 退出该模式。
+   */
+  enterWriteSync(): void {
+    this._writeSyncMode = true;
+  }
+
+  /**
+   * 退出同步写模式，恢复正常背压记账。
+   * 对齐 VS Code blockedOnWriteSync setter：退出 writeSync 时检查是否需要恢复 PTY。
+   * 如果在 writeSync 期间 inflight 已降到 LowWatermark 以下，立即恢复 PTY 输出。
+   */
+  exitWriteSync(): void {
+    this._writeSyncMode = false;
+    // 对齐 VS Code blockedOnWriteSync setter: 退出 writeSync 时检查是否需要恢复 PTY
+    if (this.paused && this.inflight < FlowControlConstants.LowWatermarkChars) {
+      this.paused = false;
+      this.onResume();
+    }
+  }
+
+  /** 当前是否处于同步写模式（测试/诊断用）。 */
+  isWriteSyncMode(): boolean {
+    return this._writeSyncMode;
+  }
+
+  /** 实例销毁 / 进程退出时强制恢复（对齐 VS Code clearUnacknowledgedChars + force resume）。
+   * 会触发 onResume 回调恢复 PTY 输出。同时退出 writeSync 模式。 */
   dispose(): void {
     if (this.paused) {
       this.paused = false;
       this.onResume();
     }
+    this.inflight = 0;
+    this._writeSyncMode = false;
+  }
+
+  /** 仅清除未确认字符计数，不触发 resume（对齐 VS Code clearUnacknowledgedChars 的轻量版本）。
+   * 用于 PTY 已退出等场景，只需重置记账而无须恢复输出。
+   * 与 dispose 的区别：dispose 会强制 resume（onResume 回调），本方法只清计数。 */
+  clearUnacknowledgedChars(): void {
     this.inflight = 0;
   }
 
