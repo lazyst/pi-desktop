@@ -675,6 +675,21 @@ html, body, #root {
 .terminal-host .xterm .xterm-viewport { background-color: var(--bg-app); }
 .terminal-host .xterm .composition-view { background: var(--bg-elevated); color: var(--text); }
 
+/* ── 终端内链接样式（可点击文件路径 + URL）──
+   对齐 VS Code：下划线 + 高亮色 + 指针光标，hover 时加深。
+   xterm.js 通过 ILinkDecorations 控制下划线和指针光标（见 XtermTerminal 的 decorations 配置），
+   此处仅控制颜色。 */
+.terminal-host .xterm a,
+.integrated-terminal-host .xterm a {
+  color: var(--accent) !important;
+  text-decoration: underline !important;
+  text-underline-offset: 2px;
+}
+.terminal-host .xterm a:hover,
+.integrated-terminal-host .xterm a:hover {
+  color: var(--accent-hover) !important;
+}
+
 /* 「跳到底部」浮钮：视口上滚离底时出现，点击回到最新输出。
    定位在终端视口右下角，right 留足 14px 以错开原生纵向滚动条
    （xterm-viewport 右侧 10px 滚动条区域，见上方 overflow 规则），
