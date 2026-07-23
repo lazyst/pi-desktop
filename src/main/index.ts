@@ -275,22 +275,14 @@ function createWindow() {
   // 通过 onClick 的 pi.openExternal 打开。will-navigate 仅作为安全措施阻止窗口内导航，
   // 不额外打开外部 URL，避免双重调用导致 Windows 弹出安全确认对话框。
   // 本项目未注册自定义 app:// 协议，生产以 file:// 加载，故放行集为 file:// + 本地 dev。
-  // setWindowOpenHandler：拦截 window.open，对外部 URL 用系统命令在默认浏览器中打开。
-  // 使用 child_process.exec 代替 shell.openExternal，
-  // 避免 Electron 32 在 IPC/非用户手势上下文中可能弹出的安全确认对话框。
-  // 终端链接的 activate 回调使用 window.open(url, '_blank') 保留用户手势上下文，
-  // 这里拦截后直接走系统命令打开浏览器。
+  // setWindowOpenHandler：拦截 window.open，对外部 URL 用 shell.openExternal 打开（保留用户手势），
+  // 内部 file:// 和本地 dev 地址则直接 deny（不走外部打开）。
+  // 终端链接的 activate 回调现在使用 window.open(url, '_blank') 代替 IPC 调用 app:openExternal，
+  // 因为 window.open 保留鼠标事件中的用户手势上下文，可避免 Electron 32 的安全确认对话框。
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // 只放行 http/https/mailto 协议的外部 URL，通过 shell.openExternal 在系统默认程序中打开
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
-      // 用 exec 打开 URL，彻底绕过 Electron 的 shell API 安全对话框
-      const { exec } = require('child_process');
-      const escaped = url.replace(/&/g, '^&');
-      const cmd = process.platform === 'win32'
-        ? `start "" "${escaped}"`
-        : process.platform === 'darwin'
-          ? `open '${escaped}'`
-          : `xdg-open '${escaped}'`;
-      exec(cmd, { shell: true }).catch(() => {});
+      shell.openExternal(url).catch(() => {});
     }
     // 一律 deny 新窗口：应用内不需要弹新窗口。
     return ({ action: 'deny' });
@@ -402,15 +394,7 @@ function createWindow() {
     if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
       return false;
     }
-    // 用 exec 替代 shell.openExternal，避免 Electron 32 的安全确认对话框
-    const { exec } = require('child_process');
-    const escaped = url.replace(/&/g, '^&');
-    const cmd = process.platform === 'win32'
-      ? `start "" "${escaped}"`
-      : process.platform === 'darwin'
-        ? `open '${escaped}'`
-        : `xdg-open '${escaped}'`;
-    exec(cmd, { shell: true }).catch(() => {});
+    shell.openExternal(url).catch(() => {});
     return true;
   });
 
