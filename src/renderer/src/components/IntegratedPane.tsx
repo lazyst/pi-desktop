@@ -10,38 +10,7 @@ import {
   paneHandleContextMenu,
   releasePane,
 } from './paneManager';
-import { useTabStore } from '../store/tabStore';
-import { basenameOf } from '../lib/mdPath';
 import type { XtermTerminal } from './XtermTerminal';
-import type { AppConfig } from '../types';
-
-// 工作区根目录缓存（避免每次点击都读一次 config IPC）。
-let _workspaceRootsCache: string[] | null = null;
-let _configPromise: Promise<AppConfig | null> | null = null;
-
-/** 获取已知工作区根目录列表（从 config 提取 addedDirs + appWorkDir）。
- *  缓存结果，避免高频 IPC 调用。
- *  对齐 VS Code 的 workspace 解析：对终端文件链接，先尝试匹配工作区根目录，
- *  再回退到文件所在目录。 */
-async function getWorkspaceRoots(): Promise<string[]> {
-  if (_workspaceRootsCache) return _workspaceRootsCache;
-  if (!_configPromise) {
-    _configPromise = pi.getConfig().catch(() => null);
-  }
-  const cfg = await _configPromise;
-  if (!cfg) return [];
-  const roots = new Set<string>();
-  if (Array.isArray(cfg.addedDirs)) cfg.addedDirs.forEach((r: string) => roots.add(r));
-  if (cfg.appWorkDir) roots.add(cfg.appWorkDir);
-  _workspaceRootsCache = Array.from(roots);
-  return _workspaceRootsCache;
-}
-
-// 清空缓存（测试用 / config 变更时由外部调用）。
-export function clearWorkspaceRootsCache(): void {
-  _workspaceRootsCache = null;
-  _configPromise = null;
-}
 
 interface Props {
   // 终端实例 id，形如 'term-<uuid>'。同时作为 XtermTerminal 的 sessionKey（仅作标识），
@@ -92,29 +61,7 @@ export function IntegratedPane({ terminalId, active }: Props) {
     //  - cwd 检测 → 更新主进程缓存并推侧边栏目录分组（对齐 VS Code CwdDetectionCapability）。
     //  - 文件链接点击 → 在系统文件管理器选中（应用无内置编辑器，系统打开已由 link 本身触发）。
     term.onCwdChange = (cwd) => pi.updateTerminalCwd?.(terminalId, cwd);
-    // 文件链接点击：在 pi-desktop 编辑器中打开文件。
-    // 根据绝对路径尝试匹配工作区根目录，转为 (root, relPath) 后调用 openPreview。
-    term.onOpenFile = async (_path, _line, _col) => {
-      const absPath = _path.replace(/\\/g, '/');
-      // 获取已知工作区根目录（从 config 及当前激活 cwd）
-      const roots = await getWorkspaceRoots();
-      const state = useTabStore.getState();
-      if (state.activeCwd && !roots.includes(state.activeCwd)) {
-        roots.unshift(state.activeCwd);
-      }
-      for (const root of roots) {
-        const normalizedRoot = root.replace(/\\/g, '/').replace(/\/+$/, '');
-        if (absPath.startsWith(normalizedRoot + '/')) {
-          const relPath = absPath.slice(normalizedRoot.length + 1);
-          useTabStore.getState().openPreview(root, relPath, basenameOf(relPath));
-          return;
-        }
-      }
-      // 无匹配：尝试直接打开（根目录设为该文件所在目录）
-      const dir = absPath.lastIndexOf('/') > 0 ? absPath.slice(0, absPath.lastIndexOf('/')) : absPath;
-      const name = basenameOf(absPath);
-      useTabStore.getState().openPreview(dir, name, name);
-    };
+    term.onOpenFile = (_path, _line, _col) => { /* 应用无内置编辑器；系统打开由链接点击触发 */ };
     if (active) mountPane(terminalId, host);
     return () => {
       // 清理时只卸载 xterm 渲染实例（经 PaneManager.releasePane 注销），

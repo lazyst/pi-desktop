@@ -2,12 +2,9 @@
 //
 // 识别两类链接：
 //   1. 文件链接：绝对/相对路径（含 Windows C:\ 与 ~ / ./foo），可选 :行:列 后缀。
-//      点击 → 通过 onOpenFile 回调由壳（IntegratedPane）在编辑器中打开；
-//      同时会尝试匹配工作区根目录转为 (root, relPath) 调用 openPreview。
+//      点击 → 主进程 fsOpenWithSystem 用系统程序打开；若文件在打开的工作区内，
+//      额外回传 onOpenFile 让文件树/编辑器定位选中。
 //   2. URL 链接：http(s)/file/ftp 等 scheme。点击 → 主进程 openExternal 用默认程序打开。
-//
-// 所有链接均显示下划线和指针光标（对齐 VS Code 高置信度链接的 ILinkDecorations 行为），
-// 用户按住 Ctrl/Cmd 点击激活，与 xterm 原生交互一致。
 //
 // 与 VS Code 的差异（仅适配，不改语义）：
 //  - VS Code 用多个 detector + resolver.stat；本项目用一个 provider 覆盖 file+uri，
@@ -107,65 +104,22 @@ export interface LinkActivationHandlers {
   openExternal: (url: string) => void;
 }
 
-/**
- * 把一个 buffer 行的命中转换成 xterm 的 ILink（对齐 VS Code TerminalLinkDetectorAdapter）。
- *
- * 注意：xterm 6.0.0 的 _handleMouseUp 不会检查 Ctrl/Cmd 修饰键，
- * 所有点击（含普通点击）都会触发 activate。因此我们在 activate 中自行检查修饰键，
- * 只有按住 Ctrl/Cmd 才执行打开操作。
- *
- * hover/leave 方法动态控制 decorations：
- * - 鼠标悬停时检查修饰键状态，仅当 Ctrl/Cmd 按下时才显示下划线和指针光标
- * - 鼠标离开时清除 decorations
- * - 对齐 VS Code 的 _enableDecorations/_disableDecorations 行为
- */
+/** 把一个 buffer 行的命中转换成 xterm 的 ILink（对齐 VS Code TerminalLinkDetectorAdapter）。 */
 export function buildLink(
   match: TerminalLinkMatch,
   handlers: LinkActivationHandlers,
-): {
-  range: { start: { x: number; y: number }; end: { x: number; y: number } };
-  text: string;
-  activate: (event?: MouseEvent) => void;
-  hover: (event: MouseEvent) => void;
-  leave: () => void;
-  decorations?: { pointerCursor: boolean; underline: boolean };
-} {
+): { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string; activate: () => void } {
   return {
     range: {
       start: { x: match.startCol + 1, y: 0 }, // y 由 provider 填充绝对行号
       end: { x: match.endCol + 1, y: 0 },
     },
     text: match.text,
-    // 初始 decorations 为 false，xterm 的 proxy 会接管，hover 时动态控制
-    decorations: { pointerCursor: false, underline: false },
-    activate: (event?: MouseEvent) => {
-      // xterm 6.0.0 不检查修饰键就调 activate，我们在此自行检查：
-      // 只有按住 Ctrl/Cmd 才激活链接，普通点击不触发（对齐 VS Code 交互）。
-      if (!event || (!event.ctrlKey && !event.metaKey)) {
-        return;
-      }
+    activate: () => {
       if (match.type === 'url' && match.text) {
         handlers.openExternal(match.text);
       } else if (match.type === 'file' && match.path) {
         handlers.openFile(match.path, match.line, match.col);
-      }
-    },
-    // hover：鼠标悬停时根据修饰键状态动态显示 decorations
-    // 对齐 VS Code 的 _enableDecorations 逻辑：仅当 Ctrl/Cmd 按下时显示下划线和指针
-    hover(event: MouseEvent): void {
-      const modifierDown = event.ctrlKey || event.metaKey;
-      // 动态修改 decorations（xterm 的 proxy 会监听变化并更新视觉）
-      // 注意：this 指向返回的对象，decorations 已被 xterm 替换为 proxy
-      if (this.decorations) {
-        this.decorations.pointerCursor = modifierDown;
-        this.decorations.underline = modifierDown;
-      }
-    },
-    // leave：鼠标离开时清除 decorations
-    leave(): void {
-      if (this.decorations) {
-        this.decorations.pointerCursor = false;
-        this.decorations.underline = false;
       }
     },
   };

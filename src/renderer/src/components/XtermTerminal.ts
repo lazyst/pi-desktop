@@ -749,18 +749,10 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /**
-   * 注册终端内链接 provider（对齐 VS Code TerminalLinkManager.registerLinkProvider）。
-   *
-   * 检测两类链接：
-   *   1. 文件路径（含 :行:列 后缀）→ 通过 onOpenFile 回调由壳打开，
-   *      集成终端壳（IntegratedPane）在编辑器中打开；会话终端壳可自行实现。
-   *   2. URL 链接 → pi.openExternal 用默认浏览器打开。
-   *
-   * 所有链接均显示下划线和指针光标（对齐 VS Code 高置信度链接的 decorations 行为），
-   * 用户按住 Ctrl/Cmd 点击激活。
-   * 返回反注册函数（unmount 时调用）。
-   */
+  /** 注册终端内链接 provider（对齐 VS Code TerminalLinkManager.registerLinkProvider）。
+   * 实现 xterm ILinkProvider：对指定 buffer 行调用 detectLinksInLine，把命中转为 xterm ILink。
+   * 点击 file 链接 → pi.fsOpenWithSystem + onOpenFile 回调；点击 url → pi.openExternal。
+   * 返回反注册函数（unmount 时调用）。 */
   private _registerTerminalLinkProvider(term: Terminal): { dispose: () => void } {
     const provider = {
       provideLinks: (bufferLineNumber: number, cb: (links: any[] | undefined) => void) => {
@@ -790,19 +782,10 @@ export class XtermTerminal implements LiveTerminal {
         const links = matches.map((m) => {
           const built = buildLink(m, {
             openFile: (path, lineNum, colNum) => {
-              // 文件链接：优先通过 onOpenFile 回调让壳（如 IntegratedPane）在编辑器中打开；
-              // 若壳未注册（如 SessionPane），回退到系统默认程序打开。
-              if (this.onOpenFile) {
-                this.onOpenFile(path, lineNum, colNum);
-              } else {
-                this.pi.fsOpenWithSystem?.(path).catch(() => {});
-              }
+              this.pi.fsOpenWithSystem?.(path).catch(() => {});
+              this.onOpenFile?.(path, lineNum, colNum);
             },
-            // URL 链接：使用 window.open 从渲染进程打开（保留用户手势上下文），
-            // 主进程的 setWindowOpenHandler 会拦截并调用 shell.openExternal。
-            // 不通过 this.pi.openExternal（IPC → shell.openExternal），
-            // 避免 Electron 32 在 IPC 上下文中弹出安全确认对话框。
-            openExternal: (url) => { window.open(url, '_blank'); },
+            openExternal: (url) => { this.pi.openExternal?.(url).catch(() => {}); },
           });
           // 填充绝对行号（detectLinks 只给列号，行号由 provider 上下文提供）。
           return {
@@ -812,8 +795,6 @@ export class XtermTerminal implements LiveTerminal {
             },
             text: built.text,
             activate: built.activate,
-            // 显示下划线和指针光标，让用户直观知道可点击（对齐 VS Code 高置信度链接）。
-            decorations: { pointerCursor: true, underline: true },
           };
         });
         cb(links);

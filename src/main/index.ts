@@ -268,33 +268,16 @@ function createWindow() {
   // 不拦截时恶意/意外链接可把整个 BrowserWindow 带离本地上下文。故在此做双重锁：
   //  1) setWindowOpenHandler 一律 deny——应用内不需要弹新窗口。
   //  2) will-navigate 只放行应用自身来源（生产 loadFile 的 file://、开发 Vite 的
-  //     http://localhost HMR）；其余 URL 一律拦截阻止窗口内导航。
-  //
-  // 注意：不再在此调 shell.openExternal——因为终端内链接已通过 xterm link 的 activate 回调
-  // 走 app:openExternal IPC 打开（见 _registerTerminalLinkProvider），Markdown 预览链接也已
-  // 通过 onClick 的 pi.openExternal 打开。will-navigate 仅作为安全措施阻止窗口内导航，
-  // 不额外打开外部 URL，避免双重调用导致 Windows 弹出安全确认对话框。
-  // 本项目未注册自定义 app:// 协议，生产以 file:// 加载，故放行集为 file:// + 本地 dev。
-  // setWindowOpenHandler：拦截 window.open，对外部 URL 用 shell.openExternal 打开（保留用户手势），
-  // 内部 file:// 和本地 dev 地址则直接 deny（不走外部打开）。
-  // 终端链接的 activate 回调现在使用 window.open(url, '_blank') 代替 IPC 调用 app:openExternal，
-  // 因为 window.open 保留鼠标事件中的用户手势上下文，可避免 Electron 32 的安全确认对话框。
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    // 只放行 http/https/mailto 协议的外部 URL，通过 shell.openExternal 在系统默认程序中打开
-    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
-      shell.openExternal(url).catch(() => {});
-    }
-    // 一律 deny 新窗口：应用内不需要弹新窗口。
-    return ({ action: 'deny' });
-  });
+  //     http://localhost HMR）；其余 URL 一律拦截并甩给系统默认程序（shell.openExternal）。
+  // 注意：本项目未注册自定义 app:// 协议，生产以 file:// 加载，故放行集为 file:// + 本地 dev。
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e, url) => {
     const allowed =
       url.startsWith('file://') || // 生产 loadFile / 本地文件系统
       /^https?:\/\/localhost(:\d+)?\//.test(url); // 开发 Vite dev server（HMR）
     if (!allowed) {
       e.preventDefault();
-      // 不再调 shell.openExternal（避免与各组件自身的 URL 打开逻辑重复，
-      // 导致系统弹出安全确认对话框）。URL 打开由具体 handler 负责。
+      shell.openExternal(url).catch(() => {});
     }
   });
 
