@@ -879,6 +879,7 @@ function openUrlInExternal(url: string): void {
   }
 
   ipcMain.handle('session:list', () => sessionFileManager.listFiles());
+  ipcMain.handle('session:readContent', (_e, key: string) => sessionFileManager.readContent(key));
   ipcMain.handle('session:delete', (_e, key: string) => {
     sessionFileManager.deleteSession(key);
     unifiedPool.terminate(key); // 同时杀掉运行中的进程（如有）

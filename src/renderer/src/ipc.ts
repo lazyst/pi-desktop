@@ -2,6 +2,7 @@ import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, 
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
+  readSessionContent(key: string): Promise<Array<{ role: string; content: string; toolName?: string }>>;
   openSession(req: OpenRequest): Promise<SessionInfo>;
   terminate(key: string): Promise<void>;
   deleteSession(key: string): Promise<void>;

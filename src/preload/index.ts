@@ -16,6 +16,8 @@ const initialConfig = readInitialConfig();
 
 contextBridge.exposeInMainWorld('pi', {
   listSessions: (): Promise<SessionGroup[]> => ipcRenderer.invoke('session:list'),
+  readSessionContent: (key: string): Promise<Array<{ role: string; content: string; toolName?: string }>> =>
+    ipcRenderer.invoke('session:readContent', key),
   openSession: (req: OpenRequest): Promise<SessionInfo> =>
     ipcRenderer.invoke('terminal:spawn', { command: 'pi', cwd: req.cwd ?? '', sessionFile: req.key?.endsWith('.jsonl') ? req.key : undefined, key: req.key && !req.key.endsWith('.jsonl') ? req.key : undefined, name: req.name }),
   terminate: (key: string): Promise<void> => ipcRenderer.invoke('session:terminate', key),  // 调用 session:terminate（main 中 UnifiedTerminalPool.terminate）

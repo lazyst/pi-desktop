@@ -6,6 +6,12 @@ export interface SessionGroup {
   sessions: Array<{ key: string; name: string; time: string }>;
 }
 
+export interface SessionMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  toolName?: string;
+}
+
 export class SessionFileManager {
   constructor(private sessionsDir: string) {}
 
@@ -65,10 +71,83 @@ export class SessionFileManager {
     try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* 非空或被占用 */ }
   }
 
+  readContent(key: string): SessionMessage[] {
+    if (!key.endsWith('.jsonl')) return [];
+    const dir = path.resolve(this.sessionsDir);
+    const target = path.resolve(key);
+    if (!target.startsWith(dir + path.sep) && target !== dir) return [];
+    try {
+      const text = fs.readFileSync(key, 'utf8');
+      const messages: SessionMessage[] = [];
+      for (const line of text.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const obj = JSON.parse(t);
+          // 只处理 message 类型行
+          if (obj?.type !== 'message') continue;
+          const msg = obj.message;
+          if (!msg?.role) continue;
+
+          if (msg.role === 'user') {
+            // 用户消息：content 是 [{type: "text", text: "..."}]
+            const content = extractContentParts(msg.content);
+            if (content) messages.push({ role: 'user', content });
+          } else if (msg.role === 'assistant') {
+            // 助理消息：content 可能包含 text / thinking / toolCall
+            const parts = extractContentParts(msg.content);
+            if (parts) messages.push({ role: 'assistant', content: parts });
+            // 检查是否有 toolCall 内嵌在 content 数组中
+            if (Array.isArray(msg.content)) {
+              for (const part of msg.content) {
+                if (part?.type === 'toolCall' && part?.name) {
+                  const args = typeof part.arguments === 'object'
+                    ? JSON.stringify(part.arguments, null, 2)
+                    : String(part.arguments ?? '');
+                  messages.push({
+                    role: 'tool',
+                    content: args.slice(0, 2000),
+                    toolName: part.name,
+                  });
+                }
+              }
+            }
+          } else if (msg.role === 'toolResult' || msg.role === 'tool') {
+            // 工具结果
+            const result = extractContentParts(msg.content);
+            messages.push({
+              role: 'tool',
+              content: result || '(空结果)',
+              toolName: msg.toolName ?? 'unknown',
+            });
+          } else if (msg.role === 'system') {
+            const content = extractContentParts(msg.content);
+            if (content) messages.push({ role: 'system', content });
+          }
+        } catch { /* skip non-JSON / malformed lines */ }
+      }
+      return messages;
+    } catch {
+      return [];
+    }
+  }
+
   debugInfo(liveEntries: Map<string, any>): { count: number; pids: number[] } {
     const running = [...liveEntries.values()].filter((e: any) => e.info?.status === 'running');
     return { count: running.length, pids: running.map((e: any) => e.pty?.pid ?? -1).filter((p: number) => p > 0) };
   }
+}
+
+function extractContentParts(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((p: any) => p?.type === 'text' && typeof p.text === 'string')
+      .map((p: any) => p.text)
+      .join('')
+      .trim();
+  }
+  return String(content ?? '');
 }
 
 export function decodeCwd(enc: string): string {

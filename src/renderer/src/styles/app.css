@@ -1154,6 +1154,138 @@ html, body, #root {
   background: rgba(248, 81, 73, 0.12);
 }
 
+/* ── 会话内容查看模态框 ── */
+.session-content-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(700px, 90vw);
+  height: min(600px, 80vh);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  display: flex;
+  flex-direction: column;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+.session-content-modal .session-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.session-content-modal .session-content-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-content-modal .session-content-body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--sp-3) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.session-content-modal .session-msg {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  max-width: 85%;
+}
+.session-content-modal .session-msg-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+}
+.session-content-modal .session-msg-assistant {
+  align-self: flex-start;
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.session-content-modal .session-msg-system {
+  align-self: center;
+  background: var(--bg-active);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+  max-width: 100%;
+}
+.session-content-modal .session-msg-tool {
+  align-self: stretch;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-family: var(--font-mono);
+  max-width: 100%;
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition);
+  border: 1px solid transparent;
+}
+.session-content-modal .session-msg-tool:hover {
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+.session-content-modal .session-msg-tool-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 1.6;
+}
+.session-content-modal .tool-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+.session-content-modal .tool-name {
+  color: var(--text-muted);
+}
+.session-content-modal .tool-arrow {
+  color: var(--text-faint);
+  font-size: 10px;
+  margin-left: auto;
+}
+.session-content-modal .session-msg-role {
+  font-size: var(--fs-xs);
+  margin-bottom: var(--sp-1);
+  opacity: 0.7;
+}
+.session-content-modal .session-msg-tool-name {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+.session-content-modal .session-msg-tool:not(.expanded) .session-msg-content {
+  display: none;
+}
+.session-content-modal .session-msg-tool .session-msg-content {
+  margin-top: var(--sp-1);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg-active);
+  border-radius: var(--r-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.session-content-modal .session-msg:not(.session-msg-tool) .session-msg-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: var(--fs-sm);
+}
+.session-content-modal .text-faint {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
 /* ============================================================================
    文件管理器 / 预览 / Git 面板（A + B + D）
    视觉语言复用 Sidebar 的 --bg-panel / --border / --accent 变量体系。

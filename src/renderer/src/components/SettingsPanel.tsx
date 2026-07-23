@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { getTheme, setTheme } from '../theme';
 import { pi } from '../ipc';
 import { ConfirmDialog } from './ConfirmDialog';
+import { SessionContentDialog } from './SessionContentDialog';
 import { IconTrash } from './icons';
 import type { Theme, CloseBehavior, SessionGroup, TerminalProfile } from '../types';
 import { getFontSize, bumpFontSize, onFontSizeChange, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../fontSize';
@@ -242,6 +243,7 @@ function SessionManagement() {
   const [confirm, setConfirm] = useState<PendingDelete | null>(null);
   // 每个目录的折叠状态：默认收起（仅显示前 3 个会话），展开后显示全部。
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [viewingContent, setViewingContent] = useState<{ key: string; name: string } | null>(null);
 
   const refresh = () => {
     pi.listSessions().then(setGroups).catch(() => setGroups([]));
@@ -344,7 +346,17 @@ function SessionManagement() {
                   <div
                     key={s.key}
                     className={`session-item${selectionMode ? ' selectable' : ''}${isSelected ? ' selected' : ''}`}
-                    onClick={selectionMode ? () => toggleSelect(s.key) : undefined}
+                    onClick={selectionMode ? () => toggleSelect(s.key) : () => setViewingContent({ key: s.key, name: s.name })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (selectionMode) toggleSelect(s.key);
+                        else setViewingContent({ key: s.key, name: s.name });
+                      }
+                    }}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={selectionMode ? `选择会话 ${s.name}` : `查看会话内容 ${s.name}`}
                   >
                     {selectionMode && (
                       <input
@@ -393,6 +405,13 @@ function SessionManagement() {
           }
           onConfirm={handleDeleteConfirm}
           onCancel={() => setConfirm(null)}
+        />
+      )}
+      {viewingContent && (
+        <SessionContentDialog
+          sessionKey={viewingContent.key}
+          sessionName={viewingContent.name}
+          onClose={() => setViewingContent(null)}
         />
       )}
     </div>
