@@ -262,6 +262,19 @@ function createWindow() {
     }
   });
 
+
+/** 在默认浏览器中打开 URL（使用系统命令，避免 Electron shell 安全对话框）。 */
+function openUrlInExternal(url: string): void {
+  const { exec } = require('child_process');
+  const escaped = url.replace(/&/g, '^&');
+  const cmd = process.platform === 'win32'
+    ? `start "" "${escaped}"`
+    : process.platform === 'darwin'
+      ? `open '${escaped}'`
+      : `xdg-open '${escaped}'`;
+  exec(cmd, { shell: true }, () => {});
+}
+
   // ── 链接跳转纵深防御（见 grilling 会话结论）──
   // 应用内渲染层未来可能渲染可点击外部链接（文档/设置/预览）。Electron 默认对
   // <a target="_blank"> / window.open 在新版 Chromium 下仅静默 block，且 will-navigate
@@ -275,29 +288,22 @@ function createWindow() {
   // 这里拦截后直接走系统命令打开浏览器。
   // 使用 child_process.exec 代替 shell.openExternal，
   // 避免 Electron 32 在 IPC/非用户手势上下文中可能弹出的安全确认对话框。
+  // setWindowOpenHandler：拦截 window.open，对外部 URL 用系统命令在默认浏览器中打开。
+  // 使用 child_process.exec 代替 shell.openExternal，
+  // 避免 Electron 32 在 IPC/非用户手势上下文中可能弹出的安全确认对话框。
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
-      // 用 exec 打开 URL，彻底绕过 Electron 的 shell API 安全对话框
-      const { exec } = require('child_process');
-      const escaped = url.replace(/&/g, '^&');
-      const cmd = process.platform === 'win32'
-        ? `start "" "${escaped}"`
-        : process.platform === 'darwin'
-          ? `open '${escaped}'`
-          : `xdg-open '${escaped}'`;
-      exec(cmd, { shell: true }).catch(() => {});
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      openUrlInExternal(url);
     }
-    // 一律 deny 新窗口：应用内不需要弹新窗口。
     return ({ action: 'deny' });
   });
-  win.webContents.on('will-navigate', (e, url) => {
-    const allowed =
-      url.startsWith('file://') || // 生产 loadFile / 本地文件系统
-      /^https?:\/\/localhost(:\d+)?\//.test(url); // 开发 Vite dev server（HMR）
-    if (!allowed) {
-      e.preventDefault();
-      // 不再调 shell.openExternal（避免与各组件自身的 URL 打开逻辑重复，
-      // 导致系统弹出安全确认对话框）。URL 打开由具体 handler 负责。
+  // will-frame-navigate：Electron 32 替代 will-navigate 的新事件。
+  // 拦截外部 URL 导航，防止默认行为弹出安全确认对话框。
+  // URL 打开由各 handler（setWindowOpenHandler / app:openExternal）负责。
+  win.webContents.on('will-frame-navigate', (details) => {
+    const url = details.url;
+    if (!url.startsWith('file://') && !/^https?:\/\/localhost(:\d+)?\//.test(url)) {
+      details.preventDefault();
     }
   });
 
@@ -397,7 +403,8 @@ function createWindow() {
     if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
       return false;
     }
-    shell.openExternal(url).catch(() => {});
+    // 用 child_process.exec 代替 shell.openExternal，避免 Electron 32 的安全确认对话框
+    openUrlInExternal(url);
     return true;
   });
 
