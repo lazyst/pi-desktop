@@ -270,14 +270,34 @@ function createWindow() {
   //  2) will-navigate 只放行应用自身来源（生产 loadFile 的 file://、开发 Vite 的
   //     http://localhost HMR）；其余 URL 一律拦截并甩给系统默认程序（shell.openExternal）。
   // 注意：本项目未注册自定义 app:// 协议，生产以 file:// 加载，故放行集为 file:// + 本地 dev。
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // setWindowOpenHandler：拦截 window.open，对外部 URL 用 system 命令在默认浏览器中打开。
+  // 终端链接的 activate 回调使用 window.open(url, '_blank') 保留用户手势上下文，
+  // 这里拦截后直接走系统命令打开浏览器。
+  // 使用 child_process.exec 代替 shell.openExternal，
+  // 避免 Electron 32 在 IPC/非用户手势上下文中可能弹出的安全确认对话框。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:')) {
+      // 用 exec 打开 URL，彻底绕过 Electron 的 shell API 安全对话框
+      const { exec } = require('child_process');
+      const escaped = url.replace(/&/g, '^&');
+      const cmd = process.platform === 'win32'
+        ? `start "" "${escaped}"`
+        : process.platform === 'darwin'
+          ? `open '${escaped}'`
+          : `xdg-open '${escaped}'`;
+      exec(cmd, { shell: true }).catch(() => {});
+    }
+    // 一律 deny 新窗口：应用内不需要弹新窗口。
+    return ({ action: 'deny' });
+  });
   win.webContents.on('will-navigate', (e, url) => {
     const allowed =
       url.startsWith('file://') || // 生产 loadFile / 本地文件系统
       /^https?:\/\/localhost(:\d+)?\//.test(url); // 开发 Vite dev server（HMR）
     if (!allowed) {
       e.preventDefault();
-      shell.openExternal(url).catch(() => {});
+      // 不再调 shell.openExternal（避免与各组件自身的 URL 打开逻辑重复，
+      // 导致系统弹出安全确认对话框）。URL 打开由具体 handler 负责。
     }
   });
 

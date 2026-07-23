@@ -104,23 +104,92 @@ export interface LinkActivationHandlers {
   openExternal: (url: string) => void;
 }
 
-/** 把一个 buffer 行的命中转换成 xterm 的 ILink（对齐 VS Code TerminalLinkDetectorAdapter）。 */
+/** 链接对象接口（buildLink 返回值）。 */
+export interface BuiltLink {
+  range: { start: { x: number; y: number }; end: { x: number; y: number } };
+  text: string;
+  activate: (event?: MouseEvent, text?: string) => void;
+  hover: (event: MouseEvent) => void;
+  leave: () => void;
+  decorations: { pointerCursor: boolean; underline: boolean };
+}
+
+/**
+ * 判断事件是否按下了链接激活修饰键（对齐 VS Code _isLinkActivationModifierDown）。
+ * Windows/Linux：Ctrl；macOS：Cmd（metaKey）。
+ */
+function isLinkActivationModifierDown(event: MouseEvent | KeyboardEvent): boolean {
+  return event.ctrlKey || event.metaKey;
+}
+
+/**
+ * 把一个 buffer 行的命中转换成 xterm 的 ILink（对齐 VS Code TerminalLinkDetectorAdapter）。
+ *
+ * 注意：xterm 6.0.0 的 _handleMouseUp 不会检查 Ctrl/Cmd 修饰键，
+ * 所有点击（含普通点击）都会触发 activate。因此我们在 activate 中自行检查修饰键，
+ * 只有按住 Ctrl/Cmd 点击时才实际打开链接——对齐 VS Code 的
+ * TerminalLinkManager._setupLinkDetector 中的 onDidActivateLink 修饰键检查。
+ *
+ * hover/leave 中对齐 VS Code TerminalLink.hover 的修饰键检测：
+ * 动态监听 keydown/keyup，仅在按下修饰键时显示下划线和指针光标。
+ */
 export function buildLink(
   match: TerminalLinkMatch,
   handlers: LinkActivationHandlers,
-): { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string; activate: () => void } {
-  return {
+): BuiltLink {
+  // 用于 hover/leave 中管理修饰键监听器
+  let hoverCleanup: (() => void) | null = null;
+
+  const link: BuiltLink = {
     range: {
       start: { x: match.startCol + 1, y: 0 }, // y 由 provider 填充绝对行号
       end: { x: match.endCol + 1, y: 0 },
     },
     text: match.text,
-    activate: () => {
+    // 初始 decorations：false，hover 时动态控制（对齐 VS Code TerminalLink.decorations 初始值）
+    decorations: { pointerCursor: false, underline: false },
+
+    activate: (event?: MouseEvent) => {
+      // 对齐 VS Code：只有按住修饰键（Ctrl/Cmd）点击才激活链接
+      if (!event || !isLinkActivationModifierDown(event)) {
+        return;
+      }
       if (match.type === 'url' && match.text) {
         handlers.openExternal(match.text);
       } else if (match.type === 'file' && match.path) {
         handlers.openFile(match.path, match.line, match.col);
       }
     },
+
+    hover: (_event: MouseEvent) => {
+      // 对齐 VS Code TerminalLink.hover：监听 keydown/keyup 动态控制 decorations
+      const doc = document;
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (!e.repeat && isLinkActivationModifierDown(e)) {
+          // 修饰键按下 → 显示装饰
+          link.decorations = { pointerCursor: true, underline: true };
+        }
+      };
+      const onKeyUp = (e: KeyboardEvent) => {
+        if (!e.repeat && !isLinkActivationModifierDown(e)) {
+          // 修饰键释放 → 隐藏装饰
+          link.decorations = { pointerCursor: false, underline: false };
+        }
+      };
+      doc.addEventListener('keydown', onKeyDown);
+      doc.addEventListener('keyup', onKeyUp);
+      hoverCleanup = () => {
+        doc.removeEventListener('keydown', onKeyDown);
+        doc.removeEventListener('keyup', onKeyUp);
+        hoverCleanup = null;
+      };
+    },
+
+    leave: () => {
+      // 对齐 VS Code TerminalLink.leave：清除监听器
+      hoverCleanup?.();
+    },
   };
+
+  return link;
 }
