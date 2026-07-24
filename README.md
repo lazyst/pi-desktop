@@ -90,10 +90,10 @@ shell injection are supported for general-purpose terminal work.
 - **Source-level backpressure** — a `BackpressureController` pauses the PTY
   (via `pty.pause()`) at a high watermark and resumes it (`pty.resume()`) at a
   low watermark, matching VS Code's `TerminalProcess` flow control.
-- **Dual-segment buffering** — both the main process (`TerminalDataBufferer`,
-  5ms window) and the renderer (`XtermTerminal` write debounce, 5ms window)
-  batch PTY output before forwarding or writing, eliminating intermediate frame
-  flicker from high-frequency streaming.
+- **Main-process data buffering** — the main process aggregates PTY output in a
+  5ms window (equivalent to VS Code's pty host `TerminalDataBufferer`, reducing
+  IPC message count). The renderer writes directly without a secondary aggregation
+  layer (matching VS Code's renderer design).
 - **IPC ack batching** — `AckDataBufferer` accumulates consumed byte counts and
   flushes them via IPC at configurable intervals, avoiding per-write IPC overhead.
 
@@ -426,7 +426,6 @@ pi-desktop/
 │   │       │   ├── WindowResizeZones.tsx  # 8-direction resize
 │   │       │   ├── paneManager.ts         # Pane lifecycle & channel abstraction
 │   │       │   ├── terminalChannel.ts     # Data flow channel abstraction
-│   │       │   ├── terminalDataBufferer.ts # Render-side 5ms write buffer
 │   │       │   ├── terminalLinks.ts      # VS Code-style link detection
 │   │       │   ├── terminalCapabilities.ts # Terminal capabilities model
 │   │       │   ├── decorationAddon.ts    # VS Code-style decoration addon

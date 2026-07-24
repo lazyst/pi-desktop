@@ -61,7 +61,7 @@ describe('BackpressureController (aligned with VS Code pty pause/resume)', () =>
     expect(bp.isPaused()).toBe(false);
   });
 
-  it('forces resume on dispose even if paused (mirrors VS Code clearUnacknowledgedChars)', () => {
+  it('forces resume on dispose even if paused (aligns VS Code clearUnacknowledgedChars + force resume)', () => {
     bp.onData(FlowControlConstants.HighWatermarkChars + 1);
     expect(bp.isPaused()).toBe(true);
     bp.dispose();
@@ -75,7 +75,49 @@ describe('BackpressureController (aligned with VS Code pty pause/resume)', () =>
     expect(resumeCalls).toBe(0);
   });
 
-  // —— writeSync 模式（对齐 VS Code _blockedOnWriteSync）——
+  // —— clearUnacknowledgedChars（对齐 VS Code clearUnacknowledgedChars 的强制 resume 语义）——
+
+  it('clearUnacknowledgedChars forces resume when paused (对齐 VS Code terminalProcess.ts:590-595)', () => {
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    expect(bp.isPaused()).toBe(true);
+    expect(pauseCalls).toBe(1);
+    bp.clearUnacknowledgedChars();
+    expect(bp.isPaused()).toBe(false);
+    expect(resumeCalls).toBe(1);
+    expect(bp.isWriteSyncMode()).toBe(false);
+  });
+
+  it('clearUnacknowledgedChars does not resume when not paused', () => {
+    bp.onData(100);
+    expect(bp.isPaused()).toBe(false);
+    bp.clearUnacknowledgedChars();
+    expect(resumeCalls).toBe(0);
+  });
+
+  it('clearUnacknowledgedChars preserves writeSync mode', () => {
+    bp.enterWriteSync();
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    expect(bp.isPaused()).toBe(false); // writeSync 不计数
+    bp.clearUnacknowledgedChars();
+    expect(bp.isWriteSyncMode()).toBe(true); // 保留 writeSync 状态
+    bp.exitWriteSync();
+    expect(bp.isWriteSyncMode()).toBe(false);
+  });
+
+  it('clearUnacknowledgedChars clears inflight regardless of pause state', () => {
+    bp.onData(FlowControlConstants.HighWatermarkChars + 1);
+    expect(bp.isPaused()).toBe(true);
+    bp.clearUnacknowledgedChars();
+    // 再发数据应从零开始计数
+    bp.onData(100);
+    expect(bp.isPaused()).toBe(false);
+    // 累积到高水位应再次 pause
+    bp.onData(FlowControlConstants.HighWatermarkChars);
+    expect(bp.isPaused()).toBe(true);
+    expect(pauseCalls).toBe(2);
+  });
+
+  // —— writeSync 模式（@internal 自创功能，非 VS Code 对齐项）——
 
   it('enterWriteSync: onData does not count toward inflight', () => {
     bp.enterWriteSync();
@@ -114,6 +156,6 @@ describe('BackpressureController (aligned with VS Code pty pause/resume)', () =>
     bp.dispose();
     expect(bp.isPaused()).toBe(false);
     expect(resumeCalls).toBe(0); // 从未 pause
-    expect(bp.isWriteSyncMode()).toBe(false); // dispose 不改变 writeSync 模式
+    expect(bp.isWriteSyncMode()).toBe(false); // dispose 退出 writeSync 模式
   });
 });

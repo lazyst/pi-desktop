@@ -45,9 +45,8 @@ export interface SessionPoolOptions {
 
 interface Entry { pty: IPtyLike; info: SessionInfo; linked: boolean; diskKey?: string; existingDiskKeys?: Set<string>; bp: BackpressureController; }
 
-// 主进程端数据缓冲（对齐 VS Code ptyService 的 TerminalDataBufferer）：每会话 5ms 时间窗
-// 聚合 pty 小块输出，窗口结束一次性 emit，避免高频小块直达渲染端造成的中间帧闪烁。
-// 与渲染端 XtermTerminal 的 5ms 前端聚合构成「双段缓冲」，并统一了 IPC 投递节奏。
+// 主进程端数据缓冲（5ms 时间窗聚合，等效 VS Code pty host 端 TerminalDataBufferer，
+// 减少 IPC 消息量）。
 const DATA_BUFFER_MS = 5;
 interface DataBuffer { chunks: string[]; timer: NodeJS.Timeout | null; }
 
@@ -60,7 +59,8 @@ export class SessionPool {
   private dataBuffers = new Map<string, DataBuffer>();
   constructor(private ptyFactory: PtyFactory, private opts: SessionPoolOptions) {}
 
-  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。
+  /** 聚合并下发单块 pty 数据（5ms 时间窗，等效 VS Code pty host 端 TerminalDataBufferer，
+   * 用于减少 IPC 消息量）。
    * 背压计数已在 pty.on('data') 实时处理，此处仅做数据聚合后投递。
    * （对齐 VS Code 的「先计算背压再 fire 数据」时序）。 */
   private emitData(key: string, data: string): void {

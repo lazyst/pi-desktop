@@ -5,9 +5,8 @@ import type { TerminalProfile, IntegratedTerminalInfo } from '../renderer/src/ty
 import { getShellIntegrationInjection } from './shell-integration/inject';
 import { BackpressureController } from './backpressure';
 
-// 主进程端数据缓冲（对齐 VS Code ptyService 的 TerminalDataBufferer / SessionPool）：
-// 每实例 5ms 时间窗聚合 pty 小块输出，窗口结束一次性回调 onData，避免高频小块直达
-// 渲染端造成的中间帧闪烁。集成终端与 sessionPool 解耦（不写盘、不进会话索引）。
+// 主进程端数据缓冲（5ms 时间窗聚合，等效 VS Code pty host 端 TerminalDataBufferer，
+// 减少 IPC 消息量）。集成终端与 sessionPool 解耦（不写盘、不进会话索引）。
 const DATA_BUFFER_MS = 5;
 interface DataBuffer { chunks: string[]; timer: NodeJS.Timeout | null; }
 
@@ -181,7 +180,8 @@ export class IntegratedTerminalPool {
     this.entries.get(id)?.bp.acknowledge(bytes);
   }
 
-  /** 聚合并下发单块 pty 数据（5ms 时间窗，对齐 TerminalDataBufferer）。
+  /** 聚合并下发单块 pty 数据（5ms 时间窗，等效 VS Code pty host 端 TerminalDataBufferer，
+   * 用于减少 IPC 消息量）。
    * 背压计数已在 pty.on('data') 实时处理，此处仅做数据聚合后投递，
    * 不再重复累加 inflight（对齐 VS Code TerminalProcess.onProcessData
    * 的「先计算背压再 fire 数据」时序）。 */

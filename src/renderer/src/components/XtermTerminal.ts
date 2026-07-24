@@ -10,9 +10,9 @@
 //   - 渲染器：open 之后装载 WebGL（对齐 VS Code XtermTerminal.attachToElement 的「TODO: Move
 //     before open」之前的原生顺序），但会话内恒定锁定、绝不中途切换（rendererLocked）。上下文
 //     丢失后整会话降级 DOM，不重建 WebGL（对齐 VS Code _webglAddon.onContextLoss 的精神）。
-//   - 数据缓冲：用 VS Code 同款 TerminalDataBufferer（独立文件 terminalDataBufferer.ts），5ms
-//     固定时间窗聚合到达的 onData 块，窗口结束一次性 term.write（对齐 VS Code TerminalInstance
-//     收 onProcessData → TerminalDataBufferer → _writeProcessData）。
+//   - 数据缓冲：直接订阅 channel.onData，由主进程 emitData 5ms 聚合（等效 VS Code pty host
+//     端 TerminalDataBufferer，减少 IPC 消息量），渲染端不再做二次聚合。
+//     对齐 VS Code 渲染端：直接 _onProcessData → _writeProcessData，无额外聚合层。
 //   - 命令级分段：对齐 VS Code TerminalInstance._onProcessData，按 OSC 633（C/D）序列把数据切成
 //     语义段，各段按序 term.write，使命令边界成为独立写入单元、且可被装饰层差分解析。
 //   - 写后背压：term.write 回调里调 pi.acknowledgeDataEvent(key, len)（对齐 VS Code
@@ -42,7 +42,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 import { getTheme, TERM_THEMES, getTermTheme, type Theme } from '../theme';
 import { getFontSize } from '../fontSize';
 import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
-import { TerminalDataBufferer } from './terminalDataBufferer';
+
 import { AckDataBufferer } from './ackDataBufferer';
 import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
 import { DecorationAddon } from './decorationAddon';
@@ -71,9 +71,9 @@ import '@xterm/xterm/css/xterm.css';
 const FONT_MONO =
   "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace";
 
-// 对齐 VS Code TerminalDataBufferer 的固定时间窗（5ms）：窗口内累积到达的数据块，
-// 窗口结束一次性 term.write，消除流式高频重绘的中间帧闪烁。
-const WRITE_DEBOUNCE_MS = 5;
+// 主进程 emitData 的 5ms 聚合（等效 VS Code pty host 端 TerminalDataBufferer）已减少 IPC 消息量；
+// 渲染端不再做二次聚合（对齐 VS Code 渲染端无 TerminalDataBufferer 的设计）。
+// xterm.js 内部有 write 缓冲，短时间内大量 write() 调用会自动合并渲染。
 
 /** 从主进程注入的初始配置读取 scrollback 值，进程内恒定（不热更新）。
  * 新建终端时构造 xterm 选项用此值，已存在的终端不受滚动设置变更影响。
@@ -139,8 +139,9 @@ export class XtermTerminal implements LiveTerminal {
   // WebGL 上下文是否丢失（丢失后整会话降级 DOM，待下次可见/resize 触发重建尝试）。
   private webglContextLost = false;
 
-  // —— 数据写缓冲（对齐 VS Code TerminalDataBufferer 的 5ms 时间窗聚合）——
-  private dataBufferer: TerminalDataBufferer | null = null;
+  // —— 数据写通道订阅（直接订阅 channel.onData，不再经过 TerminalDataBufferer）——
+  // 主进程 emitData 的 5ms 聚合（等效 VS Code pty host 端 TerminalDataBufferer）已减少 IPC 消息量；
+  // 渲染端无二次聚合（对齐 VS Code 渲染端设计）。
   private stopBuffering: (() => void) | null = null;
 
   // —— resize 分轴防抖（对齐 VS Code TerminalResizeDebouncer）——
@@ -183,13 +184,7 @@ export class XtermTerminal implements LiveTerminal {
   // 背压累积缓冲（对齐 VS Code AckDataBufferer 独立类）：累积 xterm.write 回调上报的已消费字符数，
   // 达到 CharCountAckSize 阈值时一次性发送 ack IPC，减少高频小段通信量。
   private ackBufferer: AckDataBufferer | null = null;
-  // 空闲 flush 定时器：终端空闲一段时间后刷出剩余 ack 字符，避免尾部 ack 积压
-  // （对齐 VS Code AckDataBufferer 的闲置清理策略）。
-  private _idleFlushTimer: ReturnType<typeof setTimeout> | null = null;
   private _flushTimer: ReturnType<typeof setTimeout> | null = null;
-  // 空闲阈值（ms）：lastWrite 超过此值视为空闲，触发 flushAck 刷出剩余 ack 字符。
-  // 100ms 兼顾「快速连续输出时不频繁触发」与「空闲时及时刷出」。
-  private static readonly IDLE_FLUSH_MS = 100;
 
   // —— 写完成 Promise（对齐 VS Code IProcessDataEvent.writePromise）——
   // 由 _writeProcessData 在 trackCommit=true 时设置，供 flush() 等待实际输出被 xterm 解析完成。
@@ -282,13 +277,9 @@ export class XtermTerminal implements LiveTerminal {
     this.ackBufferer = null;
     if (this._flushTimer != null) clearTimeout(this._flushTimer);
     this._flushTimer = null;
-    if (this._idleFlushTimer != null) clearTimeout(this._idleFlushTimer);
-    this._idleFlushTimer = null;
     this._pendingWritePromise = undefined;
     this.stopBuffering?.();
     this.stopBuffering = null;
-    this.dataBufferer?.dispose();
-    this.dataBufferer = null;
     this.resizeDebouncer?.dispose();
     this.resizeDebouncer = null;
     this.webglContextLost = false;
@@ -386,11 +377,9 @@ export class XtermTerminal implements LiveTerminal {
     });
   }
 
-  /** 刷出剩余未确认的 ack 字符（对齐 VS Code AckDataBufferer 的闲置清理策略）。
-   * 当终端输出停止后，ackBufferer 中剩余的不足 CharCountAckSize 的字符需要被立即
-   * 发送，否则主进程 BackpressureController.inflight 无法归零，可能导致 PTY 永不被恢复
-   * （如果 inflight 恰好卡在 LowWatermark 以上）。
-   * 在 unmount/flush/空闲定时器触发时调用。
+  /** 刷出剩余未确认的 ack 字符。
+   * 当需要立即发送 ack 时调用（如 unmount/flush 时），确保 ackBufferer 中不足
+   * CharCountAckSize 的剩余字符被立即发送，避免尾部 ack 积压。
    * 代理到 ackBufferer.flush()，确保状态单一来源。 */
   private flushAck(): void {
     this.ackBufferer?.flush();
@@ -941,8 +930,6 @@ export class XtermTerminal implements LiveTerminal {
 
   // —— 私有实现 ——
 
-  private _lastWriteAt = 0;
-
   /** 构造 xterm、装载 addons、open、锁定渲染器、绑定 IPC（mount 内部调用一次）。 */
   private _initXterm(host: HTMLElement): void {
     const term = new Terminal({
@@ -1249,15 +1236,10 @@ export class XtermTerminal implements LiveTerminal {
       this.channel.send(d);
     });
 
-    // 输出：主进程 pty 数据 → TerminalDataBufferer（5ms 时间窗聚合）→ handleProcessData。
-    this.dataBufferer = new TerminalDataBufferer((id, data) => this.handleProcessData(id, data));
-    this.stopBuffering = this.dataBufferer.startBuffering(
-      this.sessionKey,
-      // channel.onData 已按 key 过滤并只回传 (data)；这里补回 sessionKey 作为缓冲 id，
-      // 使 downstream dataBufferer / handleProcessData 的 (id, data) 契约与原实现一致。
-      (handler) => this.channel.onData((data) => handler(this.sessionKey, data)),
-      WRITE_DEBOUNCE_MS,
-    );
+    // 输出：主进程 pty 数据（经主进程 emitData 5ms 聚合，等效 VS Code pty host 端
+    // TerminalDataBufferer 用于减少 IPC 消息量）→ IPC → 直接订阅 channel.onData → handleProcessData。
+    // 渲染端不再做二次聚合（对齐 VS Code 渲染端设计：无 TerminalDataBufferer）。
+    this.stopBuffering = this.channel.onData((data) => this.handleProcessData(this.sessionKey, data));
 
     // 背压累积缓冲（对齐 VS Code AckDataBufferer 独立类）：
     // 在 _writeProcessData 的 xterm.write 回调中调用 ackBufferer.ack(data.length)，
@@ -1342,9 +1324,10 @@ export class XtermTerminal implements LiveTerminal {
    * 写后回传 acknowledgeDataEvent（对齐 VS Code _writeProcessData 的背压流控）。
    *
    * 优化：对齐 VS Code TerminalInstance._onProcessData，仅最后一段数据跟踪 commit。
-   * 前导段（OSC 633 标记）使用 _writeProcessDataUnsafe（跳过 ack 跟踪），
-   * 最后一段使用 _writeProcessData（带 ack 跟踪 + trackCommit 写完成 Promise）。
-   * 这消除了大量小段 OSC 标记的冗余 ack 计数，减少 IPC 通信量，同时保持最后一段
+   * 前导段（OSC 633 标记）使用 _writeProcessDataUnsafe（无 trackCommit，不创建 writePromise），
+   * 最后一段使用 _writeProcessData（带 trackCommit 写完成 Promise）。
+   * 所有段（含前导 OSC 标记）都调 ackBufferer.ack 确保背压水位准确，
+   * 仅 trackCommit 不同（是否跟踪写完成确认）。
    * 实际输出的背压准确。
    *
    * 与 VS Code 对齐的 IProcessDataEvent 契约：
@@ -1354,7 +1337,6 @@ export class XtermTerminal implements LiveTerminal {
    * 而不必等待 OSC 标记这种零输出的写完成确认。 */
   private handleProcessData(id: string, data: string): void {
     if (id !== this.sessionKey || !this.term) return;
-    this._lastWriteAt = Date.now();
     const segments = this._segmentByShellIntegration(data);
     if (segments.length <= 1) {
       // 无 OSC 序列：单段，正常跟踪 ack + trackCommit
@@ -1367,21 +1349,8 @@ export class XtermTerminal implements LiveTerminal {
       }
       this._writeProcessData(segments[segments.length - 1], true);
     }
-    // 每次数据到达后重置空闲 flush 定时器：终端输出停止后 IDLE_FLUSH_MS 毫秒自动刷出
-    // 剩余 ack 字符（对齐 VS Code 的闲置清理策略，避免尾部 ack 积压）。
-    this._scheduleIdleFlush();
-  }
-
-  /** 调度空闲 flush 定时器：终端输出停止后 IDLE_FLUSH_MS 自动刷出剩余 ack 字符。
-   * 每次 handleProcessData 调用时重置，确保连续输出时不触发。 */
-  private _scheduleIdleFlush(): void {
-    if (this._idleFlushTimer != null) {
-      clearTimeout(this._idleFlushTimer);
-    }
-    this._idleFlushTimer = setTimeout(() => {
-      this._idleFlushTimer = null;
-      this.flushAck();
-    }, XtermTerminal.IDLE_FLUSH_MS);
+    // 注意：不再需要空闲 flush 定时器。AckDataBufferer 的累积机制已足够；
+    // VS Code 也没有空闲 flush。ack 在 unmount/flush 时刷出。
   }
 
   /** 按 shell integration 的 OSC 序列切分输入为语义段（对齐 VS Code TerminalInstance._onProcessData）。
@@ -1436,7 +1405,9 @@ export class XtermTerminal implements LiveTerminal {
    * 与 VSCode 对齐：VSCode 在 _writeProcessData 中为所有写入（包括前导段）都调用
    * acknowledgeDataEvent(data.length)，本方法同样调用 ackBufferer.ack(data.length)，
    * 使 inflight 准确反映所有已发出但未确认的字符（含 OSC 标记），确保背压水位正确。
-   * 此前版本跳过 ack 导致 OSC 标记字符不计入背压，inflight 偏低，PTY 暂停不够及时。
+   *
+   * 与 _writeProcessData 的区别：仅缺少 trackCommit（不创建 writePromise），
+   * ack 行为完全一致——所有段都调 ackBufferer.ack，用 inflight 准确反映。
    *
    * flush 对齐：递增 _latestWriteSeq 并在回调中推进 _latestParsedSeq，
    * 使 flush 的写完成确认涵盖所有写入段。 */

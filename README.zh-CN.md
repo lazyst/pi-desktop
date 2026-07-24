@@ -340,7 +340,6 @@ pi-desktop/
 │   │       │   ├── WindowResizeZones.tsx  # 8 向缩放区域
 │   │       │   ├── paneManager.ts         # 面板生命周期 & 通道抽象
 │   │       │   ├── terminalChannel.ts     # 数据流通道抽象
-│   │       │   ├── terminalDataBufferer.ts # 渲染端 5ms 写缓冲
 │   │       │   ├── terminalLinks.ts      # VS Code 风格链接检测
 │   │       │   ├── terminalCapabilities.ts # 终端能力模型
 │   │       │   ├── decorationAddon.ts    # VS Code 风格装饰

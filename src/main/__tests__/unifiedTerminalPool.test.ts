@@ -509,7 +509,7 @@ describe('UnifiedTerminalPool', () => {
   });
 
   // ==========================================================================
-  //  5ms 数据聚合窗口（对齐 SessionPool TerminalDataBufferer）
+  //  5ms 数据聚合窗口（等效 VS Code pty host 端 TerminalDataBufferer）
   // ==========================================================================
   describe('5ms data aggregation window', () => {
     it('merges rapid chunks into a single onData call', async () => {

@@ -11,8 +11,7 @@
 //    （壳把 host 用 opacity:0 + pointer-events:none 隐藏），实例本身不销毁，避免「销毁→重建→WebGL 重探测」的切 tab 首帧闪。
 //  - 切回 active 时 setActive(true)：flush + doResize 重测尺寸（非 active 期间 CSS opacity:0
 //    保留了完整布局，xterm 尺寸不变，doResize 通常无变化；仍调 flush 以处理隐藏期排队的 resize）。
-//  - 5ms 数据缓冲 / 分轴 resize 防抖 / 主题字号跟随 已在 XtermTerminal + terminal-registry +
-//    terminalDataBufferer + terminalResizeDebouncer 内实现，本模块只做实例登记与驱动，不重复堆逻辑。
+//  - 主进程 5ms 数据聚合(等效 VS Code pty host 端 TerminalDataBufferer) / 分轴 resize 防抖 / 主题字号跟随
 //
 // 两种通道（SessionChannel / IntegratedChannel）经统一 acquire/release/setActive 入口驱动，
 // 差异仅在「构造时选哪条 channel」与「集成终端卸载时是否通知主进程销毁 pty」。

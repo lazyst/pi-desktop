@@ -134,9 +134,9 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  // 对齐 VS Code TerminalDataBufferer：5ms 时间窗聚合到达的数据块，窗口结束一次性 term.write。
-  // 不再按同步帧切分——xterm 原生处理 ?2026 序列，整段缓冲原样写出。
-  it('aggregates rapid onData chunks in a 5ms window and writes once (对齐 TerminalDataBufferer)', async () => {
+  // 渲染端不再做 5ms 聚合（对齐 VS Code 渲染端无 TerminalDataBufferer 的设计）。
+  // 数据直接写入 xterm，每个 onData 回调直接触发一次 term.write。
+  it('writes each onData chunk directly without aggregation', async () => {
     const api = makeApi();
     const writes: string[] = [];
     const write = vi
@@ -148,18 +148,20 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
-    // 同一 tick 内到达的多块数据应被聚合为一次 write
+    // 每个 onData 回调直接触发 term.write，不再聚合
     onData('k', 'chunk-1');
     onData('k', 'chunk-2');
     onData('k', 'chunk-3');
-    await vi.waitFor(() => expect(writes.length).toBe(1));
-    expect(writes[0]).toBe('chunk-1chunk-2chunk-3');
+    await vi.waitFor(() => expect(writes.length).toBe(3));
+    expect(writes[0]).toBe('chunk-1');
+    expect(writes[1]).toBe('chunk-2');
+    expect(writes[2]).toBe('chunk-3');
     write.mockRestore();
     t.unmount();
   });
 
-  // 超过 5ms 时间窗的两次到达应分别 write（对齐时间窗边界语义）。
-  it('flushes separate windows independently across the 5ms boundary', async () => {
+  // 每次 onData 回调直接触发 term.write，无时间窗聚合。
+  it('writes each chunk independently without buffering', async () => {
     const api = makeApi();
     const writes: string[] = [];
     vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
@@ -237,7 +239,7 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  it('clears the pending write timer on unmount (no late write after dispose)', async () => {
+  it('unmount() cleans up without leaving pending writes (no bufferer — writes are immediate)', async () => {
     const api = makeApi();
     const write = vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, _d: string | Uint8Array, cb?: () => void) {
       cb?.();
@@ -245,10 +247,14 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    // 渲染端不再有 TerminalDataBufferer，数据直接写入 xterm，write 立即发生
     onData('k', 'late');
-    t.unmount(); // 立即卸载，未到 5ms 时间窗
+    expect(write).toHaveBeenCalled(); // 数据立即写入，不等 5ms 窗口
+    t.unmount();
+    // unmount 后不应再触发新 write
+    const beforeCount = write.mock.calls.length;
     await new Promise((r) => setTimeout(r, 20));
-    expect(write).not.toHaveBeenCalled(); // 卸载后应清空待写缓冲、不触发迟到 write
+    expect(write.mock.calls.length).toBe(beforeCount);
     write.mockRestore();
   });
 
@@ -396,16 +402,16 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(1));
     expect(api.acknowledgeDataEvent).toHaveBeenCalledWith('k', 5000);
 
-    // 剩余 1 字符累积在 _unsentAckChars（未达阈值），再写 4999 → 累积 5000 == 5000，仍不触发（需 > 5000）
+    // 剩余 1 字符累积在 _unsentAckChars（未达阈值），再写 'y' + 4999 → 累积 5001 > 5000，触发第二次 ack
     onData('k', 'y');
     onData('k', 'z'.repeat(4999));
-    // 此时累积 = 1 + 4999 = 5000，5000 > 5000？不满足 > 条件，无新 ack
-    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(1));
-
-    // 再写 1 字符 → 累积 5001 > 5000，触发第二次 5000 回传
-    onData('k', '!');
+    // 累积 = 1 (remaining) + 1 (y) + 4999 = 5001 > 5000，触发第二次 5000 回传
     await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(2));
     expect(api.acknowledgeDataEvent).toHaveBeenLastCalledWith('k', 5000);
+
+    // 再写 1 字符 → 累积 1 + 1 = 2 < 5000，不触发 ack
+    onData('k', '!');
+    await vi.waitFor(() => expect(api.acknowledgeDataEvent).toHaveBeenCalledTimes(2));
 
     t.unmount();
   });

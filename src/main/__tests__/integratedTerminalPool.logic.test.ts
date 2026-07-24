@@ -188,7 +188,7 @@ describe('IntegratedTerminalPool (logic, mocked node-pty)', () => {
     expect(ids).toHaveLength(1);
   });
 
-  describe('5ms aggregation window (aligned with SessionPool TerminalDataBufferer)', () => {
+  describe('5ms aggregation window (等效 VS Code pty host 端 TerminalDataBufferer)', () => {
     it('merges multiple rapid data chunks into a single onData call', async () => {
       vi.useFakeTimers();
       try {

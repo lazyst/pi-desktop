@@ -239,7 +239,7 @@ describe('SessionPool.terminate via disk key (sidebar promote path)', () => {
     expect(pool.get(live.key)).toBeUndefined();
   });
 });
-describe('SessionPool data buffering (对齐 VS Code TerminalDataBufferer)', () => {
+describe('SessionPool data buffering (5ms 聚合，等效 VS Code pty host 端 TerminalDataBufferer)', () => {
   it('aggregates rapid pty chunks within the 5ms window into a single onData emit', async () => {
     vi.useFakeTimers();
     try {
