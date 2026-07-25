@@ -1,8 +1,9 @@
 /**
  * GitHub Release 版本检查与下载模块
  *
- * 从 GitHub API 获取最新 release 版本，与当前应用版本比较，
- * 缓存结果避免重复请求。支持下载匹配平台（Windows）的安装包。
+ * 通过 GitHub Releases 页面的 HTTP 重定向获取最新版本号，
+ * 不依赖 GitHub API，避免 60 次/小时的未认证速率限制。
+ * 安装包下载 URL 直接按模式构造，无需 API 返回的资产列表。
  * 所有网络错误/解析失败均优雅降级。
  */
 
@@ -19,14 +20,31 @@ import { spawn } from 'node:child_process';
 /** GitHub 仓库 owner/name */
 const REPO = 'lazyst/pi-desktop';
 
-/** GitHub API 最新 release 端点 */
-const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+/**
+ * GitHub Releases 最新版重定向 URL（不依赖 API）。
+ * 请求此地址会返回 302 → Location: /repos/{REPO}/releases/tag/vX.Y.Z
+ * 从 Location 中提取 tag 即可获知最新版本号。
+ * GitHub 的页面/CDN 服务没有 API 的 60 次/小时速率限制。
+ */
+const RELEASE_URL = `https://github.com/${REPO}/releases/latest`;
 
 /** 请求超时（毫秒） */
 const FETCH_TIMEOUT_MS = 10_000;
 
 /** 缓存有效期（毫秒），5 分钟内不重复请求 */
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * 从版本号 tag 构造安装包下载 URL（不依赖 GitHub API）。
+ * 例如：v0.4.2 → https://github.com/lazyst/pi-desktop/releases/download/v0.4.2/pi-desktop%20Setup%200.4.2.exe
+ */
+function buildDownloadUrl(tag: string): string {
+  const base = `https://github.com/${REPO}/releases/download/${tag}`;
+  // 去掉 v 前缀用于文件名
+  const ver = tag.replace(/^v/i, '');
+  const fileName = `pi-desktop%20Setup%20${ver}.exe`;
+  return `${base}/${fileName}`;
+}
 
 // ============================================================================
 // 类型定义
@@ -144,7 +162,12 @@ export function getCurrentVersion(): string {
 }
 
 /**
- * 从 GitHub API 检查最新 release 版本。
+ * 通过 GitHub Releases 重定向检查最新版本（不依赖 GitHub API）。
+ *
+ * 原理：请求 https://github.com/{REPO}/releases/latest 会返回 302 重定向，
+ * Location 头形如 /lazyst/pi-desktop/releases/tag/v0.4.2，从中提取 tag。
+ * GitHub 页面/CDN 服务没有 API 的 60 次/小时速率限制，且不需要任何认证。
+ *
  * 缓存有效期内返回缓存结果，不发起网络请求。
  */
 export async function checkForUpdate(): Promise<UpdateInfo> {
@@ -171,59 +194,44 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch(API_URL, {
-      headers: {
-        Accept: 'application/vnd.github.v3+json',
-        // 设置 User-Agent 是 GitHub API 的要求
-        'User-Agent': 'pi-desktop',
-      },
+    // 不跟随重定向，手动读取 Location 头以提取 tag
+    const response = await fetch(RELEASE_URL, {
+      redirect: 'manual',
       signal: controller.signal,
     });
 
     clearTimeout(timer);
 
-    if (!response.ok) {
-      const error = `GitHub API 返回 ${response.status} ${response.statusText}`;
+    // 从重定向 Location 中提取版本号
+    // Location 形如: /lazyst/pi-desktop/releases/tag/v0.4.2
+    const location = response.headers.get('location') || '';
+    const tagMatch = location.match(/\/tag\/(.+)$/);
+    const latestVersion = tagMatch ? tagMatch[1] : null;
+
+    if (!latestVersion) {
+      const error = `无法从重定向中解析最新版本号 (status=${response.status})`;
       cachedResult = failed(error);
       cachedAt = now;
       return cachedResult;
     }
 
-    const data = (await response.json()) as {
-      tag_name?: string;
-      html_url?: string;
-      name?: string;
-      body?: string;
-      assets?: Array<{
-        name: string;
-        browser_download_url: string;
-        size: number;
-      }>;
-    };
+    const releaseUrl = `https://github.com/${REPO}/releases/tag/${latestVersion}`;
+    const hasUpdate = compareVersions(latestVersion, appVersion) > 0;
 
-    const latestVersion = data.tag_name ?? null;
-    const releaseUrl = data.html_url ?? null;
-    const releaseName = data.name ?? null;
-    const releaseBody = data.body ? data.body.slice(0, 500) : null;
-
-    // 解析资产列表
-    const rawAssets: ReleaseAsset[] = (data.assets ?? []).map((a) => ({
-      name: a.name,
-      url: a.browser_download_url,
-      size: a.size,
-    }));
-
-    const hasUpdate = latestVersion
-      ? compareVersions(latestVersion, appVersion) > 0
-      : false;
+    // 构造安装包资产信息（不依赖 API，直接按模式构造）
+    const downloadUrl = buildDownloadUrl(latestVersion);
+    const assetName = `pi-desktop Setup ${latestVersion.replace(/^v/i, '')}.exe`;
+    const rawAssets: ReleaseAsset[] = [
+      { name: assetName, url: downloadUrl, size: 0 },
+    ];
 
     cachedResult = {
       currentVersion: appVersion,
       latestVersion,
       hasUpdate,
       releaseUrl,
-      releaseName,
-      releaseBody,
+      releaseName: latestVersion,
+      releaseBody: null,
       checkedAt: new Date().toISOString(),
       error: null,
       assets: rawAssets,
@@ -267,7 +275,15 @@ export async function downloadUpdate(
   }
 
   // 2. 筛选当前平台的安装包
-  const matched = filterAssets(info.assets);
+  // 优先从 info.assets 中匹配，匹配不到时按模式构造下载 URL
+  let matched = filterAssets(info.assets);
+  if (matched.length === 0 && info.latestVersion) {
+    // 资产列表为空（非 API 模式）或没有匹配项，直接构造 URL
+    const url = buildDownloadUrl(info.latestVersion);
+    const name = `pi-desktop Setup ${info.latestVersion.replace(/^v/i, '')}.exe`;
+    matched = [{ name, url, size: 0 }];
+  }
+
   if (matched.length === 0) {
     throw new Error(
       `未找到适用于 ${process.platform} 平台的安装包`,
