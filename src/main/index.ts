@@ -29,11 +29,18 @@ import { detectTerminalProfiles } from './shellProfiles';
 // 默认应用工作目录的绝对路径（仅 main 进程使用，有 node:os）。config.ts 因被
 // renderer（sandbox，无 node:os）共享而不能 import node 模块，故在此用 node:os/path 计算。
 // 文件夹名 ('defaultWorkSpace') 由 config.DEFAULT_APP_WORK_DIR_NAME 提供，保持单一来源。
+// 开发版实例开关：通过 PI_DESKTOP_DEV 环境变量启用，与安装版使用不同的
+// app.name 和 config 文件，使两者可同时运行（见设计文档「双实例方案」）。
+const isDevInstance = !!process.env.PI_DESKTOP_DEV;
+
 function getDefaultAppWorkDir(): string {
   return path.join(os.homedir(), 'pi-desktop', 'defaultWorkSpace');
 }import type { AppConfig, TerminalProfile } from '../renderer/src/types';
 
-const configPath = () => path.join(os.homedir(), 'pi-desktop', 'config.json');
+const configPath = () => {
+  const suffix = isDevInstance ? '-dev' : '';
+  return path.join(os.homedir(), 'pi-desktop', `config${suffix}.json`);
+};
 let configState: AppConfig | undefined;
 let configTimer: ReturnType<typeof setTimeout> | undefined;
 let configDirty = false;
@@ -162,13 +169,14 @@ function showWindow(win: BrowserWindow): void {
 }
 
 // 创建常驻系统托盘：右键「显示 / 退出」，双击显示并聚焦（见 issue 01）。
+// 开发版使用 'pi-desktop [DEV]' 标识，与安装版区分。
 function createTray(win: BrowserWindow): void {
   try {
     const iconPath = resolveTrayIcon();
     const icon = nativeImage.createFromPath(iconPath);
     if (icon.isEmpty()) console.warn('[tray] icon missing at', iconPath);
     tray = new Tray(icon);
-    tray.setToolTip('pi-desktop');
+    tray.setToolTip(isDevInstance ? 'pi-desktop [DEV]' : 'pi-desktop');
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: '显示', click: () => showWindow(win) },
@@ -252,6 +260,8 @@ function createWindow() {
     },
   });
   if (cfg.window.maximized) win.maximize();
+  // 开发版窗口标题加 [DEV] 后缀，用于任务栏和系统识别。
+  if (isDevInstance) win.setTitle('pi-desktop [DEV]');
   // 开发调试：Ctrl+Shift+I / F12 切换 DevTools，便于查看渲染进程 console / 网络。
   // （本应用无内置 DevTools 入口，故在此补一个快捷键。）
   win.webContents.on('before-input-event', (_e, input) => {
@@ -1129,15 +1139,17 @@ function openUrlInExternal(url: string): void {
   // 关闭语义（见 issue 03 / docs/adr/0001 决策③）：
   //  - minimize-to-tray（默认）：拦截关闭、隐藏窗口、进程继续跑（托盘可恢复）。
   //  - close：真正退出应用；app.quit() 经 before-quit 置 quitting 并杀掉全部 pi 进程。
+  // 开发版默认直接退出（即使 closeBehavior 设为 minimize-to-tray 也忽略），
+  // 因为开发版主要用于测试，关闭窗口后应彻底退出，避免残留进程。
   win.on('close', (e) => {
     if (quitting) return; // 真正退出路径：放行 window 关闭
-    if (getConfig().closeBehavior === 'minimize-to-tray') {
-      e.preventDefault();
-      win.hide();
-    } else {
-      // 「直接关闭」：拦截本次关闭，改走统一退出流程（before-quit → killAll → 退出）。
+    if (isDevInstance || getConfig().closeBehavior !== 'minimize-to-tray') {
+      // 开发版或「直接关闭」模式：改走统一退出流程。
       e.preventDefault();
       app.quit();
+    } else {
+      e.preventDefault();
+      win.hide();
     }
   });
 
@@ -1168,6 +1180,11 @@ function openUrlInExternal(url: string): void {
 
   if (process.env.ELECTRON_RENDERER_URL) win.loadURL(process.env.ELECTRON_RENDERER_URL);
   else win.loadFile(path.join(__dirname, '../renderer/index.html'));
+}
+
+// 开发版使用不同的 app.name，使单实例锁与安装版隔离，两者可同时运行。
+if (isDevInstance) {
+  app.name = 'pi-desktop-dev';
 }
 
 const gotTheLock = app.requestSingleInstanceLock();
