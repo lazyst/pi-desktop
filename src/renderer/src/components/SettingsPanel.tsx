@@ -315,7 +315,15 @@ function UpdateCheck() {
   };
 
   const handleInstall = (filePath: string) => {
-    pi.installUpdate(filePath).catch(() => {});
+    pi.installUpdate(filePath).catch((err) => {
+      setDownloadProgress({
+        status: 'error',
+        percent: 0,
+        downloadedBytes: 0,
+        totalBytes: 0,
+        error: err instanceof Error ? err.message : '安装失败',
+      });
+    });
   };
 
   const openRelease = (url: string) => {

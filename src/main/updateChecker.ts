@@ -10,6 +10,7 @@ import { version as appVersion } from '../../package.json';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { spawn } from 'node:child_process';
 
 // ============================================================================
 // 常量
@@ -48,13 +49,12 @@ export interface UpdateInfo {
   checkedAt: string | null;
   /** 错误信息（检查失败时） */
   error: string | null;
-  /** 可下载的安装包资产列表 */
+  /** 可用资产列表（安装包等） */
   assets: ReleaseAsset[];
 }
 
-/** GitHub release 资产（安装包等） */
 export interface ReleaseAsset {
-  /** 文件名，如 pi-desktop Setup 0.3.0.exe */
+  /** 文件名 */
   name: string;
   /** 下载 URL */
   url: string;
@@ -62,88 +62,78 @@ export interface ReleaseAsset {
   size: number;
 }
 
-/** 下载进度信息 */
 export interface DownloadProgress {
-  /** 状态 */
   status: 'downloading' | 'completed' | 'error' | 'cancelled';
-  /** 下载进度百分比 0-100 */
   percent: number;
-  /** 已下载字节数 */
   downloadedBytes: number;
-  /** 总字节数 */
   totalBytes: number;
-  /** 下载完成后的本地文件路径（status === 'completed' 时有效） */
   filePath?: string;
-  /** 错误信息（status === 'error' 时有效） */
   error?: string;
 }
 
 // ============================================================================
-// 工具函数
+// 内部状态
+// ============================================================================
+
+/** 缓存的上次检查结果 */
+let cachedResult: UpdateInfo | null = null;
+
+/** 上次检查的时间戳 */
+let cachedAt = 0;
+
+/** 当前正在进行的下载的 AbortController */
+let currentDownloadAbort: AbortController | null = null;
+
+// ============================================================================
+// 辅助函数
 // ============================================================================
 
 /**
- * 简单的 semver 比较（只比较 major.minor.patch）。
- * 返回 1 表示 a > b，-1 表示 a < b，0 表示相等。
- * 忽略前缀 v，非数字段视为 0。
+ * 比较两个语义化版本号。
+ * 支持 "v" 前缀（如 "v0.3.0"），支持 "0.3.0" 格式。
+ * 返回正数表示 a > b，负数表示 a < b，0 表示相等。
  */
 function compareVersions(a: string, b: string): number {
-  const parse = (v: string): number[] =>
-    v
-      .replace(/^v/i, '')
-      .split('.')
-      .map((s) => {
-        const n = parseInt(s, 10);
-        return Number.isFinite(n) ? n : 0;
-      });
+  const clean = (v: string) => v.replace(/^v/i, '').split('.').map(Number);
+  const pa = clean(a);
+  const pb = clean(b);
 
-  const partsA = parse(a);
-  const partsB = parse(b);
-  const len = Math.max(partsA.length, partsB.length);
-
-  for (let i = 0; i < len; i++) {
-    const na = partsA[i] ?? 0;
-    const nb = partsB[i] ?? 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
+  for (let i = 0; i < 3; i++) {
+    const na = pa[i] ?? 0;
+    const nb = pb[i] ?? 0;
+    if (na !== nb) return na - nb;
   }
   return 0;
 }
 
 /**
- * 根据当前平台筛选可用的安装包资产。
- * Windows 上匹配 .exe 文件（排除 .blockmap）。
+ * 筛选当前平台匹配的安装包资产。
+ * Windows: 匹配 .exe（不含 .exe.blockmap）
+ * macOS: 匹配 .dmg
+ * Linux: 匹配 .AppImage
  */
 function filterAssets(assets: ReleaseAsset[]): ReleaseAsset[] {
-  if (process.platform === 'win32') {
+  const isWindows = process.platform === 'win32';
+  const isMac = process.platform === 'darwin';
+  const isLinux = process.platform === 'linux';
+
+  if (isWindows) {
+    // Windows: 匹配 .exe 文件，排除 .blockmap
     return assets.filter(
-      (a) => a.name.endsWith('.exe') && !a.name.endsWith('.exe.blockmap'),
+      (a) => a.name.endsWith('.exe') && !a.name.endsWith('.blockmap'),
     );
   }
-  if (process.platform === 'darwin') {
-    // macOS: 优先 .dmg，其次 .zip
-    const dmg = assets.filter((a) => a.name.endsWith('.dmg'));
-    if (dmg.length > 0) return dmg;
-    return assets.filter((a) => a.name.endsWith('.zip') && !a.name.endsWith('.zip.blockmap'));
+  if (isMac) {
+    return assets.filter((a) => a.name.endsWith('.dmg'));
   }
-  // Linux: .AppImage
-  return assets.filter(
-    (a) => a.name.endsWith('.AppImage') && !a.name.endsWith('.AppImage.blockmap'),
-  );
+  if (isLinux) {
+    return assets.filter((a) => a.name.endsWith('.AppImage'));
+  }
+  return [];
 }
 
 // ============================================================================
-// 缓存
-// ============================================================================
-
-let cachedResult: UpdateInfo | null = null;
-let cachedAt = 0;
-
-// 当前下载状态（用于取消）
-let currentDownloadAbort: AbortController | null = null;
-
-// ============================================================================
-// 公共 API
+// 公开 API
 // ============================================================================
 
 /**
@@ -264,9 +254,8 @@ export function getUpdateStatus(): UpdateInfo | null {
 /**
  * 下载最新 release 的安装包。
  *
- * @param onProgress 进度回调，在下载过程中多次调用
- * @returns 下载完成后的本地文件路径
- * @throws 如果下载失败或取消
+ * @param onProgress 进度回调，会收到下载进度 / 完成 / 错误事件
+ * @returns 下载到本地的文件路径
  */
 export async function downloadUpdate(
   onProgress: (progress: DownloadProgress) => void,
@@ -410,31 +399,24 @@ export function installUpdate(filePath: string): void {
     throw new Error(`安装包不存在: ${filePath}`);
   }
 
-  const { execFile } = require('node:child_process');
-
   if (process.platform === 'win32') {
-    // Windows: 静默启动安装包，后续安装程序会接管
-    execFile(filePath, [], {
+    // Windows: 使用 `start` 命令正确启动 GUI 安装程序（与 openUrlInExternal 一致），
+    // 避免 execFile + detached 模式下 GUI 窗口不显示的问题。
+    // `cmd.exe /c start "" "installer.exe"` 是 Windows 上启动 GUI 应用的标准方式。
+    spawn('cmd.exe', ['/c', 'start', '', filePath], {
       detached: true,
       stdio: 'ignore',
     }).unref();
   } else if (process.platform === 'darwin') {
-    // macOS: 挂载 dmg 或打开 zip
-    if (filePath.endsWith('.dmg')) {
-      execFile('open', [filePath], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    } else {
-      execFile('open', [filePath], {
-        detached: true,
-        stdio: 'ignore',
-      }).unref();
-    }
+    // macOS: 使用 `open` 命令打开 dmg 或 zip
+    spawn('open', [filePath], {
+      detached: true,
+      stdio: 'ignore',
+    }).unref();
   } else {
     // Linux: 执行 AppImage
     fs.chmodSync(filePath, 0o755);
-    execFile(filePath, [], {
+    spawn(filePath, [], {
       detached: true,
       stdio: 'ignore',
     }).unref();
