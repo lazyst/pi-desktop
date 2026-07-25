@@ -10,10 +10,32 @@
 import { onThemeChange, type Theme } from '../theme';
 import { onFontSizeChange } from '../fontSize';
 
+/** 终端配置更新 payload（映射 XtermTerminal.updateConfig 参数，避免循环依赖）。 */
+export interface TerminalConfigUpdate {
+  cursorBlink?: boolean;
+  cursorStyle?: 'block' | 'bar' | 'underline';
+  cursorInactiveStyle?: 'none' | 'outline' | 'block' | 'bar' | 'underline';
+  cursorWidth?: number;
+  scrollback?: number;
+  fontFamily?: string;
+  fontSize?: number;
+  lineHeight?: number;
+  letterSpacing?: number;
+  fontWeight?: string;
+  fontWeightBold?: string;
+  smoothScrolling?: boolean;
+  isPhysicalMouseWheel?: boolean;
+  scrollbarWidth?: number;
+  scrollSensitivity?: number;
+  fastScrollSensitivity?: number;
+}
+
 /** 存活终端必须实现的刷新接口（由 XtermTerminal 实现，避免循环依赖本模块直接 import 具体类）。 */
 export interface LiveTerminal {
   applyTheme(theme: Theme): void;
   applyFontSize(size: number): void;
+  /** 运行时批量更新终端配置（对齐 VS Code updateConfig）。 */
+  updateConfig(config: TerminalConfigUpdate): void;
 }
 
 const liveTerminals = new Set<LiveTerminal>();
@@ -42,3 +64,8 @@ onThemeChange((theme: Theme) => {
 onFontSizeChange((size: number) => {
   liveTerminals.forEach((t) => t.applyFontSize(size));
 });
+
+/** 将配置更新广播到所有存活终端实例（立即生效）。 */
+export function broadcastConfigUpdate(config: TerminalConfigUpdate): void {
+  liveTerminals.forEach((t) => t.updateConfig(config));
+}

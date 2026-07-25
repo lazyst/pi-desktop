@@ -332,6 +332,151 @@ html, body, #root {
 }
 .profile-select option { background: var(--bg-panel); color: var(--text); }
 
+/* ── 终端设置分组 ── */
+.settings-section {
+  margin-bottom: var(--sp-5);
+  padding-bottom: var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.settings-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.settings-section-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--sp-3) 0;
+  padding-bottom: var(--sp-2);
+  border-bottom: 1px solid var(--border-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── 开关控件 ── */
+.toggle-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-track {
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-over);
+  border-radius: 10px;
+  position: relative;
+  transition: background-color var(--transition);
+}
+.toggle-input:checked + .toggle-track {
+  background: var(--accent);
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: var(--text);
+  border-radius: 50%;
+  transition: transform var(--transition);
+}
+.toggle-input:checked + .toggle-track .toggle-thumb {
+  transform: translateX(16px);
+}
+
+/* ── 数字输入框 ── */
+.num-input {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  outline: none;
+  width: 80px;
+  text-align: left;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+.num-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.num-input:hover {
+  border-color: var(--border-strong);
+}
+
+/* ── 字体系列输入 + 预设组合 ── */
+.font-family-group {
+  display: flex;
+  flex: 1;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.font-family-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  outline: none;
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition);
+}
+.font-family-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.font-family-input:hover {
+  border-color: var(--border-strong);
+}
+.font-preset-select {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-2);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: var(--sp-5);
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+                    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+  background-position: calc(100% - 10px) calc(50% - 2px), calc(100% - 6px) calc(50% - 2px);
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  transition: border-color var(--transition);
+}
+.font-preset-select:focus {
+  border-color: var(--accent);
+}
+.font-preset-select option {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+/* ── 输入框 + 单位组合 ── */
+.input-unit-group {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
 /* Sidebar */
 .sidebar {
   width: 280px;
@@ -987,7 +1132,7 @@ html, body, #root {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;
 }
 .settings-row {
   display: flex;

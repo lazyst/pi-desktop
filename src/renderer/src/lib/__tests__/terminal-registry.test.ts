@@ -15,16 +15,20 @@ import {
 import { setTheme, getTheme } from '../../theme';
 import { setFontSize, getFontSize } from '../../fontSize';
 
-// 测试用存活终端桩：记录最近一次 applyTheme / applyFontSize 入参。
-function makeFakeTerminal(): LiveTerminal & { theme: string | null; size: number | null } {
+// 测试用存活终端桩：记录最近一次 applyTheme / applyFontSize / updateConfig 入参。
+function makeFakeTerminal(): LiveTerminal & { theme: string | null; size: number | null; config: any } {
   return {
     theme: null,
     size: null,
+    config: null,
     applyTheme(t) {
       this.theme = t;
     },
     applyFontSize(s) {
       this.size = s;
+    },
+    updateConfig(c) {
+      this.config = c;
     },
   };
 }

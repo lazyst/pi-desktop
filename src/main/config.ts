@@ -1,4 +1,4 @@
-import type { AppConfig } from '../renderer/src/types';
+import type { AppConfig, FontWeight } from '../renderer/src/types';
 
 // ⚠️ 此模块被 renderer（浏览器沙箱，nodeIntegration:false，无 node:os/path）经
 // `defaultConfig` 间接 import。绝不能 import node:os / node:path —— 否则 sandbox
@@ -36,6 +36,27 @@ export function defaultConfig(): AppConfig {
     scrollback: 5000,
     // 侧边栏折叠的目录分组（cwd 列表），初始全部展开
     collapsedGroups: [],
+
+    // 终端光标
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    cursorInactiveStyle: 'outline',
+    cursorWidth: 1,
+
+    // 终端字体
+    fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace",
+    lineHeight: 1.0,
+    letterSpacing: 0,
+    fontWeight: 'normal',
+    fontWeightBold: 'bold',
+
+    // 终端滚动
+    smoothScrolling: false,
+    scrollSensitivity: 1,
+    fastScrollSensitivity: 5,
+
+    // 终端滚动条
+    scrollbarWidth: 14,
   };
 }
 
@@ -46,6 +67,30 @@ export const FONT_SIZE_MAX = 28;
 // 终端 scrollback 行数范围。
 export const SCROLLBACK_MIN = 1000;
 export const SCROLLBACK_MAX = 100_000;
+
+// 终端光标宽度范围。
+export const CURSOR_WIDTH_MIN = 1;
+export const CURSOR_WIDTH_MAX = 25;
+
+// 终端行高范围。
+export const LINE_HEIGHT_MIN = 0.5;
+export const LINE_HEIGHT_MAX = 3.0;
+
+// 终端字间距范围。
+export const LETTER_SPACING_MIN = -5;
+export const LETTER_SPACING_MAX = 20;
+
+// 滚动灵敏度范围。
+export const SCROLL_SENSITIVITY_MIN = 0.1;
+export const SCROLL_SENSITIVITY_MAX = 20;
+
+// 快速滚动范围。
+export const FAST_SCROLL_SENSITIVITY_MIN = 1;
+export const FAST_SCROLL_SENSITIVITY_MAX = 100;
+
+// 滚动条宽度范围。
+export const SCROLLBAR_WIDTH_MIN = 6;
+export const SCROLLBAR_WIDTH_MAX = 40;
 
 /** 把任意输入夹进 [FONT_SIZE_MIN, FONT_SIZE_MAX] 且取整；非法输入回退默认 13。 */
 export function clampFontSize(n: unknown): number {
@@ -61,6 +106,55 @@ export function clampScrollback(n: unknown): number {
   return Math.min(SCROLLBACK_MAX, Math.max(SCROLLBACK_MIN, v));
 }
 
+/** 把任意输入夹进 [CURSOR_WIDTH_MIN, CURSOR_WIDTH_MAX] 且取整；非法输入回退默认 1。 */
+export function clampCursorWidth(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().cursorWidth;
+  return Math.min(CURSOR_WIDTH_MAX, Math.max(CURSOR_WIDTH_MIN, v));
+}
+
+/** 把任意输入夹进 [LINE_HEIGHT_MIN, LINE_HEIGHT_MAX] 且保留一位小数；非法输入回退默认 1.0。 */
+export function clampLineHeight(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().lineHeight;
+  return Math.min(LINE_HEIGHT_MAX, Math.max(LINE_HEIGHT_MIN, v));
+}
+
+/** 把任意输入夹进 [LETTER_SPACING_MIN, LETTER_SPACING_MAX] 且取整；非法输入回退默认 0。 */
+export function clampLetterSpacing(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().letterSpacing;
+  return Math.min(LETTER_SPACING_MAX, Math.max(LETTER_SPACING_MIN, v));
+}
+
+/** 把任意输入夹进 [SCROLL_SENSITIVITY_MIN, SCROLL_SENSITIVITY_MAX] 且保留一位小数；非法输入回退默认 1。 */
+export function clampScrollSensitivity(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n * 10) / 10 : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().scrollSensitivity;
+  return Math.min(SCROLL_SENSITIVITY_MAX, Math.max(SCROLL_SENSITIVITY_MIN, v));
+}
+
+/** 把任意输入夹进 [FAST_SCROLL_SENSITIVITY_MIN, FAST_SCROLL_SENSITIVITY_MAX] 且取整；非法输入回退默认 5。 */
+export function clampFastScrollSensitivity(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().fastScrollSensitivity;
+  return Math.min(FAST_SCROLL_SENSITIVITY_MAX, Math.max(FAST_SCROLL_SENSITIVITY_MIN, v));
+}
+
+/** 把任意输入夹进 [SCROLLBAR_WIDTH_MIN, SCROLLBAR_WIDTH_MAX] 且取整；非法输入回退默认 14。 */
+export function clampScrollbarWidth(n: unknown): number {
+  const v = typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : NaN;
+  if (!Number.isFinite(v)) return defaultConfig().scrollbarWidth;
+  return Math.min(SCROLLBAR_WIDTH_MAX, Math.max(SCROLLBAR_WIDTH_MIN, v));
+}
+
+/** 校验字体粗细值；非法输入回退默认。 */
+export function clampFontWeight(n: unknown): FontWeight {
+  const valid: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+  if (valid.includes(n as FontWeight)) return n as FontWeight;
+  return 'normal';
+}
+
 // 解析 config.json 原文；损坏 / 非对象时回退默认（不抛异常，保证启动不崩）。
 export function parseConfig(raw: string | null): AppConfig {
   if (!raw) return defaultConfig();
@@ -71,6 +165,14 @@ export function parseConfig(raw: string | null): AppConfig {
     // 数值字段单独校准，避免损坏/越界值污染全局（见 FONT_SIZE_MIN/MAX）。
     merged.fontSize = clampFontSize((parsed as Partial<AppConfig>).fontSize);
     merged.scrollback = clampScrollback((parsed as Partial<AppConfig>).scrollback);
+    merged.cursorWidth = clampCursorWidth((parsed as Partial<AppConfig>).cursorWidth);
+    merged.lineHeight = clampLineHeight((parsed as Partial<AppConfig>).lineHeight);
+    merged.letterSpacing = clampLetterSpacing((parsed as Partial<AppConfig>).letterSpacing);
+    merged.scrollSensitivity = clampScrollSensitivity((parsed as Partial<AppConfig>).scrollSensitivity);
+    merged.fastScrollSensitivity = clampFastScrollSensitivity((parsed as Partial<AppConfig>).fastScrollSensitivity);
+    merged.scrollbarWidth = clampScrollbarWidth((parsed as Partial<AppConfig>).scrollbarWidth);
+    merged.fontWeight = clampFontWeight((parsed as Partial<AppConfig>).fontWeight);
+    merged.fontWeightBold = clampFontWeight((parsed as Partial<AppConfig>).fontWeightBold);
     return merged;
   } catch {
     console.warn('[config] config.json corrupt, using defaults');

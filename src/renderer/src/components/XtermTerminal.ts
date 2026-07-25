@@ -51,6 +51,7 @@ import { SessionChannel } from './terminalChannel';
 import type { TerminalChannel } from './terminalChannel';
 import type { PiApi } from '../ipc';
 import { defaultConfig, SCROLLBACK_MIN, SCROLLBACK_MAX } from '../../../main/config';
+import type { FontWeight } from '../types';
 import {
   TerminalCapability,
   TerminalCapabilityStore,
@@ -68,9 +69,6 @@ import '@xterm/xterm/css/xterm.css';
 // 可变宽 CJK 字体：它们会让 WebGL 渲染器在 CJK 占比变化的帧间出现 cell 度量跳变（全屏 TUI
 // 差分重绘时表现为整屏上下抖动）。CJK 兜底交由 xterm 的 generic monospace fallback +
 // Unicode11Addon 处理，纯 DOM 渲染器路径仍由 CSS 兜底覆盖。
-const FONT_MONO =
-  "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace";
-
 // 主进程 emitData 的 5ms 聚合（等效 VS Code pty host 端 TerminalDataBufferer）已减少 IPC 消息量；
 // 渲染端不再做二次聚合（对齐 VS Code 渲染端无 TerminalDataBufferer 的设计）。
 // xterm.js 内部有 write 缓冲，短时间内大量 write() 调用会自动合并渲染。
@@ -88,6 +86,120 @@ function getScrollback(): number {
     /* 无注入配置（如测试）时回退默认 */
   }
   return defaultConfig().scrollback;
+}
+
+/** 从初始配置读取 cursorBlink。 */
+function getCursorBlink(): boolean {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.cursorBlink === 'boolean') return cfg.cursorBlink;
+  } catch { /* */ }
+  return defaultConfig().cursorBlink;
+}
+
+/** 从初始配置读取 cursorStyle。 */
+function getCursorStyle(): 'block' | 'bar' | 'underline' {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    const v = cfg?.cursorStyle;
+    if (v === 'block' || v === 'bar' || v === 'underline') return v;
+  } catch { /* */ }
+  return defaultConfig().cursorStyle;
+}
+
+/** 从初始配置读取 cursorInactiveStyle。 */
+function getCursorInactiveStyle(): 'none' | 'outline' | 'block' | 'bar' | 'underline' {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    const v = cfg?.cursorInactiveStyle;
+    if (v === 'none' || v === 'outline' || v === 'block' || v === 'bar' || v === 'underline') return v;
+  } catch { /* */ }
+  return defaultConfig().cursorInactiveStyle;
+}
+
+/** 从初始配置读取 cursorWidth。 */
+function getCursorWidth(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.cursorWidth === 'number') return Math.min(25, Math.max(1, Math.round(cfg.cursorWidth)));
+  } catch { /* */ }
+  return defaultConfig().cursorWidth;
+}
+
+/** 从初始配置读取 fontFamily。 */
+function getFontFamily(): string {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.fontFamily === 'string' && cfg.fontFamily.trim()) return cfg.fontFamily.trim();
+  } catch { /* */ }
+  return defaultConfig().fontFamily;
+}
+
+/** 从初始配置读取 lineHeight。 */
+function getLineHeight(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.lineHeight === 'number') return Math.min(3.0, Math.max(0.5, cfg.lineHeight));
+  } catch { /* */ }
+  return defaultConfig().lineHeight;
+}
+
+/** 从初始配置读取 letterSpacing。 */
+function getLetterSpacing(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.letterSpacing === 'number') return Math.min(20, Math.max(-5, Math.round(cfg.letterSpacing)));
+  } catch { /* */ }
+  return defaultConfig().letterSpacing;
+}
+
+/** 从初始配置读取 fontWeight。 */
+function getFontWeight(): FontWeight {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    const v = cfg?.fontWeight;
+    const valid: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+    if (valid.includes(v)) return v;
+  } catch { /* */ }
+  return defaultConfig().fontWeight;
+}
+
+/** 从初始配置读取 fontWeightBold。 */
+function getFontWeightBold(): FontWeight {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    const v = cfg?.fontWeightBold;
+    const valid: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+    if (valid.includes(v)) return v;
+  } catch { /* */ }
+  return defaultConfig().fontWeightBold;
+}
+
+/** 从初始配置读取 scrollSensitivity。 */
+function getScrollSensitivity(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.scrollSensitivity === 'number') return Math.min(20, Math.max(0.1, cfg.scrollSensitivity));
+  } catch { /* */ }
+  return defaultConfig().scrollSensitivity;
+}
+
+/** 从初始配置读取 fastScrollSensitivity。 */
+function getFastScrollSensitivity(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.fastScrollSensitivity === 'number') return Math.min(100, Math.max(1, Math.round(cfg.fastScrollSensitivity)));
+  } catch { /* */ }
+  return defaultConfig().fastScrollSensitivity;
+}
+
+/** 从初始配置读取 scrollbarWidth。 */
+function getScrollbarWidth(): number {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.scrollbarWidth === 'number') return Math.min(40, Math.max(6, Math.round(cfg.scrollbarWidth)));
+  } catch { /* */ }
+  return defaultConfig().scrollbarWidth;
 }
 
 /** 对齐 VS Code IProcessDataEvent：携带 trackCommit 标记的数据事件。
@@ -944,27 +1056,27 @@ export class XtermTerminal implements LiveTerminal {
       logLevel: 'off',
       // 不开启 convertEol。PTY 已输出标准 \r\n，convertEol 会把裸 \n 也转 \r\n，
       // 在 pi-tui 差分渲染里偶尔多出回车字节，导致行错位/重排式闪烁。VS Code 终端同样不对 PTY 数据开 convertEol。
-      cursorBlink: true,
+      cursorBlink: getCursorBlink(),
       // VS Code 默认 cursorStyle: 'bar'（terminal.integrated.cursorStyle 默认 'bar'）。
-      cursorStyle: 'bar',
+      cursorStyle: getCursorStyle(),
       // 非活跃光标样式：对齐 VS Code 默认 'outline'（光标停在非激活面板时不闪烁实心）。
-      cursorInactiveStyle: 'outline',
+      cursorInactiveStyle: getCursorInactiveStyle(),
       // minimumContrastRatio 对齐 VS Code 默认（1）。过高会让 xterm 每帧重算 cell 前景对比度，
       // 流式时增加重绘；VS Code 默认 1。
       minimumContrastRatio: 1,
       drawBoldTextInBrightColors: true,
       // 字重：对齐 VS Code 默认（normal / bold），避免依赖 xterm 隐式默认导致平台差异。
-      fontWeight: 'normal',
-      fontWeightBold: 'bold',
-      letterSpacing: 0,
+      fontWeight: getFontWeight(),
+      fontWeightBold: getFontWeightBold(),
+      letterSpacing: getLetterSpacing(),
       tabStopWidth: 8,
       // 回归 VS Code 默认 true：pi-tui 每帧 fullRender(true) 发 ED2（Erase in Display）清屏时，
       // 把整屏旧内容推入 scrollback（VS Code 标准行为）。恢复标准后由 xterm 原生贴底与分轴
       // resize 处理「清屏→重画」的过渡，不再需要此前 scrollOnEraseInDisplay:false 的反向 hack。
       scrollOnEraseInDisplay: true,
       // 滚轮/快速滚动灵敏度：对齐 VS Code 默认（fastScrollSensitivity 5 / scrollSensitivity 1）。
-      fastScrollSensitivity: 5,
-      scrollSensitivity: 1,
+      fastScrollSensitivity: getFastScrollSensitivity(),
+      scrollSensitivity: getScrollSensitivity(),
       // 关闭平滑滚动：始终为 0，避免物理滚轮/触控板滚动时的平滑动画与拖影。
       smoothScrollDuration: 0,
       // macOS 选项键行为：对齐 VS Code 默认 false（electron 桌面端行为一致）。
@@ -1001,14 +1113,14 @@ export class XtermTerminal implements LiveTerminal {
       // 配置此值确保 xterm 内部布局计算与 VSCode 一致，避免因缺省值导致的 cell 度量差异。
       // 滑块配色由 theme.scrollbarSlider* 注入（见 theme.ts）。
       scrollbar: {
-        width: 14,
+        width: getScrollbarWidth(),
         overviewRuler: { showTopBorder: true },
       },
-      fontFamily: FONT_MONO,
+      fontFamily: getFontFamily(),
       // 跟随全局字体大小（fontSize.ts）：默认基准 13px，可 8–28px 调节。
       fontSize: getFontSize(),
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
-      lineHeight: 1.0,
+      lineHeight: getLineHeight(),
       scrollback: getScrollback(),
       // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义，
       // 由 theme.ts 的 TERM_THEMES 在运行时读取，见 theme.ts）。
@@ -1018,7 +1130,7 @@ export class XtermTerminal implements LiveTerminal {
       // 防止 xterm 默认行为弹安全对话框，改为走 pi.openExternal。
       linkHandler: {
         allowNonHttpProtocols: true,
-        activate: (event, text) => {
+        activate: (event: any, text: string) => {
           // 检查修饰键（Ctrl/Cmd+click 才激活）
           if (!event || !(event.ctrlKey || event.metaKey)) return;
           // 提取 scheme 判断类型
@@ -1038,7 +1150,7 @@ export class XtermTerminal implements LiveTerminal {
           // http/https/mailto 等：走 pi.openExternal（已改用 child_process.exec）
           this.pi.openExternal(text).catch(() => {});
         },
-        hover: (event, text, range) => {
+        hover: (event: any, text: string, range: any) => {
           // 显示工具提示（对齐 linkProvider 的 buildLink hover 行为）
           const doc = document;
           const existing = doc.querySelector('.terminal-link-tooltip');
@@ -1074,7 +1186,7 @@ export class XtermTerminal implements LiveTerminal {
           if (tooltip) tooltip.remove();
         },
       },
-    });
+    } as any);
     const fit = new FitAddon();
     term.loadAddon(fit);
     this.term = term;
@@ -1491,7 +1603,7 @@ export class XtermTerminal implements LiveTerminal {
       });
     } catch {
       /* 终端已销毁等边界 */
-      resolveWrite?.();
+      (resolveWrite as (() => void) | null)?.();
     }
 
     // 对齐 VS Code：将 writePromise 挂载到 _pendingWritePromise 私有字段上
@@ -1623,26 +1735,32 @@ export class XtermTerminal implements LiveTerminal {
   /** 运行时更新 scrollbar 宽度（对齐 VS Code scrollbarWidth + _getScrollbarOptions）。 */
   setScrollbarWidth(width: number): void {
     if (!this.term || this.disposed) return;
-    this.term.options.scrollbar = { width, overviewRuler: { showTopBorder: true } };
+    (this.term.options as any).scrollbar = { width, overviewRuler: { showTopBorder: true } };
+  }
+
+  /** 运行时更新滚动灵敏度。 */
+  setScrollSensitivity(sensitivity: number): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.scrollSensitivity = sensitivity;
+  }
+
+  /** 运行时更新快速滚动速度。 */
+  setFastScrollSensitivity(sensitivity: number): void {
+    if (!this.term || this.disposed) return;
+    this.term.options.fastScrollSensitivity = sensitivity;
+  }
+
+  /** 运行时更新字重。 */
+  setFontWeight(fontWeight: string, fontWeightBold?: string): void {
+    if (!this.term || this.disposed) return;
+    if (fontWeight !== undefined) (this.term.options as any).fontWeight = fontWeight;
+    if (fontWeightBold !== undefined) (this.term.options as any).fontWeightBold = fontWeightBold;
   }
 
   /** 运行时批量更新配置（对齐 VS Code XtermTerminal.updateConfig）。
    * 一次性应用多个配置项，避免逐个调用导致多次 xterm 内部重排。
    * @param config 部分配置项，未提供的项保持不变。 */
-  updateConfig(config: Partial<{
-    cursorBlink: boolean;
-    cursorStyle: 'block' | 'bar' | 'underline';
-    cursorInactiveStyle: 'none' | 'outline' | 'block' | 'bar' | 'underline';
-    cursorWidth: number;
-    scrollback: number;
-    fontFamily: string;
-    fontSize: number;
-    lineHeight: number;
-    letterSpacing: number;
-    smoothScrolling: boolean;
-    isPhysicalMouseWheel: boolean;
-    scrollbarWidth: number;
-  }>): void {
+  updateConfig(config: any): void {
     if (!this.term || this.disposed) return;
     if (config.cursorBlink !== undefined) this.setCursorBlink(config.cursorBlink);
     if (config.cursorStyle !== undefined) this.setCursorStyle(config.cursorStyle);
@@ -1653,6 +1771,14 @@ export class XtermTerminal implements LiveTerminal {
       this.setSmoothScrolling(config.smoothScrolling, config.isPhysicalMouseWheel);
     }
     if (config.scrollbarWidth !== undefined) this.setScrollbarWidth(config.scrollbarWidth);
+    if (config.scrollSensitivity !== undefined) this.setScrollSensitivity(config.scrollSensitivity);
+    if (config.fastScrollSensitivity !== undefined) this.setFastScrollSensitivity(config.fastScrollSensitivity);
+    if (config.fontWeight !== undefined || config.fontWeightBold !== undefined) {
+      this.setFontWeight(
+        config.fontWeight ?? this.term.options.fontWeight,
+        config.fontWeightBold,
+      );
+    }
     if (config.fontFamily !== undefined || config.fontSize !== undefined ||
         config.lineHeight !== undefined || config.letterSpacing !== undefined) {
       this.setFont(

@@ -4,13 +4,14 @@ import { pi } from '../ipc';
 import { ConfirmDialog } from './ConfirmDialog';
 import { SessionContentDialog } from './SessionContentDialog';
 import { IconTrash } from './icons';
-import type { Theme, CloseBehavior, SessionGroup, TerminalProfile } from '../types';
+import type { Theme, CloseBehavior, SessionGroup, TerminalProfile, FontWeight } from '../types';
 import { getFontSize, bumpFontSize, onFontSizeChange, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../fontSize';
 import { PiConfigEditor } from './pi-settings/PiConfigEditor';
 import { PiModelConfig } from './pi-settings/PiModelConfig';
 import { PiMcpManager } from './pi-settings/PiMcpManager';
 import { PiSkillsManager } from './pi-settings/PiSkillsManager';
 import { PiExtensionsManager } from './pi-settings/PiExtensionsManager';
+import { broadcastConfigUpdate } from '../lib/terminal-registry';
 
 interface Props {
   onClose: () => void;
@@ -637,6 +638,36 @@ function SessionManagement() {
   );
 }
 
+// ── 常用等宽字体预设 ──
+const FONT_PRESETS = [
+  { label: 'JetBrains Mono', value: "'JetBrains Mono',ui-monospace,monospace" },
+  { label: 'Fira Code', value: "'Fira Code',ui-monospace,monospace" },
+  { label: 'Cascadia Code', value: "'Cascadia Code',ui-monospace,monospace" },
+  { label: 'Cascadia Mono', value: "'Cascadia Mono',ui-monospace,monospace" },
+  { label: 'Source Code Pro', value: "'Source Code Pro',ui-monospace,monospace" },
+  { label: 'Consolas', value: 'Consolas,ui-monospace,monospace' },
+  { label: 'Monaco', value: 'Monaco,ui-monospace,monospace' },
+  { label: 'monospace', value: 'monospace' },
+];
+
+const FONT_WEIGHTS: { label: string; value: FontWeight }[] = [
+  { label: '100 (Thin)', value: '100' },
+  { label: '200 (Extra Light)', value: '200' },
+  { label: '300 (Light)', value: '300' },
+  { label: '400 / Normal', value: 'normal' },
+  { label: '500 (Medium)', value: '500' },
+  { label: '600 (Semi Bold)', value: '600' },
+  { label: '700 / Bold', value: 'bold' },
+  { label: '800 (Extra Bold)', value: '800' },
+  { label: '900 (Black)', value: '900' },
+];
+
+// 辅助：合并新配置项 → 持久化 + 广播到所有存活终端。
+function saveTerminalConfig(partial: Record<string, unknown>) {
+  pi.setConfig(partial as any).catch(() => {});
+  broadcastConfigUpdate(partial as any);
+}
+
 function TerminalSettings() {
   const [profiles, setProfiles] = useState<TerminalProfile[]>([]);
   const [defaultId, setDefaultId] = useState<string | null>(null);
@@ -646,16 +677,54 @@ function TerminalSettings() {
   const [appWorkDir, setAppWorkDir] = useState('');
   const [scrollback, setScrollback] = useState<number>(5000);
 
+  // 光标
+  const [cursorBlink, setCursorBlink] = useState(true);
+  const [cursorStyle, setCursorStyle] = useState<'block' | 'bar' | 'underline'>('bar');
+  const [cursorInactiveStyle, setCursorInactiveStyle] = useState<'none' | 'outline' | 'block' | 'bar' | 'underline'>('outline');
+  const [cursorWidth, setCursorWidth] = useState(1);
+
+  // 字体
+  const [fontFamily, setFontFamily] = useState("");
+  const [lineHeight, setLineHeight] = useState(1.0);
+  const [letterSpacing, setLetterSpacing] = useState(0);
+  const [fontWeight, setFontWeight] = useState<FontWeight>('normal');
+  const [fontWeightBold, setFontWeightBold] = useState<FontWeight>('bold');
+
+  // 滚动
+  const [smoothScrolling, setSmoothScrolling] = useState(false);
+  const [scrollSensitivity, setScrollSensitivity] = useState(1);
+  const [fastScrollSensitivity, setFastScrollSensitivity] = useState(5);
+
+  // 滚动条
+  const [scrollbarWidth, setScrollbarWidth] = useState(14);
+
   useEffect(() => {
     pi.getConfig()
-      .then((cfg) => { setDefaultId(cfg.defaultTerminalProfile); setAppWorkDir(cfg.appWorkDir ?? ''); setScrollback(cfg.scrollback ?? 5000); })
+      .then((cfg) => {
+        setDefaultId(cfg.defaultTerminalProfile);
+        setAppWorkDir(cfg.appWorkDir ?? '');
+        setScrollback(cfg.scrollback ?? 5000);
+        setCursorBlink(cfg.cursorBlink ?? true);
+        setCursorStyle(cfg.cursorStyle ?? 'bar');
+        setCursorInactiveStyle(cfg.cursorInactiveStyle ?? 'outline');
+        setCursorWidth(cfg.cursorWidth ?? 1);
+        setFontFamily(cfg.fontFamily ?? "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace");
+        setLineHeight(cfg.lineHeight ?? 1.0);
+        setLetterSpacing(cfg.letterSpacing ?? 0);
+        setFontWeight(cfg.fontWeight ?? 'normal');
+        setFontWeightBold(cfg.fontWeightBold ?? 'bold');
+        setSmoothScrolling(cfg.smoothScrolling ?? false);
+        setScrollSensitivity(cfg.scrollSensitivity ?? 1);
+        setFastScrollSensitivity(cfg.fastScrollSensitivity ?? 5);
+        setScrollbarWidth(cfg.scrollbarWidth ?? 14);
+      })
       .catch(() => {});
     pi.listTerminalProfiles()
       .then(setProfiles)
       .catch(() => setProfiles([]));
   }, []);
 
-  // 下拉选中值：'' 表示使用探测到的第一个 / 平台默认。
+  // 默认终端 profile 逻辑
   const selected = defaultId ?? '';
 
   const ensureCustom = (path: string, args: string[]) => {
@@ -671,7 +740,6 @@ function TerminalSettings() {
 
   const onSelect = (value: string) => {
     if (value === 'custom') {
-      // 仅切换到自定义视图，不立即保存；具体 path/args 由“保存为默认”落盘。
       setDefaultId('custom');
       return;
     }
@@ -696,105 +764,429 @@ function TerminalSettings() {
 
   return (
     <div className="terminal-settings">
-      <div className="settings-row">
-        <span className="settings-label">默认终端</span>
-        <select
-          className="profile-select"
-          aria-label="默认终端"
-          value={selected}
-          onChange={(e) => onSelect(e.target.value)}
-        >
-          <option value="">（使用探测到的默认终端）</option>
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
-          <option value="custom">其他（自定义路径）</option>
-        </select>
+      {/* ── 默认终端 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">默认终端</h3>
+        <div className="settings-row">
+          <span className="settings-label">默认终端</span>
+          <select
+            className="profile-select"
+            aria-label="默认终端"
+            value={selected}
+            onChange={(e) => onSelect(e.target.value)}
+          >
+            <option value="">（使用探测到的默认终端）</option>
+            {profiles.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+            <option value="custom">其他（自定义路径）</option>
+          </select>
+        </div>
+
+        {selected === 'custom' && (
+          <div className="custom-terminal">
+            <div className="settings-row">
+              <span className="settings-label">shell 路径</span>
+              <input
+                type="text"
+                className="custom-path-input"
+                aria-label="shell 路径"
+                placeholder={'C:\\Program Files\\Git\\bin\\bash.exe'}
+                value={customPath}
+                onChange={(e) => setCustomPath(e.target.value)}
+              />
+            </div>
+            <div className="settings-row">
+              <span className="settings-label">启动参数</span>
+              <input
+                type="text"
+                className="custom-args-input"
+                aria-label="启动参数"
+                placeholder="--login -i"
+                value={customArgs}
+                onChange={(e) => setCustomArgs(e.target.value)}
+              />
+            </div>
+            {customError && <p className="settings-hint error">{customError}</p>}
+            <button type="button" className="btn" onClick={saveCustom}>保存为默认</button>
+          </div>
+        )}
+        <p className="settings-hint">提示：新建集成终端时会使用此处选择的默认终端。</p>
       </div>
 
-      {selected === 'custom' && (
-        <div className="custom-terminal">
-          <div className="settings-row">
-            <span className="settings-label">shell 路径</span>
+      {/* ── 光标 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">光标</h3>
+
+        <div className="settings-row">
+          <span className="settings-label">光标闪烁</span>
+          <label className="toggle-label">
             <input
-              type="text"
-              className="custom-path-input"
-              aria-label="shell 路径"
-              placeholder={'C:\\Program Files\\Git\\bin\\bash.exe'}
-              value={customPath}
-              onChange={(e) => setCustomPath(e.target.value)}
+              type="checkbox"
+              className="toggle-input"
+              checked={cursorBlink}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setCursorBlink(v);
+                saveTerminalConfig({ cursorBlink: v });
+              }}
             />
-          </div>
-          <div className="settings-row">
-            <span className="settings-label">启动参数</span>
-            <input
-              type="text"
-              className="custom-args-input"
-              aria-label="启动参数"
-              placeholder="--login -i"
-              value={customArgs}
-              onChange={(e) => setCustomArgs(e.target.value)}
-            />
-          </div>
-          {customError && <p className="settings-hint error">{customError}</p>}
-          <button type="button" className="btn" onClick={saveCustom}>保存为默认</button>
+            <span className="toggle-track">
+              <span className="toggle-thumb" />
+            </span>
+          </label>
         </div>
-      )}
-      <p className="settings-hint">提示：新建集成终端时会使用此处选择的默认终端。</p>
-      <div className="settings-row">
-        <span className="settings-label">滚动缓冲区</span>
-        <input
-          type="number"
-          className="app-work-dir-input"
-          style={{ width: 100, textAlign: 'right' }}
-          aria-label="滚动缓冲区行数"
-          min={1000}
-          max={100000}
-          step={1000}
-          value={scrollback}
-          onChange={(e) => setScrollback(Number(e.target.value))}
-          onBlur={() => {
-            const clamped = Math.min(100000, Math.max(1000, Math.round(scrollback)));
-            setScrollback(clamped);
-            pi.setConfig({ scrollback: clamped }).catch(() => {});
-          }}
-        />
-        <span className="settings-unit">行</span>
-      </div>
-      <p className="settings-hint">范围 1000–100000，修改后只影响之后新建的终端。</p>
-      <div className="settings-row">
-        <span className="settings-label">应用工作目录</span>
-        <div className="app-work-dir">
-          <input
-            type="text"
-            className="app-work-dir-input"
-            aria-label="应用工作目录"
-            placeholder={'~/piDesktop'}
-            value={appWorkDir}
-            onChange={(e) => setAppWorkDir(e.target.value)}
-          />
-          <button
-            type="button"
-            className="btn"
-            onClick={async () => {
-              const dir = await pi.pickDirectory();
-              if (dir) setAppWorkDir(dir);
+
+        <div className="settings-row">
+          <span className="settings-label">光标样式</span>
+          <select
+            className="profile-select"
+            aria-label="光标样式"
+            value={cursorStyle}
+            onChange={(e) => {
+              const v = e.target.value as 'block' | 'bar' | 'underline';
+              setCursorStyle(v);
+              saveTerminalConfig({ cursorStyle: v });
             }}
           >
-            浏览…
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => pi.setConfig({ appWorkDir }).catch(() => {})}
+            <option value="block">Block (█)</option>
+            <option value="bar">Bar (|)</option>
+            <option value="underline">Underline (_)</option>
+          </select>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">非活跃光标样式</span>
+          <select
+            className="profile-select"
+            aria-label="非活跃光标样式"
+            value={cursorInactiveStyle}
+            onChange={(e) => {
+              const v = e.target.value as 'none' | 'outline' | 'block' | 'bar' | 'underline';
+              setCursorInactiveStyle(v);
+              saveTerminalConfig({ cursorInactiveStyle: v });
+            }}
           >
-            保存
-          </button>
+            <option value="none">无</option>
+            <option value="outline">轮廓</option>
+            <option value="block">方块</option>
+            <option value="bar">竖线</option>
+            <option value="underline">下划线</option>
+          </select>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">光标宽度</span>
+          <div className="input-unit-group">
+            <input
+              type="number"
+              className="num-input"
+              aria-label="光标宽度"
+              min={1}
+              max={25}
+              step={1}
+              value={cursorWidth}
+              onChange={(e) => {
+                const v = Math.min(25, Math.max(1, Number(e.target.value)));
+                setCursorWidth(v);
+              }}
+              onBlur={() => {
+                const clamped = Math.min(25, Math.max(1, Math.round(cursorWidth)));
+                setCursorWidth(clamped);
+                saveTerminalConfig({ cursorWidth: clamped });
+              }}
+            />
+            <span className="settings-unit">px</span>
+          </div>
+        </div>
+        <p className="settings-hint">范围 1–25，仅光标样式为 Bar 时可见。</p>
+      </div>
+
+      {/* ── 字体 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">字体</h3>
+
+        <div className="settings-row">
+          <span className="settings-label">字体系列</span>
+          <div className="font-family-group">
+            <input
+              type="text"
+              className="font-family-input"
+              aria-label="字体系列"
+              placeholder="'JetBrains Mono',ui-monospace,monospace"
+              value={fontFamily}
+              onChange={(e) => setFontFamily(e.target.value)}
+              onBlur={() => {
+                if (fontFamily.trim()) {
+                  saveTerminalConfig({ fontFamily: fontFamily.trim() });
+                }
+              }}
+            />
+            <select
+              className="font-preset-select"
+              aria-label="字体预设"
+              defaultValue=""
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v) {
+                  setFontFamily(v);
+                  saveTerminalConfig({ fontFamily: v });
+                }
+              }}
+            >
+              <option value="" disabled>预设字体</option>
+              {FONT_PRESETS.map((p) => (
+                <option key={p.value} value={p.value}>{p.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">行高</span>
+          <input
+            type="number"
+            className="num-input"
+            aria-label="行高"
+            min={0.5}
+            max={3.0}
+            step={0.1}
+            value={lineHeight}
+            onChange={(e) => {
+              const v = Math.min(3.0, Math.max(0.5, Number(e.target.value)));
+              setLineHeight(v);
+            }}
+            onBlur={() => {
+              const clamped = Math.min(3.0, Math.max(0.5, Math.round(lineHeight * 10) / 10));
+              setLineHeight(clamped);
+              saveTerminalConfig({ lineHeight: clamped });
+            }}
+          />
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">字间距</span>
+          <div className="input-unit-group">
+            <input
+              type="number"
+              className="num-input"
+              aria-label="字间距"
+              min={-5}
+              max={20}
+              step={1}
+              value={letterSpacing}
+              onChange={(e) => {
+                const v = Math.min(20, Math.max(-5, Number(e.target.value)));
+                setLetterSpacing(v);
+              }}
+              onBlur={() => {
+                const clamped = Math.min(20, Math.max(-5, Math.round(letterSpacing)));
+                setLetterSpacing(clamped);
+                saveTerminalConfig({ letterSpacing: clamped });
+              }}
+            />
+            <span className="settings-unit">px</span>
+          </div>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">常规字重</span>
+          <select
+            className="profile-select"
+            aria-label="常规字重"
+            value={fontWeight}
+            onChange={(e) => {
+              const v = e.target.value as FontWeight;
+              setFontWeight(v);
+              saveTerminalConfig({ fontWeight: v });
+            }}
+          >
+            {FONT_WEIGHTS.map((w) => (
+              <option key={w.value} value={w.value}>{w.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">粗体字重</span>
+          <select
+            className="profile-select"
+            aria-label="粗体字重"
+            value={fontWeightBold}
+            onChange={(e) => {
+              const v = e.target.value as FontWeight;
+              setFontWeightBold(v);
+              saveTerminalConfig({ fontWeightBold: v });
+            }}
+          >
+            {FONT_WEIGHTS.map((w) => (
+              <option key={w.value} value={w.value}>{w.label}</option>
+            ))}
+          </select>
+        </div>
+        <p className="settings-hint">字号已在「常规」设置中调整，此处配置终端专属字体选项。</p>
+      </div>
+
+      {/* ── 滚动 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">滚动</h3>
+
+        <div className="settings-row">
+          <span className="settings-label">滚动缓冲区</span>
+          <div className="input-unit-group">
+            <input
+              type="number"
+              className="num-input"
+              style={{ width: 100 }}
+              aria-label="滚动缓冲区行数"
+              min={1000}
+              max={100000}
+              step={1000}
+              value={scrollback}
+              onChange={(e) => setScrollback(Number(e.target.value))}
+              onBlur={() => {
+                const clamped = Math.min(100000, Math.max(1000, Math.round(scrollback)));
+                setScrollback(clamped);
+                pi.setConfig({ scrollback: clamped }).catch(() => {});
+              }}
+            />
+            <span className="settings-unit">行</span>
+          </div>
+        </div>
+        <p className="settings-hint">范围 1000–100000，修改后只影响之后新建的终端。</p>
+
+        <div className="settings-row">
+          <span className="settings-label">平滑滚动</span>
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              className="toggle-input"
+              checked={smoothScrolling}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setSmoothScrolling(v);
+                saveTerminalConfig({ smoothScrolling: v, isPhysicalMouseWheel: true });
+              }}
+            />
+            <span className="toggle-track">
+              <span className="toggle-thumb" />
+            </span>
+          </label>
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">滚动灵敏度</span>
+          <input
+            type="number"
+            className="num-input"
+            aria-label="滚动灵敏度"
+            min={0.1}
+            max={20}
+            step={0.5}
+            value={scrollSensitivity}
+            onChange={(e) => {
+              const v = Math.min(20, Math.max(0.1, Number(e.target.value)));
+              setScrollSensitivity(v);
+            }}
+            onBlur={() => {
+              const clamped = Math.min(20, Math.max(0.1, Math.round(scrollSensitivity * 10) / 10));
+              setScrollSensitivity(clamped);
+              saveTerminalConfig({ scrollSensitivity: clamped });
+            }}
+          />
+        </div>
+
+        <div className="settings-row">
+          <span className="settings-label">快速滚动速度</span>
+          <input
+            type="number"
+            className="num-input"
+            aria-label="快速滚动速度"
+            min={1}
+            max={100}
+            step={1}
+            value={fastScrollSensitivity}
+            onChange={(e) => {
+              const v = Math.min(100, Math.max(1, Number(e.target.value)));
+              setFastScrollSensitivity(v);
+            }}
+            onBlur={() => {
+              const clamped = Math.min(100, Math.max(1, Math.round(fastScrollSensitivity)));
+              setFastScrollSensitivity(clamped);
+              saveTerminalConfig({ fastScrollSensitivity: clamped });
+            }}
+          />
         </div>
       </div>
-      <p className="settings-hint">用于收容与具体项目无关、与 pi-agent 闲聊或临时的集成终端。修改后只影响之后新建的终端。</p>
+
+      {/* ── 滚动条 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">滚动条</h3>
+
+        <div className="settings-row">
+          <span className="settings-label">滚动条宽度</span>
+          <div className="input-unit-group">
+            <input
+              type="number"
+              className="num-input"
+              aria-label="滚动条宽度"
+              min={6}
+              max={40}
+              step={1}
+              value={scrollbarWidth}
+              onChange={(e) => {
+                const v = Math.min(40, Math.max(6, Number(e.target.value)));
+                setScrollbarWidth(v);
+              }}
+              onBlur={() => {
+                const clamped = Math.min(40, Math.max(6, Math.round(scrollbarWidth)));
+                setScrollbarWidth(clamped);
+                saveTerminalConfig({ scrollbarWidth: clamped });
+              }}
+            />
+            <span className="settings-unit">px</span>
+          </div>
+        </div>
+        <p className="settings-hint">范围 6–40，全屏 TUI 下 CSS 已隐藏滚动条，此值影响 xterm 内部布局计算。</p>
+      </div>
+
+      {/* ── 应用工作目录 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">工作目录</h3>
+        <div className="settings-row">
+          <span className="settings-label">应用工作目录</span>
+          <div className="app-work-dir">
+            <input
+              type="text"
+              className="app-work-dir-input"
+              aria-label="应用工作目录"
+              placeholder={'~/piDesktop'}
+              value={appWorkDir}
+              onChange={(e) => setAppWorkDir(e.target.value)}
+            />
+            <button
+              type="button"
+              className="btn"
+              onClick={async () => {
+                const dir = await pi.pickDirectory();
+                if (dir) setAppWorkDir(dir);
+              }}
+            >
+              浏览…
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => pi.setConfig({ appWorkDir }).catch(() => {})}
+            >
+              保存
+            </button>
+          </div>
+        </div>
+        <p className="settings-hint">用于收容与具体项目无关、与 pi-agent 闲聊或临时的集成终端。修改后只影响之后新建的终端。</p>
+      </div>
     </div>
   );
 }

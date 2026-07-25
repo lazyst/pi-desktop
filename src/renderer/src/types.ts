@@ -55,7 +55,43 @@ export interface AppConfig {
   appWorkDir: string;
   // 侧边栏中已折叠的目录分组 cwd 列表，用于跨会话持久化折叠状态。
   collapsedGroups: string[];
+
+  // ── 终端光标配置 ──
+  // 光标闪烁，默认 true。
+  cursorBlink: boolean;
+  // 光标样式：block | bar | underline，默认 'bar'。
+  cursorStyle: 'block' | 'bar' | 'underline';
+  // 非活跃光标样式：none | outline | block | bar | underline，默认 'outline'。
+  cursorInactiveStyle: 'none' | 'outline' | 'block' | 'bar' | 'underline';
+  // 光标宽度（px），默认 1。
+  cursorWidth: number;
+
+  // ── 终端字体配置 ──
+  // 终端的字体系列（覆盖全局 fontFamily），默认包含 JetBrains Mono / Fira Code / Cascadia Code 的回退链。
+  fontFamily: string;
+  // 终端行高倍数，默认 1.0。
+  lineHeight: number;
+  // 字符间距（px），默认 0。
+  letterSpacing: number;
+  // 常规字重，默认 'normal'。
+  fontWeight: FontWeight;
+  // 粗体字重，默认 'bold'。
+  fontWeightBold: FontWeight;
+
+  // ── 终端滚动配置 ──
+  // 平滑滚动（触控板禁用），默认 false。
+  smoothScrolling: boolean;
+  // 滚轮滚动灵敏度倍数，默认 1。
+  scrollSensitivity: number;
+  // 按住 Shift 时快速滚动速度倍数，默认 5。
+  fastScrollSensitivity: number;
+
+  // ── 终端滚动条配置 ──
+  // 滚动条宽度（px），默认 14。
+  scrollbarWidth: number;
 }
+
+export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
 
 export type Platform = 'windows' | 'macos' | 'linux';
 
