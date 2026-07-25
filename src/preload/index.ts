@@ -223,4 +223,48 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('pi:extensions:enable', payload),
   piExtensionsDelete: (payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('pi:extensions:delete', payload),
+  // 版本更新检查
+  checkUpdate: (): Promise<{
+    currentVersion: string;
+    latestVersion: string | null;
+    hasUpdate: boolean;
+    releaseUrl: string | null;
+    releaseName: string | null;
+    releaseBody: string | null;
+    checkedAt: string | null;
+    error: string | null;
+  }> => ipcRenderer.invoke('update:check'),
+  getUpdateStatus: (): Promise<{
+    currentVersion: string;
+    latestVersion: string | null;
+    hasUpdate: boolean;
+    releaseUrl: string | null;
+    releaseName: string | null;
+    releaseBody: string | null;
+    checkedAt: string | null;
+    error: string | null;
+    assets: Array<{ name: string; url: string; size: number }>;
+  } | null> => ipcRenderer.invoke('update:get-status'),
+  getCurrentVersion: (): Promise<string> => ipcRenderer.invoke('update:get-current-version'),
+  // 下载更新
+  downloadUpdate: (): Promise<{ success: boolean; filePath: string }> =>
+    ipcRenderer.invoke('update:download'),
+  // 取消下载
+  cancelDownload: () => ipcRenderer.send('update:cancel-download'),
+  // 安装更新
+  installUpdate: (filePath: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke('update:install', filePath),
+  // 监听下载进度
+  onDownloadProgress: (cb: (progress: {
+    status: 'downloading' | 'completed' | 'error' | 'cancelled';
+    percent: number;
+    downloadedBytes: number;
+    totalBytes: number;
+    filePath?: string;
+    error?: string;
+  }) => void) => {
+    const handler = (_e: unknown, progress: any) => cb(progress);
+    ipcRenderer.on('update:download-progress', handler);
+    return () => ipcRenderer.removeListener('update:download-progress', handler);
+  },
 });

@@ -9,6 +9,7 @@ import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './sessionPool';
 import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir, watchFile } from './fsBridge';
 import { gitStatus, gitLog, gitDiff } from './gitBridge';
+import { checkForUpdate, getUpdateStatus, getCurrentVersion, downloadUpdate, installUpdate, cancelDownload } from './updateChecker';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
 // terminal.integrated.gpuAcceleration 机制）。现代 Electron/Chromium 在无硬件 GPU 时
@@ -1015,6 +1016,49 @@ function openUrlInExternal(url: string): void {
   ipcMain.handle('git:status', (_e, req: { cwd: string }) => gitStatus(req.cwd));
   ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
   ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
+  // ╌╌ 版本更新检查 ╌╌
+  ipcMain.handle('update:check', async () => {
+    try {
+      return await checkForUpdate();
+    } catch (err) {
+      console.error('[update:check] failed:', err);
+      throw new Error('检查更新失败');
+    }
+  });
+  ipcMain.handle('update:get-status', () => getUpdateStatus());
+  // 获取当前版本（无需网络请求，立即返回）
+  ipcMain.handle('update:get-current-version', () => getCurrentVersion());
+  // 下载更新：下载最新 release 安装包，通过 IPC 事件推送进度
+  ipcMain.handle('update:download', async () => {
+    try {
+      const filePath = await downloadUpdate((progress) => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('update:download-progress', progress);
+        }
+      });
+      return { success: true, filePath };
+    } catch (err) {
+      console.error('[update:download] failed:', err);
+      throw new Error(err instanceof Error ? err.message : '下载失败');
+    }
+  });
+  // 取消下载
+  ipcMain.on('update:cancel-download', () => {
+    cancelDownload();
+  });
+  // 安装更新：运行已下载的安装包
+  ipcMain.handle('update:install', async (_e, filePath: string) => {
+    try {
+      installUpdate(filePath);
+      // 安装包启动后，退出当前应用以便安装程序覆盖文件
+      app.quit();
+      return { success: true };
+    } catch (err) {
+      console.error('[update:install] failed:', err);
+      throw new Error(err instanceof Error ? err.message : '安装失败');
+    }
+  });
+
   // ── Git 工作区实时监听（事件驱动刷新，对齐 VS Code FileWatcher）──
   // 渲染端订阅某仓库 cwd，主进程以 recursive 监听整个仓库目录（含子目录改动与
   // .git/ 内 index/ref 变更），任意变更即经 'git:change' 推送 { cwd } 让渲染端刷新。

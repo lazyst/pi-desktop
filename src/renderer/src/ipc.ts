@@ -112,6 +112,41 @@ export interface PiApi {
   piExtensionsDisable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
   piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
   piExtensionsDelete(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
+  // 版本更新检查
+  checkUpdate(): Promise<{
+    currentVersion: string;
+    latestVersion: string | null;
+    hasUpdate: boolean;
+    releaseUrl: string | null;
+    releaseName: string | null;
+    releaseBody: string | null;
+    checkedAt: string | null;
+    error: string | null;
+    assets: Array<{ name: string; url: string; size: number }>;
+  }>;
+  getUpdateStatus(): Promise<{
+    currentVersion: string;
+    latestVersion: string | null;
+    hasUpdate: boolean;
+    releaseUrl: string | null;
+    releaseName: string | null;
+    releaseBody: string | null;
+    checkedAt: string | null;
+    error: string | null;
+    assets: Array<{ name: string; url: string; size: number }>;
+  } | null>;
+  getCurrentVersion(): Promise<string>;
+  downloadUpdate(): Promise<{ success: boolean; filePath: string }>;
+  cancelDownload(): void;
+  installUpdate(filePath: string): Promise<{ success: boolean }>;
+  onDownloadProgress(cb: (progress: {
+    status: 'downloading' | 'completed' | 'error' | 'cancelled';
+    percent: number;
+    downloadedBytes: number;
+    totalBytes: number;
+    filePath?: string;
+    error?: string;
+  }) => void): () => void;
 }
 
 // Resolve `window.pi` lazily so the live IPC object injected by Electron at

@@ -1059,6 +1059,120 @@ html, body, #root {
   padding: 0 var(--sp-2);
 }
 
+/* 设置面板分割线 */
+.settings-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: var(--sp-5) 0;
+}
+
+/* 版本更新检查 */
+.update-check {
+  margin-top: var(--sp-2);
+}
+.update-check-title {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 var(--sp-3);
+}
+.update-current-version {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.update-result {
+  margin-top: var(--sp-3);
+}
+.update-error {
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
+.update-available {
+  background: var(--bg-subtle);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+}
+.update-new-version {
+  font-size: var(--fs-md);
+  color: var(--accent);
+  margin: 0 0 var(--sp-2);
+}
+.update-release-name {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+  margin: 0 0 var(--sp-2);
+}
+.update-release-body {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+  margin: 0 0 var(--sp-3);
+  line-height: 1.5;
+}
+.update-latest {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.update-checked-at {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  margin-top: var(--sp-2);
+}
+
+/* 下载进度条 */
+.update-download-progress {
+  margin-top: var(--sp-3);
+}
+.download-active {
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+}
+.download-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  margin-bottom: var(--sp-2);
+}
+.download-bar-track {
+  width: 100%;
+  height: 8px;
+  background: var(--bg-panel);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.download-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.download-detail {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+}
+.download-completed {
+  background: var(--bg-subtle);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
 /* 会话管理（设置面板内） */
 .session-mgmt {
   display: flex;
