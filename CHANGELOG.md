@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.2] — 2025-07
+
+### 修复
+
+- **终端平滑滚动设置被 wheel handler 覆盖**（#25）
+  - 根因：`_initXterm` 中的 wheel handler 在每次物理滚轮事件时无条件调用
+    `setSmoothScrolling(true, true)`，覆盖了用户通过设置面板配置的 `smoothScrolling: false`
+  - 修复：wheel handler 先检查用户偏好 `_smoothScrolling`，仅在用户启用时
+    才根据设备类型（物理滚轮/触控板）调整 `smoothScrollDuration`
+
+---
+
 ## [0.4.1] — 2025-07
 
 ### 修复

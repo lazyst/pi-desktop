@@ -328,6 +328,10 @@ export class XtermTerminal implements LiveTerminal {
   // 物理滚轮检测 wheel 事件处理器引用（unmount 时清理，对齐 VS Code MouseWheelClassifier）。
   private _wheelHandler: ((e: globalThis.WheelEvent) => void) | null = null;
 
+  // 用户平滑滚动偏好（来自设置面板），wheel handler 必须尊重此偏好，
+  // 不可在物理滚轮检测时自动覆盖。默认 false（不启用平滑滚动）。
+  private _smoothScrolling = false;
+
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
@@ -1317,16 +1321,34 @@ export class XtermTerminal implements LiveTerminal {
     // 物理滚轮检测（对齐 VS Code MouseWheelClassifier）：监听终端元素的滚轮事件，
     // 通过分析 delta 模式判断是否为物理滚轮，用于控制平滑滚动动画。
     // 触控板/魔术鼠标禁用平滑滚动，避免与系统触控板手势冲突。
+    // 注意：必须尊重用户配置的 _smoothScrolling 偏好。当用户关闭平滑滚动时，
+    // 即使检测到物理滚轮也不应启用平滑滚动（修复 wheel handler 覆盖用户设置的问题）。
     try {
       const wheelHandler = (e: globalThis.WheelEvent) => {
         const classifier = MouseWheelClassifier.INSTANCE;
         classifier.accept(e.deltaX, e.deltaY);
         const isPhysical = classifier.isPhysicalMouseWheel();
-        // 如果物理滚轮状态变化，更新平滑滚动配置
+        // 触控板/魔术鼠标：无论用户偏好如何，始终禁用平滑滚动，
+        // 避免与系统触控板手势冲突。
+        if (!isPhysical) {
+          const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
+          if (currentDuration !== 0) {
+            this.term!.options.smoothScrollDuration = 0;
+          }
+          return;
+        }
+        // 物理滚轮：仅当用户启用了平滑滚动时才启用
+        if (!this._smoothScrolling) {
+          const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
+          if (currentDuration !== 0) {
+            this.term!.options.smoothScrollDuration = 0;
+          }
+          return;
+        }
+        // 用户启用平滑滚动 + 物理滚轮 → 启用平滑滚动动画
         const currentDuration = (this.term as any)?.options?.smoothScrollDuration;
-        const expectedDuration = isPhysical ? 125 : 0;
-        if (currentDuration !== expectedDuration) {
-          this.setSmoothScrolling(isPhysical, true);
+        if (currentDuration !== 125) {
+          this.term!.options.smoothScrollDuration = 125;
         }
       };
       term.element?.addEventListener('wheel', wheelHandler, { passive: true });
@@ -1768,6 +1790,7 @@ export class XtermTerminal implements LiveTerminal {
     if (config.cursorWidth !== undefined) this.setCursorWidth(config.cursorWidth);
     if (config.scrollback !== undefined) this.setScrollback(config.scrollback);
     if (config.smoothScrolling !== undefined) {
+      this._smoothScrolling = config.smoothScrolling;
       this.setSmoothScrolling(config.smoothScrolling, config.isPhysicalMouseWheel);
     }
     if (config.scrollbarWidth !== undefined) this.setScrollbarWidth(config.scrollbarWidth);
