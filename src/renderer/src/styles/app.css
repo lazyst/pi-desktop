@@ -165,6 +165,17 @@ html, body, #root {
 }
 .terminal-tab:hover .tab-close,
 .terminal-tab.active .tab-close { opacity: 1; }
+
+/* Tab 脏状态标记（小黄点）：Git 工作区有改动时显示在标题右侧 */
+.tab-dirty-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fbbf24;
+  flex: none;
+  margin-left: 4px;
+}
 .terminal-tab-group-sep {
   /* TabAutoGroup（ADR-0001 E3）组间视觉分隔：一条竖直细线，上下留白对齐 tab 高度。
      自身不可交互、不占拖拽位（非 sortable）。 */
@@ -585,8 +596,12 @@ html, body, #root {
   word-break: break-all;
   letter-spacing: var(--ls-label);
   position: relative;
+  cursor: pointer;
 }
-.group-name { flex: 1; min-width: 0; padding-right: calc(var(--sp-3) * 5); }
+.group-title:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.group-name { flex: 1; min-width: 0; padding-right: 140px; }
 
 /* 运行中终端计数徽标：(n) 高亮药丸 */
 .terminal-count {
@@ -612,7 +627,7 @@ html, body, #root {
   right: var(--sp-3);
   top: 50%;
   transform: translateY(-50%);
-  background: var(--bg-panel);
+  background: transparent;
   padding-left: var(--sp-2);
   opacity: 0;
   z-index: 1;

@@ -178,16 +178,15 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           const showTermBadge = termCount > 0;
           return (
             <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}${isCollapsed ? ' collapsed' : ''}`}>
-              <div className="group-title">
+              <div className="group-title" title={isCollapsed ? '展开分组' : '折叠分组'} onClick={() => onCollapseGroup?.(g.cwd, !isCollapsed)}>
                 <span
                   className="group-collapse-icon"
                   title={isCollapsed ? '展开' : '折叠'}
                   aria-label={isCollapsed ? '展开分组' : '折叠分组'}
-                  onClick={() => onCollapseGroup?.(g.cwd, !isCollapsed)}
                 >
                   {isCollapsed ? '▶' : '▼'}
                 </span>
-                <span className="group-name" title={g.cwd} onClick={() => onSelectCwd?.(g.cwd)}>
+                <span className="group-name" title={g.cwd}>
                   {`📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
                   {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>({termCount})</span>}
                 </span>
@@ -197,7 +196,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     title={`置顶 ${g.cwd}`}
                     aria-label={`置顶 ${g.cwd}`}
                     data-action="pin"
-                    onClick={() => onTogglePin(g.cwd)}
+                    onClick={(e) => { e.stopPropagation(); onTogglePin(g.cwd); }}
                   >
                     <IconPin />
                   </button>
@@ -206,7 +205,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     title={`在 ${g.cwd} 新建会话`}
                     aria-label={`在 ${g.cwd} 新建会话`}
                     data-action="new-session"
-                    onClick={() => onOpen({ cwd: g.cwd })}
+                    onClick={(e) => { e.stopPropagation(); onOpen({ cwd: g.cwd }); }}
                   >
                     <IconNewSession />
                   </button>
@@ -215,7 +214,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     title={`在 ${g.cwd} 新建集成终端`}
                     aria-label={`在 ${g.cwd} 新建集成终端`}
                     data-action="new-terminal"
-                    onClick={() => g.isAppWorkDir ? onNewTerminalInAppWorkDir?.() : onNewTerminalInCwd?.(g.cwd)}
+                    onClick={(e) => { e.stopPropagation(); g.isAppWorkDir ? onNewTerminalInAppWorkDir?.() : onNewTerminalInCwd?.(g.cwd); }}
                   >
                     <IconTerminal />
                   </button>
@@ -227,7 +226,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                       title={`从侧边栏移除目录 ${g.cwd}（不会删除会话文件）`}
                       aria-label={`移除目录 ${g.cwd}`}
                       data-action="remove-directory"
-                      onClick={() => onRemoveDir(g.cwd)}
+                      onClick={(e) => { e.stopPropagation(); onRemoveDir(g.cwd); }}
                     >
                       <IconRemoveDir />
                     </button>
@@ -237,7 +236,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     title={`清空 ${g.cwd} 下的所有会话`}
                     aria-label={`清空 ${g.cwd}`}
                     data-action="clear-directory"
-                    onClick={() => onClearDirectory?.(g.cwd)}
+                    onClick={(e) => { e.stopPropagation(); onClearDirectory?.(g.cwd); }}
                   >
                     <IconTrash />
                   </button>

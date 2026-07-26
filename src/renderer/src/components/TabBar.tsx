@@ -43,6 +43,8 @@ interface Props {
   // 拖拽结束后回调「按当前视觉顺序的 id 列表」，由父层（CenterPane）调 store.reorderTabs。
   // 不传则纯展示（如右栏固定 files/git 两个 tab）。
   onReorder?: (orderedIds: string[]) => void;
+  // tab 脏状态标记（如 Git 工作区有改动时显示小黄点），key 为 tab id，值为 true 表示有未读改动。
+  tabDirty?: Record<string, boolean>;
   // TabAutoGroup（ADR-0001 E3）：传入则按 item.groupKey 归并分组，组间插视觉分隔。
   // 纯展示层归类，不进 store（无 group 实体）；与 onReorder 拖拽重排互不冲突——
   // 分隔符为非 sortable 静态元素，所有 tab 仍在同一 SortableContext 中可跨段拖拽。
@@ -72,11 +74,13 @@ function SortableTab({
   activeId,
   onSelect,
   onClose,
+  dirty,
 }: {
   item: TabBarItem;
   activeId: string | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  dirty?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.id });
@@ -105,6 +109,7 @@ function SortableTab({
     >
       <span className="terminal-tab-icon">{renderKindIcon(item.kind)}</span>
       <span className="terminal-tab-title">{item.title}</span>
+      {dirty && <span className="tab-dirty-dot" />}
       {closable && (
         <button
           type="button"
@@ -134,7 +139,7 @@ function SortableTab({
 // 的 id 列表」交给 onReorder（父层调 store.reorderTabs 仅改 order，不碰渲染实例）。
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty }: Props) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -163,6 +168,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
             >
               <span className="terminal-tab-icon">{renderKindIcon(row.item.kind)}</span>
               <span className="terminal-tab-title">{row.item.title}</span>
+              {tabDirty?.[row.item.id] && <span className="tab-dirty-dot" />}
               {(row.item.closable ?? true) && (
                 <button
                   type="button"
@@ -223,6 +229,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
                 activeId={activeId}
                 onSelect={onSelect}
                 onClose={onClose}
+                dirty={tabDirty?.[row.item.id]}
               />
             ),
           )}

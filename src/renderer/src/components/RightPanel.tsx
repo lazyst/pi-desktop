@@ -8,6 +8,7 @@ import { TabBar } from './TabBar';
 import { FileTree } from './FileTree';
 import { GitView } from './GitView';
 import { clampRightPanelWidth } from './sidebarGeometry';
+import { pi } from '../ipc';
 import { defaultConfig } from '../../../main/config';
 
 // 跨平台取目录名（最后一段路径），与 FilePanel.basename 一致：渲染进程 sandbox
@@ -88,6 +89,35 @@ export function RightPanel({
 
   const empty = candidates.length === 0;
 
+  // Git 工作区是否有未提交改动（用于在 Git tab 上显示小黄点）。
+  const [gitDirty, setGitDirty] = useState(false);
+  // 订阅 effectiveRoot 的 git 变更：当文件有改动时检查 gitStatus，更新 dirty 标记。
+  const gitDirtyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!effectiveRoot) { setGitDirty(false); return; }
+    const checkDirty = async () => {
+      try {
+        const s = await pi.gitStatus(effectiveRoot);
+        setGitDirty(s.isGit && (s.additions > 0 || s.deletions > 0));
+      } catch {
+        setGitDirty(false);
+      }
+    };
+    void checkDirty();
+    const scheduleCheck = () => {
+      if (gitDirtyTimer.current) clearTimeout(gitDirtyTimer.current);
+      gitDirtyTimer.current = setTimeout(() => {
+        gitDirtyTimer.current = null;
+        void checkDirty();
+      }, 250);
+    };
+    const unsubscribe = pi.gitWatch(effectiveRoot, scheduleCheck);
+    return () => {
+      unsubscribe();
+      if (gitDirtyTimer.current) clearTimeout(gitDirtyTimer.current);
+    };
+  }, [effectiveRoot]);
+
   // 右栏宽度由本地 state 控制（初始取 prop width，默认 320）；拖拽实时改、松手经
   // onResize 回写 config——完全对齐 Sidebar 的拖拽模式（解决原“每帧依赖父组件
   // prop 回流”导致的不跟手 / 方向错乱）。
@@ -144,6 +174,7 @@ export function RightPanel({
         onSelect={(id) => setTab(id as RightTab)}
         onClose={() => {}}
         showNew={false}
+        tabDirty={{ git: gitDirty }}
       />
 
       {!empty && (
