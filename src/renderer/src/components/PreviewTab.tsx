@@ -217,7 +217,7 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
               onOpenFile={onOpenFile}
             />
           ) : isMarkdown && viewMode === 'rich' ? (
-            <RichMarkdownEditor content={currentContent} filePath={path} onChange={handleChange} />
+            <RichMarkdownEditor content={currentContent} filePath={path} onChange={handleChange} onSave={dirty ? doSave : undefined} />
           ) : (
             <MonacoCodeEditor
               root={root}

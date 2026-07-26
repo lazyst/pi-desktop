@@ -21,9 +21,11 @@ interface Props {
   /** 当前打开文件的相对路径；变化时重载编辑器内容。 */
   filePath?: string;
   onChange?: (markdown: string) => void;
+  /** Ctrl/Cmd+S 保存请求。父组件据此落盘。不传则快捷键不拦截。 */
+  onSave?: () => void;
 }
 
-export function RichMarkdownEditor({ content, filePath, onChange }: Props) {
+export function RichMarkdownEditor({ content, filePath, onChange, onSave }: Props) {
   const lastPath = useRef<string | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const { menuState, setMenuState, closeMenu } = useMarkdownContextMenu();
@@ -69,6 +71,20 @@ export function RichMarkdownEditor({ content, filePath, onChange }: Props) {
       editor.commands.setContent(content, { emitUpdate: false });
     }
   }, [editor, filePath, content]);
+
+  // Ctrl/Cmd+S 保存：在容器上监听 keydown，拦截保存快捷键
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !onSave) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        onSave();
+      }
+    };
+    el.addEventListener('keydown', onKeyDown);
+    return () => el.removeEventListener('keydown', onKeyDown);
+  }, [onSave]);
 
   // 右键菜单：在容器上阻止默认 contextmenu，改由本组件接管
   const onContextMenu = useCallback((e: React.MouseEvent) => {
