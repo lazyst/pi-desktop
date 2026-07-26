@@ -2486,7 +2486,10 @@ html, body, #root {
 .rp-root-select:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.rp-root-select:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 /* ── TabBar 前缀图标包裹层 ── */
