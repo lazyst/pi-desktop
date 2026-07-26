@@ -116,9 +116,11 @@ export function scanForShellReady(
  * 检测 PTY 数据中的 OSC 133 D 命令退出序列。
  * 格式：\x1b]133;D;<exit_code>\x07
  * 来自 shell integration 的命令退出标记。
+ *
+ * 必须匹配完整序列（含 \x07 终止符），避免误匹配 prompt 中的部分前缀。
  */
 export function detectPiExit(data: string): boolean {
-  return data.includes('\x1b]133;D;');
+  return /\x1b\]133;D;\d+\x07/.test(data);
 }
 
 // =========================================================================
@@ -507,7 +509,6 @@ export interface ShellReadyLaunchConfig {
 export function getShellReadyLaunchConfig(profile: TerminalProfile): ShellReadyLaunchConfig {
   const shellKind = isGitBash(profile.path) ? 'git-bash' : detectShellKind(profile.path);
   const envMixin: NodeJS.ProcessEnv = {
-    TERM_PROGRAM: 'vscode',
     PI_DESKTOP: '1',
     PI_SHELL_READY_MARKER: '1',
   };

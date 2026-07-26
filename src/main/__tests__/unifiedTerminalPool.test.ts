@@ -117,7 +117,8 @@ describe('UnifiedTerminalPool', () => {
         expect(opts.rows).toBe(24);
         expect(opts.env.PI_DESKTOP).toBe('1');
         expect(opts.env.PI_SHELL_READY_MARKER).toBe('1');
-        expect(opts.env.TERM_PROGRAM).toBe('vscode');
+        // TERM_PROGRAM 不再设为 'vscode'，避免触发用户 VS Code shell integration
+        expect(opts.env.TERM_PROGRAM).not.toBe('vscode');
         // Windows 上 shell:true，Unix 上 shell:false
         expect(opts.shell).toBe(process.platform === 'win32');
 

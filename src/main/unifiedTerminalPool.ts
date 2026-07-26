@@ -253,10 +253,10 @@ export class UnifiedTerminalPool {
       : safeCwd;
     const id = opts.key ?? `live-${randomUUID()}`;
 
-    // 环境变量
+    // 环境变量：不设 TERM_PROGRAM=vscode 以免触发用户的 VS Code shell integration（
+    // 它会在每次 prompt 发射 OSC 133 D 序列，导致 detectPiExit 误判 pi 退出）。
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      TERM_PROGRAM: 'vscode',
       PI_DESKTOP: '1',
     };
 
@@ -582,13 +582,19 @@ export class UnifiedTerminalPool {
   }
 
   /** 解除 live key 关联的磁盘 session alias。
-   * 用于 /new 命令后，使旧 session 的磁盘条目能 spawn 新进程而非复用已有 PTY。 */
+   * 用于 /new 命令后，使旧 session 的磁盘条目能 spawn 新进程而非复用已有 PTY。
+   * 同时重置 entry 的 linked/diskKey 状态，使 reconcile 能重新关联新 .jsonl。 */
   unlinkDiskSession(liveKey: string): void {
     for (const [dk, lk] of this.alias) {
       if (lk === liveKey) {
         this.alias.delete(dk);
         break;
       }
+    }
+    const e = this.entries.get(liveKey);
+    if (e) {
+      e.linked = false;
+      e.diskKey = undefined;
     }
   }
 }

@@ -127,6 +127,16 @@ export default function App() {
     });
     const offRelink = pi.onRelink((from, to) => {
       liveToDiskRef.current = { ...liveToDiskRef.current, [from]: to };
+      // 虚拟 session（pi-<uuid>）晋升为磁盘 session：移除虚拟条目，
+      // 同时把 liveToDisk 映射也写入虚拟 key，让 sidebar 焦点从虚拟条目切换到磁盘条目。
+      for (const [virtualKey, ptyId] of _virtualToPty) {
+        if (ptyId === from) {
+          liveToDiskRef.current[virtualKey] = to;
+          setVirtualSessions((prev) => prev.filter((s) => s.key !== virtualKey));
+          _virtualToPty.delete(virtualKey);
+          break;
+        }
+      }
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
