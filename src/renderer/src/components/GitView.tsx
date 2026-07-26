@@ -27,7 +27,7 @@ export function GitView({ cwd, onOpenWorkDiff, onOpenCommit }: Props) {
   const [log, setLog] = useState<LogEntry[]>([]);
 
   const refresh = useCallback(async () => {
-    if (!cwd) { setStatus(null); setLog([]); return; }
+    if (!cwd) { setStatus({ isGit: false, branch: null, additions: 0, deletions: 0, ahead: 0, behind: 0 }); setLog([]); return; }
     try {
       const s = await pi.gitStatus(cwd);
       setStatus({ isGit: s.isGit, branch: s.branch, additions: s.additions, deletions: s.deletions, ahead: s.ahead, behind: s.behind });

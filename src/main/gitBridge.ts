@@ -12,13 +12,29 @@ const execFileAsync = promisify(execFile);
 // `{ isGit: false }` and render a "not a git repository" notice.
 // ============================================================================
 
-async function git(cwd: string, args: string[]): Promise<string> {
+const GIT_TIMEOUT = 15_000;
+
+async function git(cwd: string, args: string[], timeout = GIT_TIMEOUT): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-    timeout: 15_000,
+    timeout,
     maxBuffer: 8 * 1024 * 1024,
     env: { ...process.env, LC_ALL: 'C' },
   });
   return stdout;
+}
+
+/**
+ * 快速检查 cwd 是否在 git 仓库内。
+ * 使用 `git rev-parse --git-dir`（极轻量，不扫描工作树），
+ * 非 git 目录或超时（3s）时静默返回 false。
+ */
+async function isGitRepo(cwd: string): Promise<boolean> {
+  try {
+    await git(cwd, ['rev-parse', '--git-dir'], 3_000);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface GitStatus {
@@ -46,6 +62,11 @@ export interface GitLogEntry {
  * working-tree / staged diffs in the UI).
  */
 export async function gitStatus(cwd: string): Promise<GitStatus> {
+  // 先用快速检测判断是否为 git 仓库，避免在非 git 目录下执行完整的
+  // git status（可能卡住或等待超时），导致用户看到无限加载中。
+  if (!(await isGitRepo(cwd))) {
+    return { isGit: false, branch: null, additions: 0, deletions: 0, ahead: 0, behind: 0, porcelain: '' };
+  }
   try {
     const porcelain = await git(cwd, ['status', '--porcelain=v1', '-b', '--untracked-files=normal']);
     const lines = porcelain.split('\n');

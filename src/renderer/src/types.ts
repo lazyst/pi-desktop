@@ -55,6 +55,9 @@ export interface AppConfig {
   appWorkDir: string;
   // 侧边栏中已折叠的目录分组 cwd 列表，用于跨会话持久化折叠状态。
   collapsedGroups: string[];
+  // 右栏（文件树/Git）上一次选择的目录，跨会话持久化。
+  // 首次打开时为空，应用自动选择 appWorkDir；后续启动恢复此值。
+  lastActiveDir: string;
 
   // ── 终端光标配置 ──
   // 光标闪烁，默认 true。

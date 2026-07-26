@@ -28,6 +28,8 @@ interface Props {
   // 最后活跃会话的工作目录（稳定：即使当前激活 tab 是预览/diff 也不会归零，
   // 由 App 维护 lastSessionCwd 后传入）。右栏自动模式据此跟随，避免打开文件后丢失根目录。
   activeCwd: string | null;
+  // 用户在右栏下拉框中手动选择目录时回调，用于持久化 lastActiveDir。
+  onPickDirectory?: (cwd: string) => void;
   // 点击文件 → 中间区新增预览 tab（由 App 处理）；此处仅透传回调。
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
   // 点击 Git 工作区/提交 diff → 中间区新增 diff tab（由 App 处理）。
@@ -40,6 +42,7 @@ interface Props {
 export function RightPanel({
   addedDirs,
   activeCwd,
+  onPickDirectory,
   onOpenFile,
   onOpenWorkDiff,
   onOpenCommit,
@@ -84,6 +87,7 @@ export function RightPanel({
     } else {
       setIsAuto(false);
       setRoot(r);
+      onPickDirectory?.(r);
     }
   };
 
@@ -185,7 +189,7 @@ export function RightPanel({
             onChange={(e) => onPickRoot(e.target.value)}
             title="根目录"
           >
-            <option value={AUTO_ROOT}>（自动 · 跟随会话）</option>
+            <option value={AUTO_ROOT}>（自动 · {activeCwd ? basename(activeCwd) : '无会话'}）</option>
             {candidates.map((c) => (
               <option key={c} value={c}>{basename(c)}</option>
             ))}

@@ -61,8 +61,9 @@ export default function App() {
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
   // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次的 cwd，
   // 供右栏文件树/Git 自动模式稳定跟随。
+  // 同时持久化到 config.lastActiveDir，跨会话记住用户上一次选择的目录。
   const [lastSessionCwd, setLastSessionCwd] = useState<string | null>(null);
-  useEffect(() => { if (activeCwd) setLastSessionCwd(activeCwd); }, [activeCwd]);
+  useEffect(() => { if (activeCwd) { setLastSessionCwd(activeCwd); pi.setConfig({ lastActiveDir: activeCwd }).catch(() => {}); } }, [activeCwd]);
   const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
   // 文件预览：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
   // Same mapping held in a ref so the `onRelink` handler (which fires right after
@@ -108,7 +109,20 @@ export default function App() {
       setLiveToDisk(liveToDiskRef.current);
     });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); setAddedDirs(Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []); if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); if (Array.isArray(cfg.collapsedGroups)) setCollapsedGroups(cfg.collapsedGroups.filter((x) => typeof x === 'string')); }).catch(() => setPinned([]));
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); const dirs = Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []; const workDir = cfg.appWorkDir || ''; if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); // 首次启动：addedDirs 为空时自动添加 appWorkDir，确保用户首次打开就能看到
+      // 应用工作目录及其文件树/Git 状态。
+      if (dirs.length === 0 && workDir) {
+        dirs.push(workDir);
+        pi.setConfig({ addedDirs: dirs }).catch(() => {});
+      }
+      setAddedDirs(dirs); // 恢复上一次选择的目录（lastActiveDir），用于右栏默认根目录
+      if (cfg.lastActiveDir) {
+        setLastSessionCwd(cfg.lastActiveDir);
+      } else if (dirs.length > 0) {
+        // 首次启动 & 无上次记录 → 默认选择第一个已添加目录（即 appWorkDir）
+        setLastSessionCwd(dirs[0]);
+      }
+      if (Array.isArray(cfg.collapsedGroups)) setCollapsedGroups(cfg.collapsedGroups.filter((x) => typeof x === 'string')); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
     pi.listSessions().then(toDisk).then((diskList) => {
@@ -427,6 +441,7 @@ export default function App() {
       <RightPanel
         addedDirs={Array.from(visibleDirs)}
         activeCwd={lastSessionCwd}
+        onPickDirectory={(cwd) => { setLastSessionCwd(cwd); pi.setConfig({ lastActiveDir: cwd }).catch(() => {}); }}
         onOpenFile={handleOpenFile}
         onOpenWorkDiff={openWorkDiff}
         onOpenCommit={openCommitDiff}
