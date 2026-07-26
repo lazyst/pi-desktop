@@ -2410,22 +2410,66 @@ html, body, #root {
 }
 .right-panel-resizer:hover { background: var(--accent-soft); }
 .right-panel-resizer:active { background: var(--accent); }
-.right-panel-body { flex: 1; min-height: 0; overflow: auto; }
+.right-panel-body { flex: 1; min-height: 0; overflow: hidden; position: relative; }
+
+/* 右栏 tab 内容面板：双组件常驻，左右滑动切换 */
+.rp-tab-content {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  transition: transform 0.18s ease, opacity 0.18s ease;
+  will-change: transform, opacity;
+}
+/* 文件面板：激活在中间，失活向左滑出 */
+.rp-tab-content[data-panel="files"].active {
+  transform: translateX(0);
+  opacity: 1;
+}
+.rp-tab-content[data-panel="files"].inactive {
+  transform: translateX(-24px);
+  opacity: 0;
+  pointer-events: none;
+}
+/* Git 面板：失活向右滑出，激活从右侧滑入 */
+.rp-tab-content[data-panel="git"].inactive {
+  transform: translateX(24px);
+  opacity: 0;
+  pointer-events: none;
+}
+.rp-tab-content[data-panel="git"].active {
+  transform: translateX(0);
+  opacity: 1;
+}
 /* 右栏 tab（文件 / Git）使用通用 TabBar，但宽度应自适应，不沿用主内容区
    固定的 160px；用后代选择器覆盖，使其与右栏宽度解耦、独立。 */
 .right-panel .terminal-tab { width: auto; flex: 0 0 auto; }
+.right-panel-header {
+  padding: 8px 10px 4px;
+  flex-shrink: 0;
+}
+
 .rp-root-select {
-  font-family: var(--font-mono);
-  font-size: var(--fs-xs);
-  max-width: 160px;
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  font-weight: 500;
   background: var(--bg-app);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  padding: 2px 4px;
+  border-radius: var(--r-md);
+  padding: 6px 8px;
   cursor: pointer;
+  appearance: auto;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.rp-root-select:focus { outline: none; border-color: var(--border); box-shadow: none; }
+.rp-root-select:hover {
+  border-color: var(--accent-soft);
+}
+.rp-root-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
 
 /* ── TabBar 前缀图标包裹层 ── */
 .terminal-tab-icon {

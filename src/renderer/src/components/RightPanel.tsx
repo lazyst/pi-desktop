@@ -202,10 +202,15 @@ export function RightPanel({
           <div className="file-panel-empty">
             先用 <b>+目录</b> 添加工作目录，即可浏览文件与 Git 状态。
           </div>
-        ) : tab === 'files' ? (
-          <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
         ) : (
-          <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} />
+          <>
+            <div className={`rp-tab-content ${tab === 'files' ? 'active' : 'inactive'}`} data-panel="files">
+              <FileTree root={effectiveRoot} onOpenFile={onOpenFile} />
+            </div>
+            <div className={`rp-tab-content ${tab === 'git' ? 'active' : 'inactive'}`} data-panel="git">
+              <GitView cwd={effectiveRoot} onOpenWorkDiff={onOpenWorkDiff} onOpenCommit={onOpenCommit} />
+            </div>
+          </>
         )}
       </div>
 
