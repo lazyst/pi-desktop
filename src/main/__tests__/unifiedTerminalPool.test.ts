@@ -23,17 +23,23 @@ const mockPtys: MockPty[] = [];
 
 vi.mock('node-pty', () => {
   const make = (): MockPty => {
-    const cbs: Record<string, (d?: any) => void> = {};
+    const cbs: Record<string, Array<(d?: any) => void>> = {};
     const pty = {
       write: vi.fn(),
       resize: vi.fn(),
       kill: vi.fn(),
-      on: vi.fn((e: string, cb: (d?: any) => void) => { cbs[e] = cb; }),
+      on: vi.fn((e: string, cb: (d?: any) => void) => {
+        if (!cbs[e]) cbs[e] = [];
+        cbs[e].push(cb);
+      }),
+      removeListener: vi.fn((e: string, cb: (d?: any) => void) => {
+        if (cbs[e]) cbs[e] = cbs[e].filter((l) => l !== cb);
+      }),
       pause: vi.fn(),
       resume: vi.fn(),
       pid: 1234 + mockPtys.length,
       _cbs: cbs,
-      emit: (e: string, d?: any) => cbs[e]?.(d),
+      emit: (e: string, d?: any) => cbs[e]?.forEach((cb) => cb(d)),
     };
     mockPtys.push(pty);
     return pty;
@@ -95,71 +101,115 @@ afterEach(() => {
 // ============================================================================
 describe('UnifiedTerminalPool', () => {
   describe('create (pi type)', () => {
-    it('spawns pi process with TERM_PROGRAM env and shell:true', () => {
-      const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+    it('spawns shell with shell-ready config and injects pi command after shell-ready', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool } = makePool();
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
-      expect(spawnMock).toHaveBeenCalledTimes(1);
-      const [bin, args, opts] = spawnMock.mock.calls[0];
-      expect(bin).toBe('pi');
-      expect(args).toEqual([]);
-      expect(opts.cwd).toBe(existingCwd);
-      expect(opts.cols).toBe(80);
-      expect(opts.rows).toBe(24);
-      expect(opts.env.TERM_PROGRAM).toBe('vscode');
-      expect(opts.shell).toBe(true);
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        const [bin, args, opts] = spawnMock.mock.calls[0];
+        // 不再 spawn 'pi'，而是 spawn shell profile（bash）
+        expect(bin).toBe('/usr/bin/bash');
+        expect(args[0]).toBe('--rcfile');
+        expect(opts.cwd).toBe(existingCwd);
+        expect(opts.cols).toBe(80);
+        expect(opts.rows).toBe(24);
+        expect(opts.env.PI_DESKTOP).toBe('1');
+        expect(opts.env.PI_SHELL_READY_MARKER).toBe('1');
+        expect(opts.env.TERM_PROGRAM).toBe('vscode');
+        // Windows 上 shell:true，Unix 上 shell:false
+        expect(opts.shell).toBe(process.platform === 'win32');
 
-      expect(info.id).toMatch(/^live-/);
-      expect(info.type).toBe('pi');
-      expect(info.status).toBe('running');
-      expect(info.title).toBe('pi');
-      expect(info.name).toBe('pi');
-      expect(info.cwd).toBe(existingCwd);
+        expect(info.id).toMatch(/^live-/);
+        expect(info.type).toBe('pi');
+        expect(info.status).toBe('running');
+        expect(info.title).toBe('pi');
+        expect(info.name).toBe('pi');
+        expect(info.cwd).toBe(existingCwd);
+
+        // 发送 shell-ready 标记 → 触发 pi 命令注入
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        // 推进时间，触发定时器注入
+        vi.advanceTimersByTime(200);
+        expect(pty.write).toHaveBeenCalledWith('pi\r');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
-    it('spawns pi with --name when name is provided', () => {
-      const { pool } = makePool();
-      pool.create({ command: 'pi', cwd: existingCwd, name: 'My Session' });
+    it('spawns pi with --name when name is provided (via pty.write after shell-ready)', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, name: 'My Session', profile: shellProfile });
 
-      const args = spawnMock.mock.calls[0][1];
-      expect(args).toEqual(['--name', 'My Session']);
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200);
+        expect(pty.write).toHaveBeenCalledWith('pi --name My Session\r');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('returns existing entry for the same key (no duplicate spawn)', () => {
       const { pool } = makePool();
-      const first = pool.create({ command: 'pi', cwd: existingCwd, key: 'live-keep' });
-      const second = pool.create({ command: 'pi', cwd: existingCwd, key: 'live-keep' });
+      const first = pool.create({ command: 'pi', cwd: existingCwd, key: 'live-keep', profile: shellProfile });
+      const second = pool.create({ command: 'pi', cwd: existingCwd, key: 'live-keep', profile: shellProfile });
 
       expect(spawnMock).toHaveBeenCalledTimes(1);
       expect(second.id).toBe(first.id);
     });
 
     it('opens existing sessionFile when provided', () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-pi-'));
-      const file = path.join(tmpDir, 'session.jsonl');
-      fs.writeFileSync(file, JSON.stringify({ cwd: existingCwd }) + '\n');
+      vi.useFakeTimers();
+      try {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-pi-'));
+        const file = path.join(tmpDir, 'session.jsonl');
+        fs.writeFileSync(file, JSON.stringify({ cwd: existingCwd }) + '\n');
 
-      const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd, sessionFile: file });
+        const { pool } = makePool();
+        const info = pool.create({ command: 'pi', cwd: existingCwd, sessionFile: file, profile: shellProfile });
 
-      expect(spawnMock).toHaveBeenCalledTimes(1);
-      const args = spawnMock.mock.calls[0][1];
-      expect(args).toEqual(['--session', file]);
-      expect(info.type).toBe('pi');
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        const [bin] = spawnMock.mock.calls[0];
+        expect(bin).toBe('/usr/bin/bash');
 
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200);
+        expect(pty.write).toHaveBeenCalledWith(`pi --session ${file}\r`);
+        expect(info.type).toBe('pi');
+
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('spawns with piBin when configured', () => {
-      const customPool = new UnifiedTerminalPool({
-        cols: 80, rows: 24,
-        piBin: '/custom/pi',
-        onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onList: vi.fn(),
-      });
-      customPool.create({ command: 'pi', cwd: existingCwd });
+      vi.useFakeTimers();
+      try {
+        const customPool = new UnifiedTerminalPool({
+          cols: 80, rows: 24,
+          piBin: '/custom/pi',
+          onData: vi.fn(), onStatus: vi.fn(), onExit: vi.fn(), onList: vi.fn(),
+        });
+        customPool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
-      expect(spawnMock).toHaveBeenCalled();
-      expect(spawnMock.mock.calls[0][0]).toBe('/custom/pi');
+        expect(spawnMock).toHaveBeenCalled();
+        const [bin] = spawnMock.mock.calls[0];
+        expect(bin).toBe('/usr/bin/bash');
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200);
+        expect(pty.write).toHaveBeenCalledWith('/custom/pi\r');
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('reuses existing live entry when sessionFile matches an alias', () => {
@@ -168,14 +218,66 @@ describe('UnifiedTerminalPool', () => {
       fs.writeFileSync(file, JSON.stringify({ cwd: existingCwd }) + '\n');
 
       const { pool } = makePool(tmpDir);
-      const first = pool.create({ command: 'pi', cwd: existingCwd, sessionFile: file });
-      const second = pool.create({ command: 'pi', cwd: existingCwd, sessionFile: file });
+      const first = pool.create({ command: 'pi', cwd: existingCwd, sessionFile: file, profile: shellProfile });
+      const second = pool.create({ command: 'pi', cwd: existingCwd, sessionFile: file, profile: shellProfile });
 
-      // Alias already set by first create → second should reuse, not spawn again.
       expect(spawnMock).toHaveBeenCalledTimes(1);
       expect(second.id).toBe(first.id);
 
       fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it('injects pi command after shell-ready marker in data stream', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', 'Last login: ...\n');
+        expect(pty.write).not.toHaveBeenCalled();
+
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200);
+        expect(pty.write).toHaveBeenCalledWith('pi\r');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('injects pi command on timeout if shell-ready marker never arrives', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        expect(pty.write).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1500);
+        expect(pty.write).toHaveBeenCalledWith('pi\r');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('detects pi exit via OSC 133 D and fires onStatus/onExit while shell stays alive', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool, onStatus, onExit } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200); // 触发命令注入
+
+        pty.emit('data', 'some output\n\x1b]133;D;0\x07prompt> ');
+
+        expect(onStatus).toHaveBeenLastCalledWith(expect.stringMatching(/^live-/), 'dead');
+        expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -190,7 +292,6 @@ describe('UnifiedTerminalPool', () => {
       expect(spawnMock).toHaveBeenCalledTimes(1);
       const [bin, args, opts] = spawnMock.mock.calls[0];
       expect(bin).toBe('/usr/bin/bash');
-      // bash gets --init-file injection
       expect(args[0]).toBe('--init-file');
       expect(opts.cwd).toBe(existingCwd);
       expect(opts.cols).toBe(80);
@@ -229,7 +330,7 @@ describe('UnifiedTerminalPool', () => {
   describe('write', () => {
     it('forwards input to pty.write', () => {
       const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
 
       pool.write(info.id, 'ls\n');
@@ -248,7 +349,7 @@ describe('UnifiedTerminalPool', () => {
   describe('resize', () => {
     it('forwards to pty.resize', () => {
       const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
 
       pool.resize(info.id, 120, 40);
@@ -257,7 +358,7 @@ describe('UnifiedTerminalPool', () => {
 
     it('absorbs pty.resize errors (exited pty race)', () => {
       const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
       pty.resize.mockImplementation(() => { throw new Error('winpty error'); });
 
@@ -277,7 +378,7 @@ describe('UnifiedTerminalPool', () => {
   describe('destroy', () => {
     it('kills pty, removes entry, calls onList', () => {
       const { pool, onList } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
 
       pool.destroy(info.id);
@@ -288,14 +389,12 @@ describe('UnifiedTerminalPool', () => {
 
     it('calls onExit when pty emits exit after destroy (race from real pty)', () => {
       const { pool, onExit } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
 
       pool.destroy(info.id);
       expect(pool.has(info.id)).toBe(false);
 
-      // 模拟 pty 在 kill 后异步派发 exit 事件 → 应触发 onExit
-      // （与 IntegratedTerminalPool 的行为一致）。
       pty.emit('exit');
       expect(onExit).toHaveBeenCalledWith(info.id);
     });
@@ -312,7 +411,7 @@ describe('UnifiedTerminalPool', () => {
   describe('has / list', () => {
     it('has returns true for live entries, false after destroy', () => {
       const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       expect(pool.has(info.id)).toBe(true);
       pool.destroy(info.id);
       expect(pool.has(info.id)).toBe(false);
@@ -320,7 +419,7 @@ describe('UnifiedTerminalPool', () => {
 
     it('list returns all live entries', () => {
       const { pool } = makePool();
-      const a = pool.create({ command: 'pi', cwd: existingCwd });
+      const a = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const b = pool.create({ cwd: existingCwd, profile: shellProfile });
       const all = pool.list();
 
@@ -330,8 +429,8 @@ describe('UnifiedTerminalPool', () => {
 
     it('list excludes destroyed entries', () => {
       const { pool } = makePool();
-      const a = pool.create({ command: 'pi', cwd: existingCwd });
-      pool.create({ command: 'pi', cwd: existingCwd });
+      const a = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+      pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       pool.destroy(a.id);
       expect(pool.list()).toHaveLength(1);
     });
@@ -343,7 +442,7 @@ describe('UnifiedTerminalPool', () => {
   describe('killAll', () => {
     it('destroys every entry and kills all ptys', () => {
       const { pool } = makePool();
-      pool.create({ command: 'pi', cwd: existingCwd });
+      pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       pool.create({ cwd: existingCwd, profile: shellProfile });
       pool.killAll();
 
@@ -369,7 +468,7 @@ describe('UnifiedTerminalPool', () => {
 
     it('no-ops for pi type', () => {
       const { pool, onList } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
       pool.updateCwd(info.id, '/new/cwd');
       const entry = pool.list().find((t) => t.id === info.id);
@@ -383,7 +482,7 @@ describe('UnifiedTerminalPool', () => {
   describe('acknowledgeDataEvent', () => {
     it('forwards to BackpressureController without throwing', () => {
       const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       expect(() => pool.acknowledgeDataEvent(info.id, 100)).not.toThrow();
     });
 
@@ -399,7 +498,7 @@ describe('UnifiedTerminalPool', () => {
   describe('liveKeyFor', () => {
     it('returns the key itself when it is a live entry', () => {
       const { pool } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       expect(pool.liveKeyFor(info.id)).toBe(info.id);
     });
 
@@ -407,7 +506,7 @@ describe('UnifiedTerminalPool', () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-lkf-'));
       const { pool } = makePool(tmpDir);
 
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const encCwd = existingCwd.replace(/\\/g, '--').replace(/^([A-Za-z]):/, '$1');
       const groupDir = path.join(tmpDir, `--${encCwd}--`);
       fs.mkdirSync(groupDir, { recursive: true });
@@ -437,9 +536,8 @@ describe('UnifiedTerminalPool', () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-rec-'));
       const { pool, onStatus, onRelink } = makePool(tmpDir);
 
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
-      // 模拟 pi 写出 .jsonl
       const encCwd = existingCwd.replace(/\\/g, '--').replace(/^([A-Za-z]):/, '$1');
       const groupDir = path.join(tmpDir, `--${encCwd}--`);
       fs.mkdirSync(groupDir, { recursive: true });
@@ -451,12 +549,10 @@ describe('UnifiedTerminalPool', () => {
         sessions: [{ key: sessionFile, name: 'Test', time: '2026-07-03 19:07' }],
       }]);
 
-      // 别名就绪
       expect(pool.liveKeyFor(sessionFile)).toBe(info.id);
       expect(onStatus).toHaveBeenCalledWith(sessionFile, 'running');
       expect(onRelink).toHaveBeenCalledWith(info.id, sessionFile);
 
-      // 通过磁盘 key 终止（侧边栏场景）
       pool.terminate(sessionFile);
       expect(pool.has(info.id)).toBe(false);
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -466,7 +562,7 @@ describe('UnifiedTerminalPool', () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-rec2-'));
       const { pool } = makePool(tmpDir);
 
-      pool.create({ command: 'pi', cwd: existingCwd });
+      pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
       const otherCwd = path.resolve(existingCwd, '..');
       const encOther = otherCwd.replace(/\\/g, '--').replace(/^([A-Za-z]):/, '$1');
@@ -480,7 +576,6 @@ describe('UnifiedTerminalPool', () => {
         sessions: [{ key: sessionFile, name: 'Other', time: 't' }],
       }]);
 
-      // 未关联（cwd 不匹配）
       expect(pool.liveKeyFor(sessionFile)).toBe(sessionFile);
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
@@ -490,20 +585,18 @@ describe('UnifiedTerminalPool', () => {
       const encCwd = existingCwd.replace(/\\/g, '--').replace(/^([A-Za-z]):/, '$1');
       const groupDir = path.join(tmpDir, `--${encCwd}--`);
       fs.mkdirSync(groupDir, { recursive: true });
-      // 预写一个旧文件
       const oldFile = path.join(groupDir, 'old.jsonl');
       fs.writeFileSync(oldFile, JSON.stringify({ cwd: existingCwd }) + '\n');
 
       const { pool } = makePool(tmpDir);
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
 
-      // reconcile 不应把 old 关联给新进程（它创建前就已存在）
       pool.reconcile([{
         cwd: existingCwd,
         sessions: [{ key: oldFile, name: 'Old', time: 't' }],
       }]);
 
-      expect(pool.liveKeyFor(oldFile)).toBe(oldFile); // 未关联
+      expect(pool.liveKeyFor(oldFile)).toBe(oldFile);
       fs.rmSync(tmpDir, { recursive: true, force: true });
     });
   });
@@ -516,7 +609,7 @@ describe('UnifiedTerminalPool', () => {
       vi.useFakeTimers();
       try {
         const { pool, onData } = makePool();
-        const info = pool.create({ command: 'pi', cwd: existingCwd });
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
         const pty = mockPtys[0];
 
         pty.emit('data', 'chunk-1');
@@ -536,7 +629,7 @@ describe('UnifiedTerminalPool', () => {
       vi.useFakeTimers();
       try {
         const { pool, onData } = makePool();
-        const info = pool.create({ command: 'pi', cwd: existingCwd });
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
         const pty = mockPtys[0];
 
         pty.emit('data', 'frame-a');
@@ -556,7 +649,7 @@ describe('UnifiedTerminalPool', () => {
       vi.useFakeTimers();
       try {
         const { pool, onData } = makePool();
-        const info = pool.create({ command: 'pi', cwd: existingCwd });
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
         const pty = mockPtys[0];
 
         pty.emit('data', 'late');
@@ -575,7 +668,7 @@ describe('UnifiedTerminalPool', () => {
   describe('terminate', () => {
     it('kills pi process and reports status/exits', () => {
       const { pool, onStatus, onExit } = makePool();
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
 
       pool.terminate(info.id);
@@ -591,7 +684,7 @@ describe('UnifiedTerminalPool', () => {
       const pty = mockPtys[0];
 
       pool.terminate(info.id);
-      expect(pty.kill).not.toHaveBeenCalled(); // shell 不受 terminate 影响
+      expect(pty.kill).not.toHaveBeenCalled();
       expect(pool.has(info.id)).toBe(true);
     });
 
@@ -599,7 +692,7 @@ describe('UnifiedTerminalPool', () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'utp-termdisk-'));
       const { pool, onExit } = makePool(tmpDir);
 
-      const info = pool.create({ command: 'pi', cwd: existingCwd });
+      const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const encCwd = existingCwd.replace(/\\/g, '--').replace(/^([A-Za-z]):/, '$1');
       const groupDir = path.join(tmpDir, `--${encCwd}--`);
       fs.mkdirSync(groupDir, { recursive: true });

@@ -5,8 +5,9 @@
  * 对外隐藏两种终端在 spawn 参数、环境变量、id 前缀等方面的差异，提供统一的
  * create/write/resize/destroy/killAll/updateCwd/acknowledgeDataEvent 接口。
  *
- * - command === 'pi'：spawn pi 进程（走原 SessionPool.openNew / spawn 路径），
- *   id 形如 'live-<uuid>'，env 含 TERM_PROGRAM=vscode。
+ * - command === 'pi'：spawn shell 进程，等待 shell 就绪后自动注入 pi 命令
+ *   （走 Shell-Ready 模式，类似 Orca 的实现），
+ *   id 形如 'live-<uuid>'，env 含 PI_DESKTOP=1。
  * - command === undefined：spawn 用户 shell 进程（走原 IntegratedTerminalPool.create 路径），
  *   id 形如 'term-<uuid>'，env 含 TERM=xterm-256color / COLORTERM=truecolor，
  *   并注入 VS Code shell integration 脚本。
@@ -20,6 +21,17 @@ import type { TerminalProfile } from '../renderer/src/types';
 import { getShellIntegrationInjection } from './shell-integration/inject';
 import { BackpressureController } from './backpressure';
 import { readSessionName, decodeCwd, readGroupCwd } from './sessionFileManager';
+import { getDefaultShellProfile } from './shellProfiles';
+import {
+  createShellReadyScanState,
+  scanForShellReady,
+  detectPiExit,
+  injectPiCommand,
+  getShellReadyLaunchConfig,
+  SHELL_READY_TIMEOUT_MS,
+  POST_READY_COMMAND_DELAY_MS,
+  POST_READY_FALLBACK_MS,
+} from './shell-ready/pi-shell-ready';
 
 // 主进程端数据缓冲（5ms 时间窗聚合，等效 VS Code pty host 端 TerminalDataBufferer，
 // 减少 IPC 消息量）。
@@ -36,7 +48,7 @@ export interface SpawnOptions {
   command?: string;
   /** 终端工作目录。不存在时回退 process.cwd()。 */
   cwd: string;
-  /** Shell profile，command 为 undefined 时必填。 */
+  /** Shell profile，command 为 undefined 时必填；command 为 'pi' 时可选（使用默认 shell）。 */
   profile?: TerminalProfile;
   /** 打开已有 .jsonl 会话文件（command==='pi' 时有效），传此值时 cwd 可从文件首行解析。 */
   sessionFile?: string;
@@ -93,6 +105,8 @@ interface Entry {
   diskKey?: string;
   /** 创建时该 cwd 下已有的磁盘 .jsonl key 集合，用于避免关联到旧文件。 */
   existingDiskKeys?: Set<string>;
+  /** （pi 类型）shell-ready 模式下，pi 是否已退出（shell 仍存活）。 */
+  piExited?: boolean;
 }
 
 /**
@@ -215,11 +229,16 @@ export class UnifiedTerminalPool {
     return new Set();
   }
 
-  /** spawn pi 进程：id 形如 'live-<uuid>'，env 含 TERM_PROGRAM=vscode。
+  /** spawn pi 进程（shell-ready 模式）：先 spawn shell，等待就绪后自动注入 pi 命令。
+   * id 形如 'live-<uuid>'，env 含 PI_DESKTOP=1。
+   *
    * 支持以下场景：
-   * - 新建会话：`spawnPi({ cwd, name })` → 传 --name 参数
-   * - 打开已有 .jsonl：`spawnPi({ sessionFile: '/path/to/session.jsonl' })` → 传 --session 参数
-   * - 指定 key：`spawnPi({ key: 'live-xxx', cwd, name })` → 复用传入的 key */
+   * - 新建会话：`spawnPi({ cwd, name })` → 传 pi --name 参数
+   * - 打开已有 .jsonl：`spawnPi({ sessionFile: '/path/to/session.jsonl' })` → 传 pi --session 参数
+   * - 指定 key：`spawnPi({ key: 'live-xxx', cwd, name })` → 复用传入的 key
+   *
+   * Shell 就绪后自动注入 pi 命令；pi 退出后 shell 保留，用户可继续交互。
+   * Pi 退出通过 OSC 133 D 序列检测，通知 UI 更新状态。 */
   private spawnPi(opts: SpawnOptions): TerminalInfo {
     const safeCwd = opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : process.cwd();
     // 打开已有 .jsonl 时从文件首行解析 cwd，优先于传入的 cwd
@@ -234,31 +253,39 @@ export class UnifiedTerminalPool {
       : safeCwd;
     const id = opts.key ?? `live-${randomUUID()}`;
 
-    // pi 会话需要 TERM_PROGRAM=vscode 环境变量（对齐原 SessionPool 的 childEnv）。
-    // PI_DESKTOP=1 标记当前进程由 pi-desktop 管理，pi 扩展据此决定是否输出 OSC 序列。
+    // 环境变量
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TERM_PROGRAM: 'vscode',
       PI_DESKTOP: '1',
     };
 
+    // ── 获取默认 shell profile ──
+    const profile = opts.profile ?? getDefaultShellProfile();
+
+    // ── 构建 pi 命令参数 ──
     const piBin = this.opts.piBin ?? 'pi';
-    // 构建 pi 参数：--session 打开已有文件，--name 命名新会话
     const piArgs: string[] = [];
     if (opts.sessionFile) {
       piArgs.push('--session', opts.sessionFile);
     } else if (opts.name) {
       piArgs.push('--name', opts.name);
     }
+    const piCommand = piArgs.length > 0 ? `${piBin} ${piArgs.join(' ')}` : piBin;
 
-    const pty = nodePty.spawn(piBin, piArgs, {
+    // ── 获取 shell-ready launch config ──
+    const readyConfig = getShellReadyLaunchConfig(profile);
+    const spawnArgs = readyConfig.shellArgs;
+    Object.assign(env, readyConfig.envMixin);
+
+    // ── spawn shell（不是 pi） ──
+    const pty = nodePty.spawn(profile.path, spawnArgs, {
       cwd: resolvedCwd,
       cols: this.opts.cols,
       rows: this.opts.rows,
       env,
       // Windows 关键：shell:true 避开 conpty 附着竞态导致的原生崩溃
-      // （对齐原 SessionPool.ptyFactory + IntegratedTerminalPool.create）。
-      shell: true,
+      shell: process.platform === 'win32',
     });
 
     // 打开已有 .jsonl 时尝试从文件读取会话名作为标题
@@ -285,45 +312,112 @@ export class UnifiedTerminalPool {
     // 收集该 cwd 下已有的 .jsonl keys，用于 reconcile 时排除（避免关联到旧文件）。
     const existingKeys = this.existingDiskKeysForCwd(this.opts.sessionsDir ?? '', resolvedCwd);
 
+    // ── shell-ready 状态 ──
+    let commandInjected = false;
+    let piExited = false;
+    let shellReadyTimer: NodeJS.Timeout | null = null;
+    let postReadyTimer: NodeJS.Timeout | null = null;
+    const scanState = createShellReadyScanState();
+
+    // 清理定时器
+    const clearTimers = () => {
+      if (shellReadyTimer) { clearTimeout(shellReadyTimer); shellReadyTimer = null; }
+      if (postReadyTimer) { clearTimeout(postReadyTimer); postReadyTimer = null; }
+    };
+
+    // 注入 pi 命令
+    const doInject = () => {
+      if (commandInjected) return;
+      commandInjected = true;
+      clearTimers();
+      injectPiCommand(pty, piCommand, readyConfig.bracketedPasteSafe);
+    };
+
     const entry: Entry = {
       pty,
       info,
       type: 'pi',
-      // 源头背压：超高水位 pause PTY、降到低水位 resume PTY（对齐 VS Code ptyProcess.pause/resume）。
       bp: new BackpressureController(() => pty.pause(), () => pty.resume()),
-      linked: !!opts.sessionFile, // 打开已有 .jsonl 视为已关联
+      linked: !!opts.sessionFile,
       diskKey: opts.sessionFile,
       existingDiskKeys: existingKeys.size > 0 ? existingKeys : undefined,
+      piExited: false,
     };
 
     pty.on('data', (d: string) => {
-      // 实时背压计数：PTY 数据一到立即累加，对齐 VS Code TerminalProcess.onProcessData
-      // 的源头流控（先算背压再 fire 数据）。消除 5ms 聚合窗口导致的背压响应延迟。
+      // 实时背压计数
       this.entries.get(id)?.bp.onData(d.length);
-      this.emitData(id, d);
+
+      if (!commandInjected) {
+        // ── 扫描 shell-ready 标记 ──
+        const result = scanForShellReady(scanState, d);
+        if (result.matched) {
+          // 标记已收到，shell 就绪
+          if (result.postMarkerBytesObserved) {
+            // 标记后已有数据 → 短延迟后注入（等行编辑器进入 raw 模式）
+            postReadyTimer = setTimeout(doInject, POST_READY_COMMAND_DELAY_MS);
+          } else {
+            // 标记后无数据 → 等下一个 data 事件
+            const onNextData = () => {
+              pty.removeListener('data', onNextData);
+              postReadyTimer = setTimeout(doInject, POST_READY_COMMAND_DELAY_MS);
+            };
+            pty.on('data', onNextData);
+            // 超时兜底
+            postReadyTimer = setTimeout(() => {
+              pty.removeListener('data', onNextData);
+              doInject();
+            }, POST_READY_FALLBACK_MS);
+          }
+          // 剥离标记后的数据发给渲染端
+          if (result.output) this.emitData(id, result.output);
+        } else if (result.output) {
+          this.emitData(id, result.output);
+        }
+      } else if (!piExited) {
+        // ── 检测 pi 退出（OSC 133 D） ──
+        if (detectPiExit(d)) {
+          piExited = true;
+          const e = this.entries.get(id);
+          if (e) e.piExited = true;
+          // 通知 UI pi 会话已退出，但 shell 在运行
+          this.opts.onStatus(id, 'dead');
+          if (e?.diskKey) this.opts.onStatus(e.diskKey, 'dead');
+          this.opts.onExit(id);
+        }
+        this.emitData(id, d);
+      } else {
+        // pi 已退出，shell 继续运行，正常转发数据
+        this.emitData(id, d);
+      }
     });
 
     pty.on('exit', () => {
       const e = this.entries.get(id);
+      clearTimers();
       this.clearDataBuffer(id);
       e?.bp.dispose();
       this.entries.delete(id);
       this.opts.onStatus(id, 'dead');
-      // 同步通知 disk key 状态更新，使侧边栏绿点熄灭（见审查报告 Bug #1）
       if (e?.diskKey) this.opts.onStatus(e.diskKey, 'dead');
       this.opts.onExit(id);
     });
 
+    // ── shell-ready 超时兜底 ──
+    shellReadyTimer = setTimeout(() => {
+      if (!commandInjected) {
+        console.warn('[pi-shell-ready] shell-ready timeout, injecting pi command anyway');
+        doInject();
+      }
+    }, SHELL_READY_TIMEOUT_MS);
+
     this.entries.set(id, entry);
-    // 打开已有 .jsonl 时立即建立 alias 映射，避免 terminate 时序窗口失效（见审查报告 Bug #5）
+    // 打开已有 .jsonl 时立即建立 alias 映射
     if (opts.sessionFile) {
       this.alias.set(opts.sessionFile, id);
-      // 同步通知 disk key 状态为 running，使侧边栏磁盘条目显示绿点
       this.opts.onStatus(opts.sessionFile, 'running');
-      // 通知 relink 使 liveToDisk 建立 live→disk 映射，侧边栏 effectiveActive 正确高亮
       this.opts.onRelink?.(id, opts.sessionFile);
     }
-    // 通知 UI 该 pi 会话已运行
     this.opts.onStatus(id, 'running');
     return info;
   }

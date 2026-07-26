@@ -220,18 +220,13 @@ function createTray(win: BrowserWindow): void {
 
 // SESSIONS_DIR 已由 resolveSessionsDir() 替代（见下方 createWindow）。
 
-// Resolve the `pi` executable to an absolute path. The electron child process does
-// NOT always inherit the user's shell PATH (e.g. when the app is launched by
-// double-clicking the .exe), so a bare `pi` fails with ENOENT. We search PATH plus
-// the well-known pnpm global bin location, preferring Windows script extensions.
+// Resolve the `pi` executable to an absolute path.
+// 优先 $PI_BIN 环境变量，兜底靠系统 PATH 解析（与 Orca 一致，不硬编码 pnpm 目录）。
 function resolvePi(): string {
   const explicit = process.env.PI_BIN;
   if (explicit) return explicit;
   const exts = ['.cmd', '.exe', '.ps1', '.bat', ''];
-  const dirs = [
-    ...(process.env.PATH ?? '').split(path.delimiter).filter(Boolean),
-    path.join(os.homedir(), 'AppData', 'Local', 'pnpm', 'bin'),
-  ];
+  const dirs = (process.env.PATH ?? '').split(path.delimiter).filter(Boolean);
   for (const dir of dirs) {
     for (const ext of exts) {
       const cand = path.join(dir, 'pi' + ext);

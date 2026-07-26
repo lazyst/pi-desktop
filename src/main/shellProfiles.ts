@@ -196,3 +196,54 @@ export function detectTerminalProfiles(): TerminalProfile[] {
 
   return profiles;
 }
+
+/**
+ * 返回当前平台的默认 shell profile（用于 pi 会话的 shell-ready 启动）。
+ * 优先顺序：
+ * 1. $SHELL 环境变量指向的可执行文件
+ * 2. 探测到的第一个 profile
+ * 3. 平台 fallback（Windows: cmd.exe, Unix: /bin/sh）
+ */
+export function getDefaultShellProfile(): TerminalProfile {
+  const profiles = detectTerminalProfiles();
+
+  // 优先 SHELL 环境变量
+  const shellEnv = process.env.SHELL;
+  if (shellEnv) {
+    const match = profiles.find((p) => p.path === shellEnv);
+    if (match) return match;
+    // SHELL 指向的路径存在但不在 profile 列表中，构造一个
+    if (fs.existsSync(shellEnv)) {
+      return {
+        id: 'default',
+        label: path.basename(shellEnv),
+        path: shellEnv,
+        args: [],
+        platform: getPlatform(),
+      };
+    }
+  }
+
+  // 回退到第一个 profile
+  if (profiles.length > 0) return profiles[0];
+
+  // 极端 fallback
+  const platform = getPlatform();
+  if (platform === 'windows') {
+    const windir = process.env.windir || 'C:\\Windows';
+    return {
+      id: 'cmd',
+      label: 'Command Prompt',
+      path: path.join(windir, 'System32', 'cmd.exe'),
+      args: [],
+      platform: 'windows',
+    };
+  }
+  return {
+    id: 'sh',
+    label: 'Shell',
+    path: '/bin/sh',
+    args: [],
+    platform: platform,
+  };
+}
