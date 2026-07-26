@@ -235,9 +235,11 @@ export class UnifiedTerminalPool {
     const id = opts.key ?? `live-${randomUUID()}`;
 
     // pi 会话需要 TERM_PROGRAM=vscode 环境变量（对齐原 SessionPool 的 childEnv）。
+    // PI_DESKTOP=1 标记当前进程由 pi-desktop 管理，pi 扩展据此决定是否输出 OSC 序列。
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       TERM_PROGRAM: 'vscode',
+      PI_DESKTOP: '1',
     };
 
     const piBin = this.opts.piBin ?? 'pi';
@@ -483,5 +485,16 @@ export class UnifiedTerminalPool {
     const b = this.dataBuffers.get(id);
     if (b?.timer) clearTimeout(b.timer);
     this.dataBuffers.delete(id);
+  }
+
+  /** 解除 live key 关联的磁盘 session alias。
+   * 用于 /new 命令后，使旧 session 的磁盘条目能 spawn 新进程而非复用已有 PTY。 */
+  unlinkDiskSession(liveKey: string): void {
+    for (const [dk, lk] of this.alias) {
+      if (lk === liveKey) {
+        this.alias.delete(dk);
+        break;
+      }
+    }
   }
 }

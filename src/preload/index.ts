@@ -194,6 +194,16 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('term:list', handler);
     return () => ipcRenderer.removeListener('term:list', handler);
   },
+  // pi 进程内部执行 /new 时主进程推送的通知
+  onNewFromPi: (cb: (payload: { ptyId: string; uuid: string; cwd: string; name: string }) => void) => {
+    const handler = (_e: unknown, payload: any) => cb(payload);
+    ipcRenderer.on('session:new-from-pi', handler);
+    return () => ipcRenderer.removeListener('session:new-from-pi', handler);
+  },
+  // 注册 PTY 初始 owner（渲染进程通知主进程）
+  registerPtyOwner: (ptyId: string, ownerKey: string) => {
+    ipcRenderer.send('session:register-pty-owner', { ptyId, ownerKey });
+  },
 
   // ╌╌ pi-tool 集成：Pi 配置、模型、MCP、Skills、扩展 ╌╌
   piSettingsGet: (scope: 'global' | 'project'): Promise<{ data: unknown; raw: string; path: string; exists: boolean }> =>

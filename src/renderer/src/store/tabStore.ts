@@ -114,6 +114,8 @@ export interface TabStore {
   closeCenterTab: (id: string) => void;
   /** 把已晋升 live 会话的标题同步为磁盘真实名称。 */
   promoteTabNames: (diskList: { key: string; name: string }[]) => void;
+  /** 更新指定 session tab 的显示名称（/new 命令后使用）。 */
+  renameSessionTab: (key: string, name: string) => void;
 }
 
 /** 为新增 tab 计算下一个 order。 */
@@ -645,5 +647,13 @@ export const useTabStore = create<TabStore>((set) => ({
         return t;
       });
       return changed ? { tabs } : {};
+    }),
+  renameSessionTab: (key, name) =>
+    set((state) => {
+      const tabs = state.tabs.map((t) => {
+        if (t.kind !== 'session' || (t as SessionTab).key !== key) return t;
+        return { ...t, name, title: name };
+      });
+      return { tabs };
     }),
 }));

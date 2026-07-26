@@ -16,6 +16,10 @@ import type { SessionTab } from './store/tabStore';
 
 interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
 
+// 模块级映射表：pi-<uuid> → ptyId（live-<uuid>），供 handleOpen 查找
+// 用模块级变量而非 React state/ref，避免闭包/渲染时序问题
+const _virtualToPty = new Map<string, string>();
+
 function readPinned(cfg: AppConfig): string[] {
   const arr = cfg.pinnedDirs;
   return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
@@ -68,15 +72,32 @@ export default function App() {
   // 文件预览：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
   // Same mapping held in a ref so the `onRelink` handler (which fires right after
   const liveToDiskRef = useRef<Record<string, string>>({});
+  // PTY → 当前活跃 session key 映射，保证一个 PTY 最多只有一个 session 有绿点
+  const ptyOwnersRef = useRef<Map<string, string>>(new Map());
+  // 虚拟 sidebar 条目（由 /new 创建，不创建新 tab，只显示在侧边栏）
+  const [virtualSessions, setVirtualSessions] = useState<DiskSession[]>([]);
+  // 如果当前 PTY owner 是虚拟 session（/new 创建），侧边栏高亮应指向虚拟条目而非原始 PTY tab
+  const activeSessionKey = activeSession?.key ?? null;
+  const activeOwner = activeSessionKey ? ptyOwnersRef.current.get(activeSessionKey) : undefined;
+  const sidebarActiveKey = activeOwner !== undefined && activeOwner !== activeSessionKey
+    ? activeOwner
+    : activeSessionKey;
 
   useEffect(() => {
     const offStatus = pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
     const offExit = pi.onExit((key) => {
       setStatusMap((m) => ({ ...m, [key]: 'dead' }));
       // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）。
-      // store 的 removeSessionTab 会同步清理「关闭隐藏（keep-alive）」的 session tab，
-      // 不再需要 App 单独维护 closedTabIds 与 ref mirror（见 issue 03）。
       useTabStore.getState().removeSessionTab(key);
+      // 查出该 PTY 的 owner sub-session（由 /new 创建），一并清理
+      const ownerKey = ptyOwnersRef.current.get(key);
+      if (ownerKey && ownerKey !== key) {
+        setStatusMap((m) => ({ ...m, [ownerKey]: 'dead' }));
+        // 清理虚拟 sidebar 条目和模块级映射
+        setVirtualSessions((prev) => prev.filter((s) => s.key !== ownerKey));
+        _virtualToPty.delete(ownerKey);
+      }
+      ptyOwnersRef.current = new Map([...ptyOwnersRef.current].filter(([k]) => k !== key));
     });
     // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
     // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
@@ -151,7 +172,31 @@ export default function App() {
     // 订阅主进程主动推送的集成终端实例列表（create/destroy/exit 时），
     // 保证左侧分组计数实时（对齐 ADR §6「主动推送，避免轮询」）。
     const offTermList = pi.onTerminalList?.((list) => useTabStore.getState().setTerminals(list));
-    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); offTermList?.(); };
+    // 订阅 pi 进程内部执行 /new 时主进程的推送
+    const offNewFromPi = pi.onNewFromPi?.(({ ptyId, uuid, cwd, name }) => {
+      const newKey = `pi-${uuid}`;
+      // 查出该 PTY 当前的活跃 session
+      const currentOwner = ptyOwnersRef.current.get(ptyId);
+      if (currentOwner) {
+        // 旧 session 绿点灭
+        setStatusMap((m) => ({ ...m, [currentOwner]: 'dead' }));
+        // 如果旧 owner 已晋升到 disk key，也灭 disk key 的绿点
+        const diskKey = liveToDiskRef.current[currentOwner];
+        if (diskKey) setStatusMap((m) => ({ ...m, [diskKey]: 'dead' }));
+      }
+      // 不创建新 tab，只添加虚拟 sidebar 条目
+      const entry: DiskSession = { key: newKey, cwd, name, unsaved: true };
+      setVirtualSessions((prev) => [...prev.filter((s) => s.key !== currentOwner), entry]);
+      // 新 session 绿点亮
+      setStatusMap((m) => ({ ...m, [newKey]: 'running' }));
+      // 更新 PTY owner
+      ptyOwnersRef.current = new Map(ptyOwnersRef.current).set(ptyId, newKey);
+      // 更新模块级映射供 handleOpen 查找
+      _virtualToPty.set(newKey, ptyId);
+      // 更新 tab 名称为新 session 名
+      useTabStore.getState().renameSessionTab(ptyId, name);
+    });
+    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); offTermList?.(); offNewFromPi?.(); };
   }, []);
   // passive wheel 监听器执行，调用 preventDefault 阻止浏览器原生页面缩放。
   // 滚轮向上（deltaY<0）放大、向下缩小，步长 ±1px，夹在 [FONT_SIZE_MIN, FONT_SIZE_MAX]。
@@ -177,7 +222,7 @@ export default function App() {
   // 已有会话时返回的 .jsonl 路径）虽会进入 open，但不是 live key，也永远
   // 不会出现在 liveToDisk 映射里——若只用 !promoted[key] 判定，会把已存在
   // 的磁盘会话误当成“未保存”的 live 会话重复显示并打上“未保存”徽标（见修复）。
-  const isLiveKey = (k: string) => k.startsWith('live-');
+  const isLiveKey = (k: string) => k.startsWith('live-') || k.startsWith('pi-');
   const liveUnsaved: DiskSession[] = tabs
     .filter((t): t is SessionTab => t.kind === 'session' && isLiveKey(t.key) && !promoted[t.key])
     .map((t) => ({ key: t.key, cwd: t.cwd, name: t.name, unsaved: true }));
@@ -195,6 +240,7 @@ export default function App() {
   const sessions: DiskSession[] = [
     ...disk.filter((d) => addedSet.has(d.cwd)),
     ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
+    ...virtualSessions.filter((s) => addedSet.has(s.cwd)),
   ];
 
   // 集成终端按 cwd 聚合计数（纯终端数，不含 pi 会话数）：
@@ -217,13 +263,51 @@ export default function App() {
     return map;
   }, [terminals, appWorkDir, sessions]);
 
+
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
     try {
+      // 虚拟 session（pi-<uuid>）：从模块级映射查找 PTY ID
+      if (req.key?.startsWith('pi-')) {
+        // 优先从模块级映射查找，回退到 ptyOwnersRef 搜索
+        let ptyId = _virtualToPty.get(req.key);
+        if (!ptyId) {
+          for (const [pid, owner] of ptyOwnersRef.current) {
+            if (owner === req.key) { ptyId = pid; break; }
+          }
+        }
+        if (ptyId) {
+          const tabs = useTabStore.getState().tabs;
+          const existing = tabs.find(
+            (t): t is SessionTab => t.kind === 'session' && t.key === ptyId,
+          );
+          useTabStore.getState().openSession({
+            key: ptyId,
+            cwd: existing?.cwd ?? req.cwd,
+            name: existing?.name ?? req.name,
+          });
+        }
+        return;
+      }
+      // 旧条目（live key，PTY 已被 /new 重新分配）：spawn 新进程
+      // 注意：disk key（.jsonl）不走此路径，由正常流程打开已保存的会话文件
+      if (req.key?.startsWith('live-')) {
+        const reassignedPtyIds = new Set(_virtualToPty.values());
+        if (reassignedPtyIds.has(req.key)) {
+          const info = await pi.openSession({ cwd: req.cwd, name: req.name });
+          useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name });
+          ptyOwnersRef.current = new Map(ptyOwnersRef.current).set(info.key, info.key);
+          pi.registerPtyOwner?.(info.key, info.key);
+          return;
+        }
+      }
       const info = await pi.openSession(req.key ? { key: req.key } : { cwd: req.cwd, name: req.name });
       // 新增或激活 session tab 统一收编进 store（openSession action 已封装「已存在则
       // 取消隐藏并激活、不存在则新增并激活」逻辑，与「关闭=隐藏、重开=恢复」语义一致）。
       useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name });
+      // 注册 PTY 初始 owner（自身 key 为初始 owner，/new 时转移给新 session）
+      ptyOwnersRef.current = new Map(ptyOwnersRef.current).set(info.key, info.key);
+      pi.registerPtyOwner?.(info.key, info.key);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -355,7 +439,14 @@ export default function App() {
     }
   };
 
-  const handleTerminate = (key: string) => { pi.terminate(key); };
+  const handleTerminate = (key: string) => {
+    // 虚拟 session 的 key 是 pi-<uuid>，需要翻译成 PTY 的 live key
+    if (key.startsWith('pi-')) {
+      const ptyId = _virtualToPty.get(key);
+      if (ptyId) { pi.terminate(ptyId); return; }
+    }
+    pi.terminate(key);
+  };
 
   // —— 集成终端创建 ——
   // 在指定目录创建集成终端。若未指定 cwd，使用当前活跃目录。
@@ -407,7 +498,7 @@ export default function App() {
       <Sidebar
         sessions={sessions}
         statusMap={statusMap}
-        activeKey={activeSession?.key ?? null}
+        activeKey={sidebarActiveKey}
         pinned={pinned}
         onOpen={handleOpen}
         onTerminate={handleTerminate}

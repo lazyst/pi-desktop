@@ -10,6 +10,7 @@ import type { IPtyLike } from './sessionPool';
 import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir, watchFile } from './fsBridge';
 import { gitStatus, gitLog, gitDiff, gitFileStatusMap, gitIgnoredPaths } from './gitBridge';
 import { checkForUpdate, getUpdateStatus, getCurrentVersion, downloadUpdate, installUpdate, cancelDownload } from './updateChecker';
+import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desktop-sync-source';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
 // terminal.integrated.gpuAcceleration 机制）。现代 Electron/Chromium 在无硬件 GPU 时
@@ -60,6 +61,34 @@ function loadConfig(): AppConfig {
 // 确保 config.appWorkDir 字段存在（旧配置/损坏时补全默认 ~/pi-desktop/defaultWorkSpace），
 // 并创建该目录（递归），使「应用工作目录」分组下的集成终端 cwd 真实可用，
 // 避免 integratedTerminalPool 的 safeCwd 因目录缺失而静默回退到 process.cwd()、导致分组语义失效。
+/** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
+ * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。 */
+/** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
+ * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。
+ * 扩展源码内联于此，不依赖文件拷贝（避免 electron-vite 构建输出问题）。 */
+const PI_DESKTOP_MANAGED_MARKER = '@pi-desktop-managed';
+
+/** 确保 pi-desktop 同步扩展已安装到 ~/.pi/agent/extensions/。
+ * 每次启动覆盖写入，保证扩展代码与 pi-desktop 版本一致。
+ * 带 marker 保护：如果文件存在且不包含 @pi-desktop-managed 标记，
+ * 视为用户自维护的扩展，不覆盖。 */
+function ensurePiDesktopExtension(): void {
+  const extDir = path.join(os.homedir(), '.pi', 'agent', 'extensions');
+  const extPath = path.join(extDir, PI_DESKTOP_SYNC_FILE);
+  try {
+    const existing = fs.readFileSync(extPath, 'utf-8');
+    if (!existing.includes(PI_DESKTOP_MANAGED_MARKER)) return;
+  } catch {
+    // 文件不存在或不可读，继续写入
+  }
+  try {
+    fs.mkdirSync(extDir, { recursive: true });
+    fs.writeFileSync(extPath, getPiDesktopSyncExtensionSource(), 'utf-8');
+  } catch {
+    // 写入失败时静默忽略
+  }
+}
+
 function ensureAppWorkDir(): string {
   ensureLoaded();
   const cfg = configState!;
@@ -234,6 +263,8 @@ function resolveSessionsDir(): string {
 }
 
 function createWindow() {
+  // 确保 pi-desktop 同步扩展已安装
+  ensurePiDesktopExtension();
   // 确保 appWorkDir 已解析为绝对路径并已创建目录，避免 renderer 拿到相对路径后报错。
   ensureAppWorkDir();
   const cfg = getConfig();
@@ -291,6 +322,24 @@ function openUrlInExternal(url: string): void {
   });
 }
 
+/** 反转义 OSC 字段中的转义字符。 */
+function unescapeField(s: string): string {
+  let r = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && i + 1 < s.length) {
+      const c = s[i + 1];
+      if (c === ';') r += ';';
+      else if (c === 'a') r += '\x07';
+      else if (c === '\\') r += '\\';
+      else { r += s[i]; r += c; }
+      i++;
+    } else {
+      r += s[i];
+    }
+  }
+  return r;
+}
+
   // ── 链接跳转纵深防御（对齐 VS Code setWindowOpenHandler + will-frame-navigate）──
   // 终端链接通过 window.open(url, '_blank', 'noopener') 保留用户手势上下文，
   // setWindowOpenHandler 拦截后调用 shell.openExternal（有用户手势 → 不弹安全对话框）。
@@ -316,16 +365,71 @@ function openUrlInExternal(url: string): void {
   const sessionsDir = resolveSessionsDir();
   const sessionFileManager = new SessionFileManager(sessionsDir);
   const piBin = resolvePi();
+  // PTY 数据路由表：live-<uuid> → Set<pi-<uuid>>（/new 创建的子 session 也需接收 PTY 数据）
+  const dataRoutes = new Map<string, Set<string>>();
   const unifiedPool = new UnifiedTerminalPool({
     cols: 80, rows: 24,
     piBin,
     sessionsDir,
     // 所有终端数据统一经 term:data 通道发送
-    onData: (id, data) => { if (!win.isDestroyed()) win.webContents.send('term:data', { id, data }); },
+    // 同时检测 pi 扩展输出的 OSC 序列（/new 命令通知）
+    onData: (id, data) => {
+      if (win.isDestroyed()) return;
+      // 检测 PiNew OSC 序列: \x1b]633;PiNew;uuid;cwd;name\x07
+      const piNewMatch = data.match(
+        /\x1b\]633;PiNew;((?:[^;\x07\\]|\\.)*);((?:[^;\x07\\]|\\.)*);((?:[^;\x07\\]|\\.)*)\x07/,
+      );
+      if (piNewMatch) {
+        const [, uuidRaw, cwdRaw, nameRaw] = piNewMatch;
+        const uuid = unescapeField(uuidRaw);
+        const cwd = unescapeField(cwdRaw);
+        const name = unescapeField(nameRaw);
+        // 把新 session key 加入路由表，使子 session 的 tab 也能收到 PTY 数据
+        const newKey = `pi-${uuid}`;
+        const routes = dataRoutes.get(id) ?? new Set();
+        routes.add(newKey);
+        dataRoutes.set(id, routes);
+        // 通知渲染进程：新 session 已创建
+        win.webContents.send('session:new-from-pi', { ptyId: id, uuid, cwd, name });
+        // 解除旧 session 的磁盘 alias，使点击磁盘条目时 spawn 新进程而非复用已有 PTY
+        unifiedPool.unlinkDiskSession(id);
+        // 从数据中剥离 OSC 序列，避免显示在终端中
+        const cleanData = data.replace(/\x1b\]633;PiNew;[^\x07]*\x07/, '');
+        if (cleanData) {
+          win.webContents.send('term:data', { id, data: cleanData });
+          // 同时把数据路由到子 session
+          for (const routeId of routes) {
+            win.webContents.send('term:data', { id: routeId, data: cleanData });
+          }
+        }
+      } else {
+        win.webContents.send('term:data', { id, data });
+        // 把数据路由到子 session
+        const routes = dataRoutes.get(id);
+        if (routes) {
+          for (const routeId of routes) {
+            win.webContents.send('term:data', { id: routeId, data });
+          }
+        }
+      }
+    },
     // pi 会话状态变更（running / dead），供侧边栏绿点更新
     onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
     // 所有终端退出统一经 term:exit 通道发送
-    onExit: (id) => { if (!win.isDestroyed()) { win.webContents.send('term:exit', { id }); pushTerminalList(); } },
+    onExit: (id) => {
+      if (!win.isDestroyed()) {
+        win.webContents.send('term:exit', { id });
+        // 清理路由表中的子 session
+        const routes = dataRoutes.get(id);
+        if (routes) {
+          for (const routeId of routes) {
+            win.webContents.send('term:exit', { id: routeId });
+          }
+          dataRoutes.delete(id);
+        }
+        pushTerminalList();
+      }
+    },
     onRelink: (from, to) => { if (!win.isDestroyed()) win.webContents.send('session:relink', { from, to }); },
     // 实例列表变化时推送
     onList: (list) => { if (!win.isDestroyed()) win.webContents.send('term:list', { list }); },
@@ -347,6 +451,12 @@ function openUrlInExternal(url: string): void {
       console.error('[terminal:spawn] failed:', err);
       throw new Error('无法启动终端，请确认 pi 或 shell 可用');
     }
+  });
+  // PTY owner 注册：渲染进程告知主进程某个 PTY 的初始 owner key
+  // 用于主进程在 PTY 退出时清理所有关联的 sub-session
+  const ptyOwners = new Map<string, string>();
+  ipcMain.on('session:register-pty-owner', (_e, { ptyId, ownerKey }: { ptyId: string; ownerKey: string }) => {
+    ptyOwners.set(ptyId, ownerKey);
   });
   // terminal:listProfiles — 列出可用 shell profile
   ipcMain.handle('terminal:listProfiles', () => detectTerminalProfiles());

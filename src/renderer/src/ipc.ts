@@ -99,6 +99,10 @@ export interface PiApi {
   // 集成终端 cwd 变化回传（对齐 VS Code CwdDetectionCapability → 侧边栏目录分组实时刷新）：
   // 注入脚本发的 OSC 633;P;Cwd= 检测到可信 cwd 后，渲染端经此更新主进程缓存并推送实例列表。
   updateTerminalCwd(id: string, cwd: string): void;
+  // pi 进程内部执行 /new 时主进程推送的通知
+  onNewFromPi?: (cb: (payload: { ptyId: string; uuid: string; cwd: string; name: string }) => void) => void;
+  // 注册 PTY 初始 owner（pi-desktop 同步扩展用）
+  registerPtyOwner?: (ptyId: string, ownerKey: string) => void;
 
   // ╌╌ pi-tool 集成：Pi 配置、模型、MCP、Skills、扩展 ╌╌
   piSettingsGet(scope: 'global' | 'project'): Promise<{ data: unknown; raw: string; path: string; exists: boolean }>;
