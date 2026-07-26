@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 export interface ContextMenuItem {
   label: string;
@@ -18,29 +19,36 @@ interface Props {
   onClose: () => void;
 }
 
-export function ContextMenu({ x, y, items, onClose }: Props) {
+function ContextMenuInner({ x, y, items, onClose }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  // 用 ref 稳定 onClose 引用，避免父组件内联函数导致 useEffect 反复清理/重建。
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
     // 捕获阶段的 mousedown：即使焦点落在 xterm 终端内（其可能阻止事件冒泡），
     // document 层也能在捕获阶段拿到该事件，从而点按菜单外部（如主终端区）即关闭菜单。
     const onPointerDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      // 只处理左键点击，忽略右键和中键。右键 mousedown 先于 contextmenu 触发，
+      // 若不排除会导致刚弹出的菜单立即关闭（mousedown 捕获阶段先于 React 合成事件）。
+      if (e.button !== 0) return;
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onCloseRef.current();
+      }
     };
-    const onScroll = () => onClose();
-    const onResize = () => onClose();
+    const onResize = () => onCloseRef.current();
     document.addEventListener('mousedown', onPointerDown, true);
     document.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onPointerDown, true);
       document.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
     };
-  }, [onClose]);
+    // 依赖数组为空：onClose 经 ref 稳定引用，不随父组件重渲染变化。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 自动聚焦首个可用项（VSCode 风格：菜单打开即就绪键盘导航）
   useEffect(() => {
@@ -120,5 +128,19 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
         );
       })}
     </div>
+  );
+}
+
+/**
+ * 右键上下文菜单组件。
+ *
+ * 使用 createPortal 渲染到 document.body，确保菜单不受父级 CSS transform 属性
+ * 影响定位基准。若父级有 transform/translateX(0)（如 .rp-tab-content 的滑动切换），
+ * 会导致 position:fixed 的菜单定位到该容器而非视口，造成菜单位置偏移和 scroll 事件误触发。
+ */
+export function ContextMenu(props: Props) {
+  return createPortal(
+    <ContextMenuInner {...props} />,
+    document.body,
   );
 }
