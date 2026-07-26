@@ -805,6 +805,14 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
       const items: ContextMenuItem[] = [
         { label: '📄 新建文件', onClick: () => startNew(currentDirForMenu, false) },
         { label: '📁 新建目录', onClick: () => startNew(currentDirForMenu, true) },
+        { label: '分隔线', kind: 'separator' },
+        {
+          label: '📂 在文件管理器打开',
+          onClick: () => {
+            const absPath = toAbsolutePath(root, currentDirForMenu);
+            void pi.fsOpenWithSystem(absPath);
+          },
+        },
       ];
       if (hasClip) {
         items.push({ label: '分隔线', kind: 'separator' });
@@ -860,7 +868,14 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     // ── 在文件管理器打开 ──
     items.push({
       label: '📂 在文件管理器打开',
-      onClick: () => { void pi.fsShowInFolder(toAbsolutePath(root, relPath)); },
+      onClick: () => {
+        const absPath = toAbsolutePath(root, relPath);
+        if (isDir) {
+          void pi.fsOpenWithSystem(absPath);
+        } else {
+          void pi.fsShowInFolder(absPath);
+        }
+      },
     });
 
     return items;
