@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 
 export interface ContextMenuItem {
   label: string;
+  /** 图标 CSS 类名（如 codicon 或 SVG 图标类），渲染在 label 左侧。 */
+  icon?: string;
   danger?: boolean;
   onClick?: () => void;
   /** 'separator' 表示渲染为分隔线，此时 label/onClick/danger 均忽略。 */
@@ -48,12 +50,6 @@ function ContextMenuInner({ x, y, items, onClose }: Props) {
     };
     // 依赖数组为空：onClose 经 ref 稳定引用，不随父组件重渲染变化。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // 自动聚焦首个可用项（VSCode 风格：菜单打开即就绪键盘导航）
-  useEffect(() => {
-    const first = ref.current?.querySelector<HTMLButtonElement>('.context-menu-item:not(.disabled)');
-    first?.focus();
   }, []);
 
   // 键盘导航：上下箭头循环、Home/End 跳转首尾
@@ -122,6 +118,7 @@ function ContextMenuInner({ x, y, items, onClose }: Props) {
             tabIndex={-1}
             onClick={() => { if (!it.disabled) { it.onClick?.(); onClose(); } }}
           >
+            {it.icon && <span className={`context-menu-item-icon ${it.icon}`} />}
             <span className="context-menu-item-label">{it.label}</span>
             {it.shortcut && <span className="context-menu-item-shortcut">{it.shortcut}</span>}
           </button>

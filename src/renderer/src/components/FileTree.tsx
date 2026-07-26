@@ -803,21 +803,23 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     if (menu.target == null) {
       // 空白区域（目录内）
       const items: ContextMenuItem[] = [
-        { label: '📄 新建文件', onClick: () => startNew(currentDirForMenu, false) },
-        { label: '📁 新建目录', onClick: () => startNew(currentDirForMenu, true) },
+        { label: '新建文件', onClick: () => startNew(currentDirForMenu, false) },
+        { label: '新建文件夹', onClick: () => startNew(currentDirForMenu, true) },
+      ];
+      if (hasClip) {
+        items.push({ label: '分隔线', kind: 'separator' });
+        items.push({ label: '粘贴', onClick: () => void doPaste(currentDirForMenu) });
+      }
+      items.push(
         { label: '分隔线', kind: 'separator' },
         {
-          label: '📂 在文件管理器打开',
+          label: '在文件管理器中显示',
           onClick: () => {
             const absPath = toAbsolutePath(root, currentDirForMenu);
             void pi.fsOpenWithSystem(absPath);
           },
         },
-      ];
-      if (hasClip) {
-        items.push({ label: '分隔线', kind: 'separator' });
-        items.push({ label: '📋 粘贴', onClick: () => void doPaste(currentDirForMenu) });
-      }
+      );
       return items;
     }
 
@@ -832,42 +834,42 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
 
     // ── 目录专属：新建 ──
     if (isDir) {
-      items.push({ label: '📄 新建文件', onClick: () => startNew(relPath, false) });
-      items.push({ label: '📁 新建目录', onClick: () => startNew(relPath, true) });
+      items.push({ label: '新建文件', onClick: () => startNew(relPath, false) });
+      items.push({ label: '新建文件夹', onClick: () => startNew(relPath, true) });
       items.push({ label: '分隔线', kind: 'separator' });
     }
 
     // ── 复制 / 剪切 / 粘贴 ──
-    items.push({ label: '📋 复制', onClick: () => doCopy(targets) });
-    items.push({ label: '✂️ 剪切', onClick: () => doCut(targets) });
-    if (hasClip) items.push({ label: '📋 粘贴', onClick: () => void doPaste(pasteDir) });
+    items.push({ label: '复制', onClick: () => doCopy(targets) });
+    items.push({ label: '剪切', onClick: () => doCut(targets) });
+    if (hasClip) items.push({ label: '粘贴', onClick: () => void doPaste(pasteDir) });
     items.push({ label: '分隔线', kind: 'separator' });
 
     // ── 路径 / 名称复制 ──
     items.push({
-      label: '📋 复制绝对路径',
+      label: '复制路径',
       onClick: () => {
         const paths = targets.map((t) => toAbsolutePath(root, t.relPath));
         void navigator.clipboard.writeText(paths.join('\n')).catch(() => {});
       },
     });
     items.push({
-      label: '📋 复制文件名',
+      label: '复制相对路径',
       onClick: () => {
-        const names = targets.map((t) => basename(t.relPath));
+        const names = targets.map((t) => t.relPath);
         void navigator.clipboard.writeText(names.join('\n')).catch(() => {});
       },
     });
     items.push({ label: '分隔线', kind: 'separator' });
 
     // ── 重命名 / 删除 ──
-    items.push({ label: '✏️ 重命名', onClick: () => startRename(relPath) });
-    items.push({ label: '🗑️ 删除', danger: true, onClick: () => requestDelete(targets) });
+    items.push({ label: '重命名', onClick: () => startRename(relPath) });
+    items.push({ label: '删除', danger: true, onClick: () => requestDelete(targets) });
     items.push({ label: '分隔线', kind: 'separator' });
 
     // ── 在文件管理器打开 ──
     items.push({
-      label: '📂 在文件管理器打开',
+      label: '在文件管理器中显示',
       onClick: () => {
         const absPath = toAbsolutePath(root, relPath);
         if (isDir) {

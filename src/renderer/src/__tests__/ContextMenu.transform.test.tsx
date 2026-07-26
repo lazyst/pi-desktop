@@ -58,9 +58,9 @@ describe('ContextMenu — 右键菜单在 transform 容器内的行为', () => {
           x={100}
           y={200}
           items={[
-            { label: '📋 复制', onClick: onItemClick },
-            { label: '✂️ 剪切', onClick: vi.fn() },
-            { label: '🗑️ 删除', danger: true, onClick: vi.fn() },
+            { label: '复制', onClick: onItemClick },
+            { label: '剪切', onClick: vi.fn() },
+            { label: '删除', danger: true, onClick: vi.fn() },
           ]}
           onClose={onClose}
         />
@@ -68,7 +68,7 @@ describe('ContextMenu — 右键菜单在 transform 容器内的行为', () => {
     );
 
     // 验证菜单出现
-    expect(await screen.findByText('📋 复制')).toBeInTheDocument();
+    expect(await screen.findByText('复制')).toBeInTheDocument();
 
     // 关键验证：菜单没有立即关闭（onClose 没有被调用）
     // 如果 onPointerDown 捕获了之前的 mousedown(right-click)，onClose 会被立即调用
@@ -76,7 +76,7 @@ describe('ContextMenu — 右键菜单在 transform 容器内的行为', () => {
     expect(onClose).not.toHaveBeenCalled();
 
     // 验证菜单项可点击
-    fireEvent.click(screen.getByText('📋 复制'));
+    fireEvent.click(screen.getByText('复制'));
     expect(onItemClick).toHaveBeenCalled();
   });
 

@@ -912,33 +912,36 @@ html, body, #root {
   color: var(--accent-hover);
 }
 
-/* 右键上下文菜单 —— VSCode 风格 */
+/* 右键上下文菜单 —— 复刻 VSCode 风格 */
 .context-menu {
   position: fixed;
   z-index: 1000;
-  min-width: 180px;
+  min-width: 160px;
   padding: 4px 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-modal);
-  overflow: hidden;
+  font-size: var(--fs-md);
 }
 .context-menu-item {
   display: flex;
   align-items: center;
-  gap: 2ch;
   width: 100%;
-  min-height: 28px;
-  padding: 4px 12px;
+  height: 24px;
+  margin: 0 4px;
+  padding: 0 8px;
   background: transparent;
   border: none;
+  border-radius: var(--r-sm);
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: var(--fs-md);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
   text-align: left;
+  box-sizing: border-box;
 }
 .context-menu-item:hover,
 .context-menu-item:focus-visible {
@@ -946,18 +949,33 @@ html, body, #root {
   outline: none;
 }
 .context-menu-item:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--accent-soft);
+  outline: 1px solid var(--accent-soft);
+  outline-offset: -1px;
+}
+.context-menu-item-icon {
+  display: flex;
+  align-items: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
+  flex-shrink: 0;
+  font-size: var(--fs-lg);
+  color: var(--text-dim);
 }
 .context-menu-item-label {
-  flex: 1;
+  flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .context-menu-item-shortcut {
-  margin-left: auto;
-  padding-left: 4ch;
-  color: var(--text-faint);
+  display: inline-block;
+  flex: 2 1 auto;
+  padding: 0 0 0 4ch;
+  text-align: right;
   font-size: var(--fs-sm);
+  line-height: 1;
+  opacity: 0.7;
+  color: var(--text-faint);
 }
 .context-menu-item.danger {
   color: var(--danger);

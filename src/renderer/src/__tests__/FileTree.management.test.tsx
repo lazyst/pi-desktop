@@ -46,7 +46,7 @@ describe('FileTree 文件管理：根目录新建', () => {
     fireEvent.contextMenu(tree);
 
     // 菜单出现「新建文件」
-    const newFileItem = await screen.findByText('📄 新建文件');
+    const newFileItem = await screen.findByText('新建文件');
     fireEvent.click(newFileItem);
 
     // 根目录 inline input 出现（独立输入行）
