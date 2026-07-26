@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.6.0] — 2025-07
+
+### 新增
+
+- **Pi 启动方式改为 Orca 式 shell-ready 模式**：不再直接 spawn pi 进程，
+  改为先 spawn shell，等待 shell-ready 标记（OSC 777）后自动注入 pi 命令。
+  pi 退出后 shell 保留，用户可继续交互（#28）
+  - 支持 zsh / bash / PowerShell / Git Bash / cmd.exe 五种 shell
+  - 通过 OSC 133 D 序列检测 pi 退出，通知 UI 更新状态
+- **/new 命令与侧边栏联动**：pi 内部执行 /new 命令时，侧边栏即时显示新会话条目，
+  绿点指示运行状态，支持点击切换
+- **Tab 访问历史**：关闭当前 active tab 时回到上一个访问的 tab，而非第一个（#29）
+- **富文本编辑器 Ctrl+S 保存**：TipTap 编辑器支持 Ctrl+S 快捷键保存内容
+
+### 变更
+
+- **文件树右键菜单复刻 VS Code 风格**：UI 样式、行为、菜单位置完全对齐 VS Code
+- 文件树目录右键「在文件管理器打开」改为打开目录自身，空白区域新增该功能
+- 移除右侧栏目录选择下拉框的聚焦高亮光晕
+
+### 修复
+
+- **/new 后虚拟 session 未晋升**：unlinkDiskSession 未重置 entry.linked，
+  导致 reconcile 跳过新 .jsonl 文件的关联
+- **/new 后侧边栏残留「pi 未保存」**：onRelink 未移除虚拟 session 条目，
+  虚拟 key 的 liveToDisk 映射缺失
+- **detectPiExit 误触发**：OSC 133 D 只检查前缀，用户 shell VS Code shell integration
+  每次 prompt 都发射该序列，导致 session 过早标记 dead
+- **spawnPi 多余 TERM_PROGRAM=vscode**：触发用户 VS Code shell integration，
+  加剧 detectPiExit 误触发
+- 文件树右键菜单立即消失的问题
+
+---
+
 ## [0.5.0] — 2025-07
 
 ### 新增
