@@ -1,4 +1,4 @@
-import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo } from './types';
+import type { OpenRequest, SessionGroup, SessionInfo, SessionStatus, AppConfig, Bounds, TerminalProfile, IntegratedTerminalInfo, GitFileStatusEntry } from './types';
 
 export interface PiApi {
   listSessions(): Promise<SessionGroup[]>;
@@ -59,6 +59,10 @@ export interface PiApi {
   gitStatus(cwd: string): Promise<{ isGit: boolean; branch: string | null; additions: number; deletions: number; ahead: number; behind: number; porcelain: string }>;
   gitLog(cwd: string, limit?: number): Promise<Array<{ hash: string; author: string; date: string; message: string }>>;
   gitDiff(cwd: string, ref?: string): Promise<string>;
+  // 文件树专用：返回 { relPath → GitFileStatusEntry } 映射
+  gitFileStatusMap(cwd: string): Promise<Record<string, GitFileStatusEntry>>;
+  // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用）
+  gitIgnoredPaths(cwd: string): Promise<string[]>;
   // 工作区实时监听：订阅某仓库 cwd，变更时回调；返回取消订阅函数。
   gitWatch(cwd: string, cb: () => void): () => void;
   // 启动动画：renderer 首屏就绪后通知主进程显示窗口并淡出 splash（见 docs/adr/0003）。

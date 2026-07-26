@@ -8,7 +8,7 @@ import { UnifiedTerminalPool } from './unifiedTerminalPool';
 import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './sessionPool';
 import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir, watchFile } from './fsBridge';
-import { gitStatus, gitLog, gitDiff } from './gitBridge';
+import { gitStatus, gitLog, gitDiff, gitFileStatusMap, gitIgnoredPaths } from './gitBridge';
 import { checkForUpdate, getUpdateStatus, getCurrentVersion, downloadUpdate, installUpdate, cancelDownload } from './updateChecker';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -954,7 +954,10 @@ function openUrlInExternal(url: string): void {
       existing.refs += 1;
       return;
     }
-    const stop = watchDir(req.root, req.dir, (_filename) => {
+    const stop = watchDir(req.root, req.dir, (filename) => {
+      // fs.watch 在 Windows 上也会捕捉到 .git/ 目录的元数据变更（如修改时间），
+      // 跳过 .git 目录变更，避免 git status → .git/index 变化 → 触发 fsWatch → 循环
+      if (filename === '.git') return;
       if (!win.isDestroyed()) win.webContents.send('fs:change', { dir: req.dir });
     });
     dirWatchers.set(key, { stop, refs: 1 });
@@ -1023,9 +1026,28 @@ function openUrlInExternal(url: string): void {
     uniqueName(req.base, new Set(req.existing)));
 
   // ── Git 只读查看（D）── 非 git 目录优雅降级（见 gitBridge，永不抛错）。
-  ipcMain.handle('git:status', (_e, req: { cwd: string }) => gitStatus(req.cwd));
+  ipcMain.handle('git:status', async (_e, req: { cwd: string }) => {
+    gitCooldownUntil.set(req.cwd, Date.now() + 2000);
+    try {
+      return await gitStatus(req.cwd);
+    } finally {
+      // 命令完成后保持冷却，避免 Windows fs.watch 延迟事件触发循环
+    }
+  });
   ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
   ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
+  ipcMain.handle('git:fileStatusMap', async (_e, req: { cwd: string }) => {
+    gitCooldownUntil.set(req.cwd, Date.now() + 2000);
+    try {
+      return await gitFileStatusMap(req.cwd);
+    } finally {
+      // 命令完成后保持冷却
+    }
+  });
+  // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用，不绑定 git:change）
+  ipcMain.handle('git:ignoredPaths', async (_e, req: { cwd: string }) => {
+    return await gitIgnoredPaths(req.cwd);
+  });
   // ╌╌ 版本更新检查 ╌╌
   ipcMain.handle('update:check', async () => {
     try {
@@ -1074,6 +1096,10 @@ function openUrlInExternal(url: string): void {
   // .git/ 内 index/ref 变更），任意变更即经 'git:change' 推送 { cwd } 让渲染端刷新。
   // 同一 cwd 可能被多处订阅（GitView + 打开中的 GitDiffDrawer），用引用计数管理，
   // 最后一处取消才真正关闭底层 watcher，避免重复句柄。
+  //
+  // ⚠️ 无限循环防护：用时间戳冷却代替简单的 Set，避免 Windows fs.watch 延迟事件造成的循环。
+  //    git 命令执行后 2000ms 内的 fs.watch 事件均视为自触发，不发送 git:change。
+  const gitCooldownUntil = new Map<string, number>();
   const gitWatchers = new Map<string, { stop: () => void; refs: number }>();
   ipcMain.on('git:watch', (_e, req: { cwd: string }) => {
     const cwd = req.cwd;
@@ -1091,6 +1117,8 @@ function openUrlInExternal(url: string): void {
     };
     try {
       watcher = fs.watch(cwd, { recursive: true }, () => {
+        // 跳过 git 命令自身触发的 .git/ 变更，避免无限循环
+        if (Date.now() < (gitCooldownUntil.get(cwd) ?? 0)) return;
         if (!win.isDestroyed()) win.webContents.send('git:change', { cwd });
       });
       watcher.on('error', () => stop());

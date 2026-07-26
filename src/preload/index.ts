@@ -140,6 +140,9 @@ contextBridge.exposeInMainWorld('pi', {
   gitStatus: (cwd: string): Promise<any> => ipcRenderer.invoke('git:status', { cwd }),
   gitLog: (cwd: string, limit?: number): Promise<any[]> => ipcRenderer.invoke('git:log', { cwd, limit }),
   gitDiff: (cwd: string, ref?: string): Promise<string> => ipcRenderer.invoke('git:diff', { cwd, ref }),
+  gitFileStatusMap: (cwd: string): Promise<Record<string, any>> => ipcRenderer.invoke('git:fileStatusMap', { cwd }),
+  // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用）
+  gitIgnoredPaths: (cwd: string): Promise<string[]> => ipcRenderer.invoke('git:ignoredPaths', { cwd }),
   // 工作区实时监听：订阅某仓库 cwd，主进程经 'git:change' 推送变更；返回取消订阅函数。
   gitWatch: (cwd: string, cb: () => void): (() => void) => {
     const handler = (_e: unknown, m: { cwd: string }) => {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as nodePath from 'node:path';
 import { pi } from '../ipc';
 import { clipboard, type ClipItem } from '../lib/clipboard';
+import type { GitFileStatusEntry } from '../types';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
 import { FolderIcon, getFileIcon } from './FileIcons';
@@ -185,6 +186,12 @@ type TreeNodeProps = {
   cutRelPaths: Set<string>;
   // 本目录（node 为目录时）下正在新建的伪节点，渲染在 children 顶部。
   draftChild: DraftNode | null;
+  /** { relPath → GitFileStatusEntry } */
+  gitStatusMap: Record<string, GitFileStatusEntry>;
+  /** 目录冒泡状态：仅对目录有效，表示子项有改动 */
+  gitBubbleMap: Record<string, string>;
+  /** 检查路径是否被 .gitignore 忽略 */
+  isIgnored: (fullPath: string) => boolean;
 };
 
 function TreeNode({
@@ -207,6 +214,9 @@ function TreeNode({
   onDragStartNodes,
   cutRelPaths,
   draftChild,
+  gitStatusMap,
+  gitBubbleMap,
+  isIgnored,
 }: TreeNodeProps) {
   const open = expandedPaths.has(node.fullPath);
   const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
@@ -278,12 +288,28 @@ function TreeNode({
   // 重命名态：编辑的是本节点自身（伪节点不在此行渲染）。
   const isRenamingHere = editing != null && !editing.isNew && editing.relPath === node.fullPath;
 
+  // ── Git 状态推导 ──
+  const gitEntry = gitStatusMap[node.fullPath];
+  const gitBubble = gitBubbleMap[node.fullPath];
+  const gitCategory = gitEntry?.category ?? gitBubble ?? '';
+  const isStaged = gitEntry?.staged ?? false;
+  const isUnstaged = gitEntry?.unstaged ?? false;
+
   const className = [
     'file-row',
     selection.has(node.fullPath) ? 'selected' : '',
     cutRelPaths.has(node.fullPath) ? 'cut-pending' : '',
     dropTarget === node.fullPath ? 'drop-target' : '',
     isRenamingHere ? 'editing' : '',
+    gitCategory ? `git-${gitCategory}` : '',
+    // 被 .gitignore 忽略的文件/目录（自身或父目录在忽略集中）
+    !gitEntry && isIgnored(node.fullPath) ? 'git-ignored' : '',
+    // staged/unstaged 区分：仅 modified 需要区分，added 默认视为 staged
+    gitEntry && gitEntry.category === 'modified' && isStaged && !isUnstaged ? 'git-staged' : '',
+    gitEntry && gitEntry.category === 'modified' && isUnstaged && !isStaged ? 'git-unstaged' : '',
+    gitEntry && gitEntry.category === 'modified' && isStaged && isUnstaged ? 'git-staged-unstaged' : '',
+    // 目录冒泡：子项有改动时目录行显示特殊标记
+    gitBubble && !gitEntry ? 'git-bubble' : '',
   ].filter(Boolean).join(' ');
 
   const renderInput = (value: string, isDir: boolean) => (
@@ -346,7 +372,16 @@ function TreeNode({
         {isRenamingHere ? (
           renderInput(editing!.draftName, false)
         ) : (
-          <span className="file-name" title={node.fullPath}>{node.name}</span>
+          <span className="file-name" title={node.fullPath}>
+            {node.name}
+            {gitEntry?.isSymlink && <span className="git-symlink-arrow"> →</span>}
+          </span>
+        )}
+        {/* 子模块徽章 */}
+        {gitEntry?.isSubmodule && <span className="git-badge-submodule" title={gitEntry.submoduleDirty ? '子模块有未推送改动' : '子模块'}>S</span>}
+        {/* git 状态徽章字母 */}
+        {gitEntry && gitEntry.category !== 'submodule' && !isRenamingHere && (
+          <span className={`git-badge git-badge-${gitEntry.category}`} title={gitEntry.badge}>{gitEntry.badge}</span>
         )}
         {loading && (
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
@@ -388,6 +423,9 @@ function TreeNode({
               onDragStartNodes={onDragStartNodes}
               cutRelPaths={cutRelPaths}
               draftChild={null}
+              gitStatusMap={gitStatusMap}
+              gitBubbleMap={gitBubbleMap}
+              isIgnored={isIgnored}
             />
           ))}
         </div>
@@ -423,6 +461,76 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
   const [cutRelPaths, setCutRelPaths] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<ClipItem[] | null>(null);
 
+  // ── Git 状态映射：文件树节点颜色联动 ──
+  const [gitStatusMap, setGitStatusMap] = useState<Record<string, GitFileStatusEntry>>({});
+  // 目录冒泡：子项有改动时，父目录路径 → 冒泡类别
+  const [gitBubbleMap, setGitBubbleMap] = useState<Record<string, string>>({});
+  // 被 .gitignore 忽略的顶层路径集合（仅在文件树变化时刷新）
+  const [ignoredSet, setIgnoredSet] = useState<Set<string>>(new Set());
+
+  // 检查路径是否被忽略（自身或父目录在 ignoredSet 中）
+  const isIgnored = useCallback((fullPath: string): boolean => {
+    if (ignoredSet.has(fullPath)) return true;
+    // 沿路径向上检查父目录
+    let slashIdx = fullPath.indexOf('/');
+    while (slashIdx !== -1) {
+      if (ignoredSet.has(fullPath.substring(0, slashIdx))) return true;
+      slashIdx = fullPath.indexOf('/', slashIdx + 1);
+    }
+    return false;
+  }, [ignoredSet]);
+
+  // 刷新被忽略的路径集合（仅在文件树变化时调用，不绑定 git:change）
+  const refreshIgnoredPaths = useCallback(async () => {
+    if (!root) { setIgnoredSet(new Set()); return; }
+    try {
+      const paths = await pi.gitIgnoredPaths(root);
+      setIgnoredSet(new Set(paths));
+    } catch {
+      setIgnoredSet(new Set());
+    }
+  }, [root]);
+
+  // 从状态映射计算冒泡
+  const computeBubble = useCallback((statusMap: Record<string, GitFileStatusEntry>): Record<string, string> => {
+    const bubble: Record<string, string> = {};
+    for (const relPath of Object.keys(statusMap)) {
+      const entry = statusMap[relPath];
+      if (!entry || entry.category === 'submodule') continue;
+      let slashIdx = relPath.indexOf('/');
+      while (slashIdx !== -1) {
+        const parent = relPath.substring(0, slashIdx);
+        if (!statusMap[parent] && !bubble[parent]) {
+          bubble[parent] = entry.category;
+        }
+        slashIdx = relPath.indexOf('/', slashIdx + 1);
+      }
+    }
+    return bubble;
+  }, []);
+
+  // 获取 git 状态映射并订阅实时变更
+  const refreshGitStatus = useCallback(async () => {
+    if (!root) { setGitStatusMap({}); setGitBubbleMap({}); return; }
+    try {
+      const map = await pi.gitFileStatusMap(root);
+      setGitStatusMap(map);
+      setGitBubbleMap(computeBubble(map));
+    } catch {
+      setGitStatusMap({});
+      setGitBubbleMap({});
+    }
+  }, [root, computeBubble]);
+
+  useEffect(() => {
+    if (!root) return;
+    void refreshGitStatus();
+    void refreshIgnoredPaths();
+    // 注意：不订阅 git:watch（它用 fs.watch recursive:true 监视整个目录，
+    // 在 Windows 上 node_modules 等大目录会导致极高 CPU 占用）。
+    // git 状态刷新依赖根目录 fsWatch（下方 refreshDir 中调用）。
+  }, [root, refreshGitStatus, refreshIgnoredPaths]);
+
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
       const next = new Set(prev);
@@ -432,6 +540,8 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
   }, []);
 
   // 统一刷新（对齐 VS Code ExplorerModel.refresh）：根层重拉 roots，子目录 bump 版本。
+  // 用防抖隔离 git 相关刷新，避免每次 fsWatch 触发都执行昂贵的 git 命令。
+  const gitRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshDir = useCallback((relPath: string) => {
     model.refresh(relPath);
     if (relPath === '') {
@@ -439,11 +549,18 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
       fetchEntries(root, '')
         .then((entries) => { if (!cancelled.v) setRoots(entries); })
         .catch((e) => { if (!cancelled.v) setError(e instanceof Error ? e.message : String(e)); });
+      // 防抖 1s 执行 git 刷新，避免高频文件保存时反复调用 git status
+      if (gitRefreshTimer.current) clearTimeout(gitRefreshTimer.current);
+      gitRefreshTimer.current = setTimeout(() => {
+        gitRefreshTimer.current = null;
+        void refreshGitStatus();
+        void refreshIgnoredPaths();
+      }, 1000);
       return () => { cancelled.v = true; };
     }
     // 子目录：仅 bump 版本，TreeNode 在展开态自行重载。
     setTreeRefreshKey((k) => k + 1);
-  }, [root, model]);
+  }, [root, model, refreshGitStatus, refreshIgnoredPaths]);
 
   // 根目录（''）外部变更自动刷新：watch 根层直接子项，系统文件管理器在根目录
   // 新建/删除文件时实时反映到文件树（对齐 VS Code FileWatcher）。防抖 150ms。
@@ -835,6 +952,9 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
           onDropOnDir={onDropOnDir}
           onDragStartNodes={onDragStartNodes}
           cutRelPaths={cutRelPaths}
+          gitStatusMap={gitStatusMap}
+          gitBubbleMap={gitBubbleMap}
+          isIgnored={isIgnored}
           draftChild={
             editing && editing.isNew && editing.relPath === node.fullPath
               ? { name: editing.draftName, fullPath: `${node.fullPath}/__draft__`, isDir: editing.isDir, size: 0, isDraft: true }

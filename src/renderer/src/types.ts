@@ -112,3 +112,21 @@ export interface IntegratedTerminalInfo {
   cwd: string;
   title: string;       // 展示标题（profile label 或 cwd 末段）
 }
+
+// ── Git 文件树状态（与主进程 gitBridge.GitFileStatusEntry 对应）──
+export interface GitFileStatusEntry {
+  /** 简化类别，用于 CSS 颜色 */
+  category: 'modified' | 'added' | 'deleted' | 'ignored' | 'conflict' | 'submodule';
+  /** 是否已暂存（staged） */
+  staged: boolean;
+  /** 是否工作区有未暂存改动 */
+  unstaged: boolean;
+  /** 短徽章字母：M/A/D/?/U/R/C/! */
+  badge: string;
+  /** 是否为符号链接 */
+  isSymlink: boolean;
+  /** 是否为子模块 */
+  isSubmodule: boolean;
+  /** 子模块是否有未提交的改动（仅 isSubmodule=true 时有效） */
+  submoduleDirty?: boolean;
+}

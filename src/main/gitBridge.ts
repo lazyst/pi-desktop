@@ -117,6 +117,119 @@ export async function gitLog(cwd: string, limit = 100): Promise<GitLogEntry[]> {
 }
 
 /**
+ * 文件树用 git 状态条目：每个文件/目录的详细 git 状态。
+ */
+export interface GitFileStatusEntry {
+  /** 简化类别，用于 CSS 颜色 */
+  category: 'modified' | 'added' | 'deleted' | 'ignored' | 'conflict' | 'submodule';
+  /** 是否已暂存（staged） */
+  staged: boolean;
+  /** 是否工作区有未暂存改动 */
+  unstaged: boolean;
+  /** 短徽章字母：M/A/D/?/U/R/C/! */
+  badge: string;
+  /** 是否为符号链接 */
+  isSymlink: boolean;
+  /** 是否为子模块 */
+  isSubmodule: boolean;
+  /** 子模块是否有未提交的改动（仅 isSubmodule=true 时有效） */
+  submoduleDirty?: boolean;
+}
+
+/**
+ * 获取被 .gitignore 忽略的顶层路径集合（目录和文件）。
+ * 使用 `git status --ignored --short`，输出格式为 `!! <path>`，
+ * 目录只列出自身（不含内部文件），输出极简。
+ *
+ * 在文件树中使用：父目录被忽略则子项全部继承，无需逐文件检查。
+ */
+export async function gitIgnoredPaths(cwd: string): Promise<string[]> {
+  try {
+    const out = await git(cwd, ['status', '--ignored', '--short', '--untracked-files=normal']);
+    const paths: string[] = [];
+    for (const line of out.split('\n')) {
+      if (line.startsWith('!! ')) {
+        const p = line.slice(3).trim();
+        if (p) paths.push(p.endsWith('/') ? p.slice(0, -1) : p);
+      }
+    }
+    return paths;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 文件树用 git 状态映射：返回 { relPath → GitFileStatusEntry }。
+ *
+ * 包含：
+ *   - 工作区状态（modified/added/deleted/conflict）
+ *   - staged/unstaged 区分
+ *   - 短徽章字母
+ *
+ * 非 git 目录优雅降级返回空对象。
+ */
+export async function gitFileStatusMap(cwd: string): Promise<Record<string, GitFileStatusEntry>> {
+  try {
+    // 只运行 git status（不运行 git ls-files --stage 等额外命令，
+    // 避免大仓库中列出所有文件造成 CPU 和内存压力）
+    const porcelain = await git(cwd, ['status', '--porcelain=v1', '--untracked-files=normal']);
+
+    const map: Record<string, GitFileStatusEntry> = {};
+    for (const line of porcelain.split('\n')) {
+      if (!line.trim()) continue;
+      const xy = line.substring(0, 2);
+      const pathPart = line.substring(3).trim();
+      const actualPath = pathPart.includes(' -> ') ? pathPart.split(' -> ')[1].trim() : pathPart;
+
+      const x = xy[0];
+      const y = xy[1];
+      const staged = x !== ' ' && x !== '?';
+      const unstaged = y !== ' ' && y !== '?';
+
+      let category: GitFileStatusEntry['category'];
+      let badge: string;
+
+      if (x === 'U' || y === 'U' || (x === 'A' && y === 'A') || (x === 'D' && y === 'D')) {
+        category = 'conflict';
+        badge = 'U';
+      } else if (xy === '??') {
+        category = 'added';
+        badge = '?';
+      } else if (x === 'R' || x === 'C') {
+        category = 'modified';
+        badge = x;
+      } else if (x === 'M' || y === 'M') {
+        category = 'modified';
+        badge = 'M';
+      } else if (x === 'A' || y === 'A') {
+        category = 'added';
+        badge = 'A';
+      } else if (x === 'D' || y === 'D') {
+        category = 'deleted';
+        badge = 'D';
+      } else {
+        category = 'modified';
+        badge = 'M';
+      }
+
+      map[actualPath] = {
+        category,
+        staged,
+        unstaged,
+        badge,
+        isSymlink: false,
+        isSubmodule: false,
+      };
+    }
+
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Unified diff text. No `ref` → working tree diff (`git diff` + `--cached`).
  * With `ref` → that commit's diff (`git show <ref>`).
  */
