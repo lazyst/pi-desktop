@@ -503,6 +503,14 @@ export default function App() {
     }
   }, []);
 
+  // 侧边栏右键「查看会话」：在中间区以 tab 形式展示会话内容。
+  const handleViewContent = useCallback((sessionKey: string, sessionName: string) => {
+    // 从 disk 中查找该会话的 cwd
+    const session = disk.find((d) => d.key === sessionKey);
+    const cwd = session?.cwd ?? appWorkDir;
+    useTabStore.getState().openSessionContent(sessionKey, sessionName, cwd);
+  }, [disk, appWorkDir]);
+
   return (
     <div className="app">
       <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
@@ -536,6 +544,7 @@ export default function App() {
         onSelectCwd={handleSelectCwd}
         collapsedGroups={collapsedGroups}
         onCollapseGroup={handleCollapseGroup}
+        onViewContent={handleViewContent}
       />
       <CenterPane
         onOpenFile={handleOpenFile}

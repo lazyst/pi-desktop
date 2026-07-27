@@ -9,7 +9,7 @@ import type { IntegratedTerminalInfo } from '../types';
 import { capturePaneScrollState } from '../components/paneManager';
 
 /** Tab 内容类型。 */
-export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal';
+export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal' | 'session-content';
 
 /** Tab 落点区域：统一为 'editor'（抽屉已移除）。 */
 export type TabLocation = 'editor';
@@ -54,7 +54,15 @@ export interface IntegratedTerminalTab extends BaseTab {
   cwd: string;
 }
 
-export type Tab = SessionTab | PreviewTab | DiffTab | IntegratedTerminalTab;
+export interface SessionContentTab extends BaseTab {
+  kind: 'session-content';
+  location: 'editor';
+  sessionKey: string;
+  sessionName: string;
+  cwd: string;
+}
+
+export type Tab = SessionTab | PreviewTab | DiffTab | IntegratedTerminalTab | SessionContentTab;
 
 /** 取 tab 所属的工作目录（cwd）。preview 的 cwd 是 root，其余直接用 cwd 字段。 */
 export function getTabCwd(tab: Tab): string {
@@ -62,6 +70,7 @@ export function getTabCwd(tab: Tab): string {
     case 'session':
     case 'integrated-terminal':
     case 'diff':
+    case 'session-content':
       return tab.cwd;
     case 'preview':
       return tab.root;
@@ -96,6 +105,7 @@ export interface TabStore {
   openSession: (req: { key?: string; cwd?: string; name?: string }) => void;
   openPreview: (root: string, path: string, fileName?: string) => void;
   openDiff: (cwd: string, commitHash: string | null) => void;
+  openSessionContent: (sessionKey: string, sessionName: string, cwd: string) => void;
   openTerminal: (id: string, cwd: string, title: string) => void;
   selectTab: (id: string) => void;
   closeTab: (id: string) => void;
@@ -374,9 +384,45 @@ export const useTabStore = create<TabStore>((set) => ({
       };
     }),
 
-  openTerminal: (id, cwd, title) =>
+  openSessionContent: (sessionKey, sessionName, cwd) =>
     set((state) => {
       if (cwd !== state.activeCwd) captureOldCwdScrollStates(state.tabs, state.activeCwd);
+      const id = `session-content:${sessionKey}`;
+      const existing = state.tabs.find((t) => t.id === id);
+      let tabs: Tab[];
+      let newActiveTabId: string;
+      if (existing) {
+        tabs = state.tabs.map((t) =>
+          t.id === id ? { ...t, hidden: false } : t,
+        );
+        newActiveTabId = id;
+      } else {
+        const tab: SessionContentTab = {
+          id,
+          kind: 'session-content',
+          location: 'editor',
+          title: sessionName,
+          hidden: false,
+          order: nextOrder(state.tabs),
+          sessionKey,
+          sessionName,
+          cwd,
+        };
+        tabs = [...state.tabs, tab];
+        newActiveTabId = id;
+      }
+      return {
+        tabs,
+        activeTabId: newActiveTabId,
+        activeCwd: cwd,
+        cwdActiveTab: updateCwdActiveTab(state.cwdActiveTab, tabs, cwd, newActiveTabId),
+        cwdTabHistory: pushTabHistory(state.cwdTabHistory, cwd, newActiveTabId),
+        cwdOrder: ensureCwdOrder(state.cwdOrder, cwd),
+      };
+    }),
+
+  openTerminal: (id, cwd, title) =>
+    set((state) => {
       const existing = state.tabs.find((t) => t.id === id);
       let tabs: Tab[];
       let newActiveTabId: string;
@@ -594,6 +640,7 @@ export const useTabStore = create<TabStore>((set) => ({
       if (!tab) return {};
       const tabCwd = getTabCwd(tab);
       // session / integrated-terminal 终端：keep-alive，仅隐藏不卸载。
+      // session-content / preview / diff：真移除。
       if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
         if (state.tabs.some((t) => t.id === id && t.hidden)) return {};
         const tabs = state.tabs.map((t) => (t.id === id ? { ...t, hidden: true } : t));

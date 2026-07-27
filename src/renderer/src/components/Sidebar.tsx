@@ -17,6 +17,8 @@ interface Props {
   onRemoveDir: (cwd: string) => void;
   onTogglePin: (cwd: string) => void;
   onDeleteSession: (key: string, name: string) => void;
+  /** 右键「查看会话」：在中间区以 tab 形式展示会话内容。 */
+  onViewContent?: (key: string, name: string) => void;
   // 多选模式：整条侧边栏进入选择态，每条会话显示 checkbox，点击切换勾选。
   selectionMode?: boolean;
   selectedKeys?: Set<string>;
@@ -52,7 +54,7 @@ interface Props {
   onCollapseGroup?: (cwd: string, collapsed: boolean) => void;
 }
 
-export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, relink,
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, onViewContent, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
   sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd,
   collapsedGroups, onCollapseGroup }: Props) {
@@ -345,7 +347,11 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
         <ContextMenu
           x={menu.x}
           y={menu.y}
-          items={[{ label: '删除会话', danger: true, onClick: () => onDeleteSession(menu.key, menu.name) }]}
+          items={[
+            { label: '查看会话', onClick: () => onViewContent?.(menu.key, menu.name) },
+            { label: '分隔线', kind: 'separator' },
+            { label: '删除会话', danger: true, onClick: () => onDeleteSession(menu.key, menu.name) },
+          ]}
           onClose={() => setMenu(null)}
         />
       )}

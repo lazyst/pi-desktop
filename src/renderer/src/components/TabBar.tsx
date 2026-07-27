@@ -19,7 +19,7 @@ import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerm
 import { buildGroupedRows } from './tabGrouping';
 export type { RenderedRow } from './tabGrouping';
 
-export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal';
+export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal' | 'session-content';
 
 export interface TabBarItem {
   id: string;
@@ -62,6 +62,8 @@ const renderKindIcon = (kind: TabKind) => {
       return <IconGitDiff size={14} />;
     case 'integrated-terminal':
       return <IconTerminal size={14} />;
+    case 'session-content':
+      return <IconFile size={14} />;
     default:
       return null;
   }

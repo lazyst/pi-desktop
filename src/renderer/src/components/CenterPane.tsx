@@ -15,8 +15,9 @@ import { SessionPane } from './SessionPane';
 import { IntegratedPane } from './IntegratedPane';
 import { PreviewTab } from './PreviewTab';
 import { DiffTab } from './DiffTab';
+import { SessionContentView } from './SessionContentView';
 import { useTabStore, getTabCwd, cwdVisibleTabs } from '../store/tabStore';
-import type { Tab } from '../store/tabStore';
+import type { Tab, SessionContentTab } from '../store/tabStore';
 import { restorePaneScrollState } from './paneManager';
 
 interface Props {
@@ -54,7 +55,7 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs }: Props) 
     const state = useTabStore.getState();
     for (const t of state.tabs) {
       if (getTabCwd(t) !== activeCwd) continue;
-      if (t.kind !== 'session' && t.kind !== 'integrated-terminal') continue;
+      if (t.kind !== 'session' && t.kind !== 'integrated-terminal' && t.kind !== 'session-content') continue;
       restorePaneScrollState(t.id);
     }
   }, [activeCwd]);
@@ -156,6 +157,17 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs }: Props) 
                   onClose={() => closeCenterTab(t.id)}
                   onRegisterCloseGuard={registerCloseGuard}
                 />
+              </div>
+            );
+          }
+          if (t.kind === 'session-content') {
+            const sc = t as SessionContentTab;
+            return (
+              <div key={t.id} className={cls}>
+                <div className="session-content-tab-header">
+                  <span className="session-content-tab-title">💬 {sc.sessionName}</span>
+                </div>
+                <SessionContentView sessionKey={sc.sessionKey} sessionName={sc.sessionName} />
               </div>
             );
           }

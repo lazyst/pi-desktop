@@ -10,6 +10,8 @@ export interface SessionMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   toolName?: string;
+  /** 助理消息的思考过程（与 content 最终回复分开）。 */
+  thinking?: string;
 }
 
 export class SessionFileManager {
@@ -95,8 +97,19 @@ export class SessionFileManager {
             if (content) messages.push({ role: 'user', content });
           } else if (msg.role === 'assistant') {
             // 助理消息：content 可能包含 text / thinking / toolCall
-            const parts = extractContentParts(msg.content);
-            if (parts) messages.push({ role: 'assistant', content: parts });
+            // 提取 thinking 部分（type === 'thinking'）
+            let thinking: string | undefined;
+            if (Array.isArray(msg.content)) {
+              const thinkingParts = msg.content
+                .filter((p: any) => p?.type === 'thinking' && typeof p.thinking === 'string')
+                .map((p: any) => p.thinking);
+              if (thinkingParts.length > 0) thinking = thinkingParts.join('\n').trim();
+            }
+            // 提取 text 部分（最终回复）
+            const finalText = extractContentParts(msg.content);
+            if (finalText || thinking) {
+              messages.push({ role: 'assistant', content: finalText || '', thinking });
+            }
             // 检查是否有 toolCall 内嵌在 content 数组中
             if (Array.isArray(msg.content)) {
               for (const part of msg.content) {
