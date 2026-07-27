@@ -997,9 +997,9 @@ html, body, #root {
   white-space: nowrap;
   text-align: left;
   box-sizing: border-box;
+  outline: none;
 }
-.context-menu-item:hover,
-.context-menu-item:focus-visible {
+.context-menu-item[data-highlighted] {
   background: var(--bg-menu-hover);
   outline: none;
 }
@@ -1031,8 +1031,7 @@ html, body, #root {
 .context-menu-item.danger {
   color: var(--danger);
 }
-.context-menu-item.danger:hover,
-.context-menu-item.danger:focus-visible {
+.context-menu-item.danger[data-highlighted] {
   background: rgba(248, 81, 73, 0.12);
   color: var(--danger-hover);
 }
