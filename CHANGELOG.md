@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.8.1] — 2026-07
+
+### 新增
+
+- **文件树右键菜单「用系统默认程序打开」**：对所有非目录文件添加右键菜单项，
+  调用系统默认程序打开文件（HTML→浏览器、PDF→阅读器、图片→看图软件等），
+  由 OS 文件关联决定。
+
+- **终端链接检测增强（移植 orca 实现）**：
+  - link-provider-guard：守卫 link provider，防止 provideLinks 同步 throw 崩溃渲染器
+  - linkifier-hover-reset：清除 xterm linkifier hover 缓存，使新输出立即可链接化
+  - linkifier-hover-reset-on-write：流式输出后自动清除 hover 缓存，150ms throttle
+
+- **终端链接检测替换为 orca 保守精确版**：
+  - 不再自己检测 URL（交给 xterm web-links addon），避免 `abc://xxx` 等误判
+  - 文件路径检测要求含路径分隔符或有扩展名，过滤纯数字/flag/无扩展名非白名单单词
+  - 裸文件名白名单：`Makefile`, `Dockerfile`, `LICENSE`, `README` 等
+  - 支持带空格的路径名（`/Users/me/My Project/file.ts`）
+  - 移除旧 VS Code 版链接检测实现（`terminalLinks.ts`）
+  - 新增 144 个测试用例覆盖全部检测逻辑
+
+### 修复
+
+- **终端链接跳转错误处理**：EISDIR 降级到系统文件管理器打开目录，
+  ENOENT 显示友好提示「文件不存在或已被删除」，其他错误隐藏原始 IPC 错误详情
+- **右键菜单改用 `data-highlighted` 替代 `:hover` 消除边框**：
+  Radix UI DropdownMenu.Item 使用 data-highlighted 属性而非 CSS :hover 控制高亮，
+  彻底消除 :focus-visible 浏览器默认 outline 边框
+
+### 样式
+
+- 移除右键菜单 hover 高亮边框，仅保留浅色背景
+- 暗色主题右键菜单 hover 使用更亮的 `--bg-menu-hover: #222d3d`
+
 ## [0.8.0] — 2026-07
 
 ### 新增
