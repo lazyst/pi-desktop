@@ -74,6 +74,8 @@ import {
   registerUndeliverableWriteHandler,
 } from '../lib/terminal/write-pipeline-health';
 import { configureTerminalOutputBacklogCap } from '../lib/terminal/output-scheduler';
+import { guardLinkProvider, installGuardedLinkProviderRegistration } from '../lib/terminal/link-provider-guard';
+import { installTerminalLinkifierHoverResetOnWrite } from '../lib/terminal/linkifier-hover-reset-on-write';
 import {
   captureScrollState as captureScrollStateModule,
   restoreScrollState as restoreScrollStateModule,
@@ -288,6 +290,8 @@ export class XtermTerminal implements LiveTerminal {
   private serializeAddon: SerializeAddon | null = null;
   // 终端内链接 provider 的反注册函数（对齐 VS Code registerLinkProvider 的 IDisposable）。
   private linkProviderDisposable: { dispose: () => void } | null = null;
+  // 链接 hover 缓存重置的反注册函数（输出落地后自动清除缓存，使新 URL 立即可链接化）。
+  private linkifierHoverResetDisposable: { dispose: () => void } | null = null;
   // cwd 变化回调：集成终端把检测到的可信 cwd 回传主进程，驱动侧边栏目录分组实时刷新。
   onCwdChange: ((cwd: string) => void) | null = null;
   // 文件链接点击回调：把命中文件（含行号）回传壳，由文件树/编辑器定位选中（额外于系统打开）。
@@ -432,6 +436,8 @@ export class XtermTerminal implements LiveTerminal {
     this.serializeAddon = null;
     this.linkProviderDisposable?.dispose();
     this.linkProviderDisposable = null;
+    this.linkifierHoverResetDisposable?.dispose();
+    this.linkifierHoverResetDisposable = null;
     this.caps = null;
     this.offExit?.();
     this.offExit = null;
@@ -1015,7 +1021,7 @@ export class XtermTerminal implements LiveTerminal {
         cb(links);
       },
     };
-    return term.registerLinkProvider(provider as any);
+    return term.registerLinkProvider(guardLinkProvider(provider as any, 'pi-desktop-links'));
   }
 
   /** 当前视口是否贴底（对齐 VS Code：viewportY >= baseY 即贴底）。xterm 6 WebGL 下
@@ -1268,6 +1274,19 @@ export class XtermTerminal implements LiveTerminal {
       term.loadAddon(this.serializeAddon);
     } catch {
       this.serializeAddon = null;
+    }
+
+    // 安装 link provider 守卫：防止 provideLinks 中同步 throw 逃逸到 window.onerror 导致渲染器崩溃。
+    // 必须在任何 loadAddon/registerLinkProvider 调用之前执行（否则 web-links addon 内部注册的
+    // LinkComputer 不会被守卫）。
+    installGuardedLinkProviderRegistration(term);
+
+    // 链接 hover 缓存重置：输出落地后自动清除 xterm linkifier 的 hover 缓存，
+    // 使 AI 流式输出的 URL 无需鼠标移动即可被检测为可点击链接。
+    try {
+      this.linkifierHoverResetDisposable = installTerminalLinkifierHoverResetOnWrite(term);
+    } catch {
+      this.linkifierHoverResetDisposable = null;
     }
 
     // 终端内链接 provider（对齐 VS Code TerminalLinkManager 的 registerLinkProvider）：
