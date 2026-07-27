@@ -40,8 +40,6 @@ interface Props {
   // 「应用工作目录」分组的根目录（config.appWorkDir，默认 ~/piDesktop）。
   // 始终渲染为一个独立分组，收容与具体项目无关、与 pi-agent 闲聊/临时的集成终端。
   appWorkDir?: string;
-  // 各 cwd 下运行中的集成终端计数（纯终端数，不含会话数），key 为 cwd。
-  terminalsByCwd?: Map<string, number>;
   // 在「应用工作目录」分组下新建集成终端的入口。
   onNewTerminalInAppWorkDir?: () => void;
   // 在各项目分组（cwd）下新建集成终端的入口，传入具体目录。
@@ -56,7 +54,7 @@ interface Props {
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, onViewContent, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
-  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, terminalsByCwd, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd,
+  sidebarWidth, onSidebarResize, addedDirs, appWorkDir, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd,
   collapsedGroups, onCollapseGroup }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
@@ -136,9 +134,6 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
     groups.push({ cwd: appWorkDir, items: [], isAppWorkDir: true });
   }
 
-  // 取某 cwd 下运行中的集成终端计数（纯终端数）；无则 0。
-  const terminalCount = (cwd: string): number => terminalsByCwd?.get(cwd) ?? 0;
-
   // 组内会话排序：未晋升（unsaved）的排最前，其余按时间倒序（最新在前）。
   // time 形如 'YYYY-MM-DD HH:MM'，字典序即时间序。
   const sortedItems = (items: Session[]): Session[] =>
@@ -176,8 +171,6 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
           const items = sortedItems(g.items);
           const visible = isOpen ? items : items.slice(0, 5);
           const hidden = items.length - visible.length;
-          const termCount = terminalCount(g.cwd);
-          const showTermBadge = termCount > 0;
           return (
             <div key={g.cwd} className={`group${isPinned ? ' pinned' : ''}${isCollapsed ? ' collapsed' : ''}`}>
               <div className="group-title" title={isCollapsed ? '展开分组' : '折叠分组'} onClick={() => onCollapseGroup?.(g.cwd, !isCollapsed)}>
@@ -190,7 +183,6 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                 </span>
                 <span className="group-name" title={g.cwd}>
                   {`📁 ${g.cwd.split(/[\\/]/).pop() || g.cwd}`}
-                  {showTermBadge && <span className="terminal-count" title={`${termCount} 个集成终端运行中`}>({termCount})</span>}
                 </span>
                 <span className="group-actions">
                   <button

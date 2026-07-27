@@ -8,7 +8,7 @@
 //     ├─ .center-pane-cwd-label（当前目录标签）
 //     ├─ TabBar（当前目录的 tab 条）
 //     └─ .center-pane-body（flex:1，当前目录的所有 tab 内容，非 active 的 display:none）
-import { useRef, useMemo, useEffect, useCallback } from 'react';
+import { useRef, useMemo, useEffect, useCallback, useState } from 'react';
 import { TabBar } from './TabBar';
 import type { TabKind } from './TabBar';
 import { SessionPane } from './SessionPane';
@@ -40,6 +40,8 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
   const reorderTabs = useTabStore((s) => s.reorderTabs);
   const selectTab = useTabStore((s) => s.selectTab);
   const setActiveCwd = useTabStore((s) => s.setActiveCwd);
+  const [cwdDropdownOpen, setCwdDropdownOpen] = useState(false);
+  const cwdDropdownRef = useRef<HTMLDivElement>(null);
 
   // 当前目录的可见 tab（给 TabBar 用）
   const orderedVisibleTabs = useMemo(
@@ -103,27 +105,69 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
 
   // 保留空变量以兼容未来扩展
 
+  // 目录 → 可见 tab 数量映射（供 cwd-select 下拉显示）
+  const cwdTabCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of addedDirs ?? []) {
+      counts.set(c, cwdVisibleTabs(tabs, c).length);
+    }
+    return counts;
+  }, [tabs, addedDirs]);
+
+  // 点击外部关闭下拉框
+  useEffect(() => {
+    if (!cwdDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (cwdDropdownRef.current && !cwdDropdownRef.current.contains(e.target as Node)) {
+        setCwdDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [cwdDropdownOpen]);
+
   const hasContent = orderedVisibleTabs.length > 0;
 
   return (
     <div className="center-pane">
       {/* 目录标签：下拉菜单切换工作区 */}
       <div className="center-pane-cwd-bar">
-        <select
-          className="cwd-select"
-          value={activeCwd ?? ''}
-          onChange={(e) => { const v = e.target.value; if (v) handleSetActiveCwd(v); }}
-        >
-          <option value="" disabled>{activeCwd ? '切换工作区…' : '选择工作目录'}</option>
-          {addedDirs?.map((c) => {
-            const name = c.split(/[\\/]/).pop() || c;
-            return (
-              <option key={c} value={c}>
-                📁 {name}
-              </option>
-            );
-          })}
-        </select>
+        <div className="cwd-select-wrapper" ref={cwdDropdownRef}>
+          <button
+            className="cwd-select"
+            onClick={() => setCwdDropdownOpen(!cwdDropdownOpen)}
+          >
+            {activeCwd
+              ? (() => {
+                  const name = activeCwd.split(/[\\/]/).pop() || activeCwd;
+                  const count = cwdTabCounts.get(activeCwd) ?? 0;
+                  return <>{name}{count > 0 && <span className="cwd-tab-count"> ({count})</span>}</>;
+                })()
+              : '选择工作目录'}
+          </button>
+          {cwdDropdownOpen && (
+            <div className="cwd-dropdown">
+              {addedDirs?.map((c) => {
+                const name = c.split(/[\\/]/).pop() || c;
+                const count = cwdTabCounts.get(c) ?? 0;
+                const isActive = c === activeCwd;
+                return (
+                  <div
+                    key={c}
+                    className={`cwd-dropdown-item${isActive ? ' active' : ''}`}
+                    onClick={() => {
+                      handleSetActiveCwd(c);
+                      setCwdDropdownOpen(false);
+                    }}
+                  >
+                    {name}
+                    {count > 0 && <span className="cwd-tab-count"> ({count})</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
       <TabBar
         tabs={orderedVisibleTabs.map((t) => ({

@@ -68,9 +68,13 @@ html, body, #root {
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }
-.cwd-select {
+.cwd-select-wrapper {
+  position: relative;
   flex: 1;
-  min-width: 0;
+}
+
+.cwd-select {
+  width: 100%;
   padding: 1px 4px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
@@ -80,6 +84,7 @@ html, body, #root {
   font-size: var(--fs-xs);
   cursor: pointer;
   outline: none;
+  text-align: center;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -93,11 +98,42 @@ html, body, #root {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
-.cwd-select option {
-  color: var(--text);
+
+.cwd-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  margin-top: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
   background: var(--bg-app);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.cwd-dropdown-item {
+  padding: 4px 8px;
+  cursor: pointer;
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
+  color: var(--text);
+  transition: background var(--transition);
+  text-align: center;
+}
+.cwd-dropdown-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.cwd-dropdown-item.active {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: var(--accent);
+}
+
+.cwd-tab-count {
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
 }
 
 /* ── 集成终端：Tab 栏 / Tab / 新建按钮 / xterm 宿主 ──
@@ -603,20 +639,6 @@ html, body, #root {
 .group-name { flex: 1; min-width: 0; padding-right: 140px; }
 
 /* 运行中终端计数徽标：(n) 高亮药丸 */
-.terminal-count {
-  margin-left: auto;
-  flex: none;
-  font-size: var(--fs-xs);
-  font-family: var(--font-mono);
-  font-weight: var(--fw-semibold);
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  padding: 0 6px;
-  border-radius: 4px;
-  line-height: 1.6;
-  white-space: nowrap;
-}
-
 /* 目录 hover 操作（新建会话 / 置顶）：默认淡出，hover/focus 淡入，复用 --transition */
 .group-actions {
   display: flex;

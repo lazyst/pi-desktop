@@ -48,7 +48,6 @@ function renderSidebar(overrides: any = {}) {
       onRemoveDir={overrides.onRemoveDir ?? onRemoveDir}
       addedDirs={overrides.addedDirs ?? []}
       appWorkDir={overrides.appWorkDir ?? ''}
-      terminalsByCwd={overrides.terminalsByCwd ?? new Map<string, number>()}
       onNewTerminalInAppWorkDir={overrides.onNewTerminalInAppWorkDir ?? onNewTerminalInAppWorkDir}
       onNewTerminalInCwd={overrides.onNewTerminalInCwd ?? onNewTerminalInCwd}
     />,
@@ -234,14 +233,6 @@ describe('Sidebar', () => {
     expect(title.closest('.group-name')).toHaveAttribute('title', 'C:\\Users\\hcz\\piDesktop');
   });
 
-  it('app work dir group shows a terminal count badge from terminalsByCwd', () => {
-    const map = new Map<string, number>([['C:\\Users\\hcz\\piDesktop', 3]]);
-    renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop', terminalsByCwd: map });
-    const badge = screen.getByText('(3)');
-    expect(badge).toBeInTheDocument();
-    expect(badge).toHaveClass('terminal-count');
-  });
-
   it('app work dir group "+" (terminal) calls onNewTerminalInAppWorkDir', () => {
     const { onNewTerminalInAppWorkDir } = renderSidebar({ appWorkDir: 'C:\\Users\\hcz\\piDesktop' });
     fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\piDesktop 新建集成终端'));
@@ -266,13 +257,11 @@ describe('Sidebar', () => {
     expect(screen.queryByLabelText('移除目录 C:\\Users\\hcz\\piDesktop')).toBeNull();
   });
 
-  it('project group shows terminal count badge and keeps its session actions', () => {
-    const map = new Map<string, number>([['C:\\Users\\hcz\\project', 2]]);
-    const { onTogglePin, onNewTerminalInCwd } = renderSidebar({ terminalsByCwd: map });
-    expect(screen.getByText('(2)')).toBeInTheDocument();
+  it('project group keeps its session actions', () => {
+    const { onTogglePin, onNewTerminalInCwd } = renderSidebar({});
     fireEvent.click(screen.getByLabelText('置顶 C:\\Users\\hcz\\project'));
     expect(onTogglePin).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
-    // 项目分组新增“新建集成终端”入口
+    // 项目分组新增"新建集成终端"入口
     fireEvent.click(screen.getByLabelText('在 C:\\Users\\hcz\\project 新建集成终端'));
     expect(onNewTerminalInCwd).toHaveBeenCalledWith('C:\\Users\\hcz\\project');
   });

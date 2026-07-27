@@ -60,8 +60,6 @@ export default function App() {
   const tabs = useTabStore((s) => s.tabs);
   const activeTabId = useTabStore((s) => s.activeTabId);
   const activeCwd = useTabStore((s) => s.activeCwd);
-  // 终端实例列表订阅：仅用于 App 本地的侧边栏分组计数（terminalsByCwd 派生）。
-  const terminals = useTabStore((s) => s.terminals);
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
   // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次的 cwd，
   // 供右栏文件树/Git 自动模式稳定跟随。
@@ -254,26 +252,6 @@ export default function App() {
     ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
     ...virtualSessions.filter((s) => addedSet.has(s.cwd)),
   ];
-
-  // 集成终端按 cwd 聚合计数（纯终端数，不含 pi 会话数）：
-  //  - 终端 cwd === appWorkDir → 归入「应用工作目录」分组；
-  //  - 否则若命中某会话分组 cwd → 归入该项目分组；
-  //  - 其余（历史遗留 / 改 appWorkDir 前的旧终端，无对应会话分组）→ 归入空串兜底 key，
-  //    不污染 appWorkDir 计数（对齐 ADR §4/§5.3）。渲染层对该兜底 key 不显示徽标。
-  // 关键：appWorkDir 优先于项目 cwd 判定，避免「应用目录 == 某项目目录」时双重计数。
-  const terminalsByCwd = useMemo(() => {
-    const map = new Map<string, number>();
-    const sessionCwds = new Set(sessions.map((s) => s.cwd));
-    for (const t of terminals) {
-      const owner = appWorkDir && t.cwd === appWorkDir
-        ? appWorkDir
-        : sessionCwds.has(t.cwd)
-          ? t.cwd
-          : ''; // 无匹配分组（历史/旧终端）兜底进空串 key
-      map.set(owner, (map.get(owner) ?? 0) + 1);
-    }
-    return map;
-  }, [terminals, appWorkDir, sessions]);
 
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
@@ -553,7 +531,6 @@ export default function App() {
         sidebarWidth={sidebarWidth}
         onSidebarResize={handleSidebarResize}
         appWorkDir={appWorkDir}
-        terminalsByCwd={terminalsByCwd}
         onNewTerminalInAppWorkDir={handleNewTerminalInAppWorkDir}
         onNewTerminalInCwd={handleNewTerminalInCwd}
         onSelectCwd={handleSelectCwd}
