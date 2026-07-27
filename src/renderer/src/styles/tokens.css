@@ -25,6 +25,7 @@
   --bg-app: #0d1117;
   --bg-panel: #161b22;
   --bg-hover: #1c2230;
+  --bg-menu-hover: #222d3d;
   --bg-active: rgba(124, 156, 255, 0.10);
   --bg-elevated: #1b2230;
   /* 编辑器专用表面背景：与 --bg-panel 一致（GitHub Dark 冷色板 #161b22），
@@ -131,6 +132,7 @@ body {
   --bg-app: #ffffff;
   --bg-panel: #f6f8fa;
   --bg-hover: #eaeef2;
+  --bg-menu-hover: #eaeef2;
   --bg-active: rgba(59, 91, 219, 0.10);
   --bg-elevated: #ffffff;
   /* 编辑器专用表面背景：浅色模式下 vs 主题内置背景为 #fffffe，与面板 #f6f8fa 接近，故沿用。 */

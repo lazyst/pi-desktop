@@ -1000,7 +1000,7 @@ html, body, #root {
 }
 .context-menu-item:hover,
 .context-menu-item:focus-visible {
-  background: var(--bg-hover);
+  background: var(--bg-menu-hover);
   outline: none;
 }
 .context-menu-item-icon {
