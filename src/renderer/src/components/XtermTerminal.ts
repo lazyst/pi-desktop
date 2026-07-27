@@ -58,7 +58,8 @@ import {
   CommandDetectionCapability,
   CwdDetectionCapability,
 } from './terminalCapabilities';
-import { detectLinksInLine, buildLink } from './terminalLinks';
+import { extractTerminalFileLinks, resolveTerminalFileLink } from '../lib/terminal/terminal-links';
+import type { ParsedTerminalFileLink } from '../lib/terminal/terminal-links';
 import { MouseWheelClassifier } from './mouseWheelClassifier';
 import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
@@ -957,12 +958,11 @@ export class XtermTerminal implements LiveTerminal {
   }
 
   /** 注册终端内链接 provider（对齐 VS Code TerminalLinkManager.registerLinkProvider）。
-   * 实现 xterm ILinkProvider：对指定 buffer 行调用 detectLinksInLine，把命中转为 xterm ILink。
-   * 点击 file 链接 → pi.fsOpenWithSystem + onOpenFile 回调；点击 url → pi.openExternal。
+   * 使用 orca 移植的 terminal-links 模块检测文件链接，保守精确，避免误判。
+   * URL 链接由 xterm 内置的 web-links addon 处理，本 provider 不检测 URL。
+   * 点击 file 链接 → pi.fsOpenWithSystem + onOpenFile 回调。
    * 返回反注册函数（unmount 时调用）。 */
   private _registerTerminalLinkProvider(term: Terminal): { dispose: () => void } {
-    // 检测是否为 Windows 平台（用于链接检测中的路径解析）。
-    const isWindows = navigator.platform?.toLowerCase().includes('win') ?? false;
     const provider = {
       provideLinks: (bufferLineNumber: number, cb: (links: any[] | undefined) => void) => {
         if (this.disposed || !term.buffer) {
@@ -971,51 +971,65 @@ export class XtermTerminal implements LiveTerminal {
         }
         const line = term.buffer.active.getLine(bufferLineNumber - 1);
         const text = line?.translateToString(true) ?? '';
-        // 相对路径解析：用当前 cwd（来自 CwdDetectionCapability）补全。
-        const cwd = this.caps?.get<CwdDetectionCapability>(TerminalCapability.CwdDetection)?.cwd;
-        const resolvePath = (p: string): string => {
-          if (!cwd) return p;
-          if (p.startsWith('./')) return cwd.replace(/[\\/]+$/, '') + '/' + p.slice(2);
-          if (p.startsWith('../')) {
-            // 仅处理单层 ..，递归上溯用 URL 归一化
-            try { return new URL(p, 'file://' + cwd + '/').pathname; } catch { return p; }
-          }
-          if (p === '~' || p.startsWith('~/')) return p; // 主目录本项目不解析，保持原样
-          return p;
-        };
-        const matches = detectLinksInLine(text, isWindows, resolvePath);
-        if (!matches.length) {
+        const fileLinks = extractTerminalFileLinks(text);
+        if (!fileLinks.length) {
           cb(undefined);
           return;
         }
-        const links = matches.map((m) => {
-          const built = buildLink(m, {
-            openFile: (path, lineNum, colNum) => {
-              // 先在 pi-desktop 编辑器中打开（通过 onOpenFile 回调），
-              // 若编辑器不可用则回退到系统默认程序。
+        // 相对路径解析：用当前 cwd（来自 CwdDetectionCapability）补全。
+        const cwd = this.caps?.get<CwdDetectionCapability>(TerminalCapability.CwdDetection)?.cwd;
+        const links = fileLinks.map((m: ParsedTerminalFileLink) => {
+          const resolved = cwd ? resolveTerminalFileLink(m, cwd) : null;
+          const path = resolved?.absolutePath ?? m.pathText;
+          const lineNum = m.line ?? undefined;
+          const colNum = m.column ?? undefined;
+          return {
+            range: {
+              start: { x: m.startIndex + 1, y: bufferLineNumber },
+              end: { x: m.endIndex + 1, y: bufferLineNumber },
+            },
+            text: m.displayText,
+            decorations: { pointerCursor: true, underline: true },
+            activate: (event?: MouseEvent) => {
+              if (!event || !(event.ctrlKey || event.metaKey)) return;
               if (this.onOpenFile) {
                 this.onOpenFile(path, lineNum, colNum);
               } else {
                 this.pi.fsOpenWithSystem?.(path).catch(() => {});
               }
             },
-            openExternal: (url) => {
-              // 使用 pi.openExternal（主进程 app:openExternal），
-              // 已改用 child_process.exec 绕过 Electron 的 shell.openExternal 安全对话框。
-              this.pi.openExternal(url).catch(() => {});
+            hover: (event: MouseEvent) => {
+              const doc = document;
+              const existing = doc.querySelector('.terminal-link-tooltip');
+              if (existing) existing.remove();
+              const tooltipEl = doc.createElement('div');
+              tooltipEl.className = 'terminal-link-tooltip';
+              tooltipEl.textContent = 'Ctrl+click 打开链接';
+              tooltipEl.style.cssText = `
+                position: fixed;
+                left: ${event.clientX}px;
+                top: ${event.clientY - 28}px;
+                background: var(--bg-over, #2d2d2d);
+                color: var(--text, #fff);
+                padding: 2px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                pointer-events: none;
+                z-index: 1000;
+                white-space: nowrap;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                opacity: 0;
+                transition: opacity 0.15s ease;
+              `;
+              doc.body.appendChild(tooltipEl);
+              requestAnimationFrame(() => {
+                if (tooltipEl) tooltipEl.style.opacity = '1';
+              });
             },
-          });
-          // 填充绝对行号（detectLinks 只给列号，行号由 provider 上下文提供）。
-          return {
-            range: {
-              start: { x: built.range.start.x, y: bufferLineNumber },
-              end: { x: built.range.end.x, y: bufferLineNumber },
+            leave: () => {
+              const el = document.querySelector('.terminal-link-tooltip');
+              el?.remove();
             },
-            text: built.text,
-            activate: built.activate,
-            hover: built.hover,
-            leave: built.leave,
-            decorations: built.decorations,
           };
         });
         cb(links);

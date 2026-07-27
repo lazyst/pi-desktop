@@ -19,6 +19,22 @@
   - 滚动条同步（scrollbar-sync）：resize 后强制滚动条 thumb 同步
   - 滚动静像（scroll-buffer-snapshot）：纯函数读取 buffer 状态
 
+### 新增
+
+- **终端链接检测增强**：从 orca 移植链接检测基础设施
+  - link-provider-guard：守卫 link provider，防止 provideLinks 中同步 throw 崩溃渲染器
+  - linkifier-hover-reset：清除 xterm linkifier hover 缓存，使流式输出中的新 URL 无需鼠标移动即可被检测
+  - linkifier-hover-reset-on-write：输出落地后 150ms 自动清除 hover 缓存，悬停中跳过
+
+### 变更
+
+- **终端链接检测替换为 orca 实现**：移除 VS Code 版过于激进的链接检测，替换为 orca 保守精确的版本
+  - 不再自己检测 URL（交给 xterm web-links addon），避免 `abc://xxx` 等误判
+  - 文件路径检测要求含路径分隔符或有扩展名，过滤纯数字/flag/无扩展名非白名单单词
+  - 裸文件名白名单：`Makefile`, `Dockerfile`, `LICENSE`, `README` 等
+  - 支持带空格的路径名（`/Users/me/My Project/file.ts`）
+  - 新增 46 个链接检测测试用例
+
 ### 变更
 
 - **XtermTerminal.ts 重构**：1833 行单体类拆分为 14 个模块 + 集成层，保持全部公开接口不变
