@@ -10,7 +10,17 @@ function makePi() {
     { name: 'README.md', isDir: false, size: 10, mtime: 0 },
   ];
   const api = {
-    fsListDir: vi.fn(async () => files.map((f) => ({ ...f }))),
+    fsListDir: vi.fn(async (_root: string, dirPath: string) => {
+      if (dirPath === '') return files.map((f) => ({ ...f }));
+      if (dirPath === 'src') return [
+        { name: 'index.ts', isDir: false, size: 5, mtime: 0 },
+        { name: 'components', isDir: true, size: 0, mtime: 0 },
+      ];
+      if (dirPath === 'src/components') return [
+        { name: 'App.tsx', isDir: false, size: 10, mtime: 0 },
+      ];
+      return [];
+    }),
     fsListNames: vi.fn(async () => files.map((f) => f.name)),
     fsUniqueName: vi.fn(async (base: string) => base),
     fsCreateFile: vi.fn(async (_root: string, relPath: string) => {
@@ -24,7 +34,10 @@ function makePi() {
     gitStatus: vi.fn(async () => ({ isGit: true, branch: 'main', dirty: false, ahead: 0, behind: 0, porcelain: '## main' })),
     gitLog: vi.fn(async () => []),
     gitDiff: vi.fn(async () => ''),
-  };
+    gitFileStatusMap: vi.fn(async () => ({})),
+    gitIgnoredPaths: vi.fn(async () => []),
+    fsWatch: vi.fn(() => vi.fn()),
+  } as any;
   return api;
 }
 
@@ -62,5 +75,72 @@ describe('FileTree 文件管理：根目录新建', () => {
 
     // 断言树刷新后出现新文件（bumpDir('') 重新拉取 roots）
     expect(await screen.findByText('hello.txt')).toBeInTheDocument();
+  });
+});
+
+describe('FileTree 虚拟滚动：目录展开', () => {
+  let api: ReturnType<typeof makePi>;
+  beforeEach(() => {
+    api = makePi();
+    (window as any).pi = api;
+  });
+
+  it('点击目录展开 → 子文件可见', async () => {
+    render(<FileTree root={'C:\\work'} onOpenFile={vi.fn()} />);
+
+    // 等待根目录渲染
+    expect(await screen.findByText('src')).toBeInTheDocument();
+    expect(await screen.findByText('README.md')).toBeInTheDocument();
+
+    // 点击 src 目录展开
+    const srcEl = screen.getByText('src');
+    const srcRow = srcEl.closest('.file-row') as HTMLElement;
+    fireEvent.click(srcRow);
+
+    // 等待子文件加载并渲染
+    await waitFor(() => {
+      expect(screen.getByText('index.ts')).toBeInTheDocument();
+    });
+    expect(screen.getByText('components')).toBeInTheDocument();
+  });
+
+  it('展开目录后再点击折叠 → 子文件隐藏', async () => {
+    render(<FileTree root={'C:\\work'} onOpenFile={vi.fn()} />);
+
+    // 展开 src
+    const srcEl = await screen.findByText('src');
+    const srcRow = srcEl.closest('.file-row') as HTMLElement;
+    fireEvent.click(srcRow);
+    await waitFor(() => {
+      expect(screen.getByText('index.ts')).toBeInTheDocument();
+    });
+
+    // 折叠 src
+    fireEvent.click(srcRow);
+
+    // 子文件不再可见
+    await waitFor(() => {
+      expect(screen.queryByText('index.ts')).not.toBeInTheDocument();
+    });
+  });
+
+  it('嵌套目录：展开 src/components 可见 App.tsx', async () => {
+    render(<FileTree root={'C:\\work'} onOpenFile={vi.fn()} />);
+
+    // 展开 src
+    const srcEl = await screen.findByText('src');
+    const srcRow = srcEl.closest('.file-row') as HTMLElement;
+    fireEvent.click(srcRow);
+    await waitFor(() => {
+      expect(screen.getByText('components')).toBeInTheDocument();
+    });
+
+    // 展开 src/components
+    const componentsEl = screen.getByText('components');
+    const componentsRow = componentsEl.closest('.file-row') as HTMLElement;
+    fireEvent.click(componentsRow);
+    await waitFor(() => {
+      expect(screen.getByText('App.tsx')).toBeInTheDocument();
+    });
   });
 });

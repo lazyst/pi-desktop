@@ -149,9 +149,11 @@ export default function App() {
       setAddedDirs(dirs); // 恢复上一次选择的目录（lastActiveDir），用于右栏默认根目录
       if (cfg.lastActiveDir) {
         setLastSessionCwd(cfg.lastActiveDir);
+        useTabStore.getState().setActiveCwd(cfg.lastActiveDir);
       } else if (dirs.length > 0) {
         // 首次启动 & 无上次记录 → 默认选择第一个已添加目录（即 appWorkDir）
         setLastSessionCwd(dirs[0]);
+        useTabStore.getState().setActiveCwd(dirs[0]);
       }
       if (Array.isArray(cfg.collapsedGroups)) setCollapsedGroups(cfg.collapsedGroups.filter((x) => typeof x === 'string')); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
@@ -538,11 +540,12 @@ export default function App() {
       <CenterPane
         onOpenFile={handleOpenFile}
         onDestroyTerminal={handleDestroyTerminal}
+        addedDirs={Array.from(visibleDirs)}
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}
         activeCwd={lastSessionCwd}
-        onPickDirectory={(cwd) => { setLastSessionCwd(cwd); pi.setConfig({ lastActiveDir: cwd }).catch(() => {}); }}
+        onPickDirectory={(cwd) => { pi.setConfig({ lastActiveDir: cwd }).catch(() => {}); }}
         onOpenFile={handleOpenFile}
         onOpenWorkDiff={openWorkDiff}
         onOpenCommit={openCommitDiff}

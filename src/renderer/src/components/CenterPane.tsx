@@ -23,16 +23,17 @@ interface Props {
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
   /** 集成终端 × 关闭：先在主进程杀 PTY，再移除 tab。传 undefined 时走 keep-alive 隐藏。 */
   onDestroyTerminal?: (id: string) => void;
+  /** 已添加到左侧栏的工作目录列表（供下拉切换）。 */
+  addedDirs?: string[];
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs }: Props) {
   const tabs = useTabStore((s) => s.tabs) as Tab[];
   const activeTabId = useTabStore((s) => s.activeTabId);
   const activeCwd = useTabStore((s) => s.activeCwd);
   const closeCenterTab = useTabStore((s) => s.closeCenterTab);
   const reorderTabs = useTabStore((s) => s.reorderTabs);
   const selectTab = useTabStore((s) => s.selectTab);
-  const cwdOrder = useTabStore((s) => s.cwdOrder);
   const setActiveCwd = useTabStore((s) => s.setActiveCwd);
 
   // 当前目录的可见 tab（给 TabBar 用）
@@ -93,48 +94,30 @@ export function CenterPane({ onOpenFile, onDestroyTerminal }: Props) {
     else closeGuards.current.delete(id);
   };
 
-  // 目录名（取路径最后一段）
-  const cwdLabel = useMemo(() => {
-    if (!activeCwd) return null;
-    const idx = Math.max(activeCwd.lastIndexOf('/'), activeCwd.lastIndexOf('\\'));
-    return idx >= 0 ? activeCwd.slice(idx + 1) : activeCwd;
-  }, [activeCwd]);
-
-  // 有 tab 的其他目录列表（供目录标签下拉切换）
-  const otherCwds = useMemo(
-    () => cwdOrder.filter((c) => c !== activeCwd),
-    [cwdOrder, activeCwd],
-  );
+  // 保留空变量以兼容未来扩展
 
   const hasContent = orderedVisibleTabs.length > 0;
 
   return (
     <div className="center-pane">
-      {/* 目录标签 */}
-      {activeCwd && (
-        <div className="center-pane-cwd-bar">
-          <span className="cwd-label" title={activeCwd}>
-            📁 {cwdLabel}
-          </span>
-          {otherCwds.length > 0 && (
-            <span className="cwd-switch">
-              {otherCwds.map((c) => {
-                const name = c.split(/[\\/]/).pop() || c;
-                return (
-                  <button
-                    key={c}
-                    className="cwd-switch-btn"
-                    title={c}
-                    onClick={() => handleSetActiveCwd(c)}
-                  >
-                    {name}
-                  </button>
-                );
-              })}
-            </span>
-          )}
-        </div>
-      )}
+      {/* 目录标签：下拉菜单切换工作区 */}
+      <div className="center-pane-cwd-bar">
+        <select
+          className="cwd-select"
+          value={activeCwd ?? ''}
+          onChange={(e) => { const v = e.target.value; if (v) handleSetActiveCwd(v); }}
+        >
+          <option value="" disabled>{activeCwd ? '切换工作区…' : '选择工作目录'}</option>
+          {addedDirs?.map((c) => {
+            const name = c.split(/[\\/]/).pop() || c;
+            return (
+              <option key={c} value={c}>
+                📁 {name}
+              </option>
+            );
+          })}
+        </select>
+      </div>
       <TabBar
         tabs={orderedVisibleTabs.map((t) => ({
           id: t.id,

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as nodePath from 'node:path';
 import { pi } from '../ipc';
 import { clipboard, type ClipItem } from '../lib/clipboard';
-import type { GitFileStatusEntry } from '../types';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
-import { FolderIcon, getFileIcon } from './FileIcons';
+import { FileTreeModel, fetchEntries } from './file-tree/file-tree-model';
+import { FileTreeVirtualRows } from './file-tree/FileTreeVirtualRows';
+import type { FileNode, VisibleRow, EditingState, MenuState, GitFileStatusEntry } from './file-tree/file-tree-types';
 
 // 文件树 → 终端拖拽使用的自定义 MIME（区别于系统文件管理器的 'Files'）。
 // XtermTerminal.bindDragAndDrop 同时识别该类型，实现「从内部文件树拖文件到终端即插入绝对路径」。
@@ -33,407 +34,6 @@ function basename(p: string): string {
   return idx >= 0 ? p.slice(idx + 1) : p;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 数据模型层（借鉴 VS Code ExplorerModel / ExplorerItem 思想）
-//
-// 原实现把「目录的直接子项」存在根层 `roots` state、把「子目录子项」存在各
-// TreeNode 自身 state，两套数据源、两套刷新通道（bumpDir 分叉）。重构为单一
-// 模型：每个目录节点持有一份已加载的 children 与 loaded 标志，刷新统一走
-// model.refresh(relPath)。TreeNode 只负责渲染，不再各自持有数据。
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface FileNode {
-  name: string;
-  fullPath: string; // path relative to the tree root
-  isDir: boolean;
-  size: number;
-  children?: FileNode[];
-  loaded?: boolean;
-}
-
-// 目录优先、字母序（借鉴 VS Code FileSorter 的 default 排序：folders first, alphabetical）。
-function sortEntries(entries: FileNode[]): FileNode[] {
-  return [...entries].sort((a, b) => {
-    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-  });
-}
-
-async function fetchEntries(root: string, dirPath: string): Promise<FileNode[]> {
-  const entries = await pi.fsListDir(root, dirPath);
-  const nodes: FileNode[] = entries.map((e) => ({
-    name: e.name,
-    fullPath: dirPath ? `${dirPath}/${e.name}` : e.name,
-    isDir: e.isDir,
-    size: e.size,
-    children: e.isDir ? [] : undefined,
-    loaded: !e.isDir,
-  }));
-  return sortEntries(nodes);
-}
-
-/**
- * 单根文件树模型。借鉴 VS Code ExplorerModel：节点持有缓存的子项，惰性加载，
- * 统一 refresh。本实现保留 React 递归渲染（不引入虚拟列表），仅把数据职责从
- * 渲染组件抽到模型层，使刷新通道唯一、新建伪节点的渲染位置可正确落到父目录内部。
- */
-class FileTreeModel {
-  private root = '';
-  // 目录 fullPath → 已加载的子项（未加载的目录不在此 map 中）。
-  private dirChildren = new Map<string, FileNode[]>();
-  private dirLoaded = new Set<string>();
-
-  // 版本号：每次 refresh 某目录后自增，TreeNode 据此重新拉取该目录子项。
-  // 根层用 '' key，结构同 dirChildren。
-  private versions = new Map<string, number>();
-
-  setRoot(root: string): void {
-    this.root = root;
-  }
-
-  /** 取某目录的当前缓存子项（未加载则为 undefined）。 */
-  getChildren(dirPath: string): FileNode[] | undefined {
-    return this.dirChildren.get(dirPath);
-  }
-
-  isLoaded(dirPath: string): boolean {
-    return this.dirLoaded.has(dirPath);
-  }
-
-  /** 取当前版本号（用于决定是否需要重载）。 */
-  version(dirPath: string): number {
-    return this.versions.get(dirPath) ?? 0;
-  }
-
-  /** 惰性加载某目录子项；已加载且非强制则直接返回缓存。 */
-  async load(dirPath: string, force = false): Promise<FileNode[]> {
-    if (!force && this.dirLoaded.has(dirPath)) {
-      return this.dirChildren.get(dirPath) ?? [];
-    }
-    const entries = await fetchEntries(this.root, dirPath);
-    this.dirChildren.set(dirPath, entries);
-    this.dirLoaded.add(dirPath);
-    return entries;
-  }
-
-  /**
-   * 统一刷新入口（对齐 VS Code ExplorerModel.refresh）。
-   * relPath='' 刷新根层；否则刷新指定目录。仅 bump 版本号，真正重载由 TreeNode
-   * 在展开/可见时按需触发（keep 原「展开才加载」的惰性语义）。
-   */
-  refresh(relPath: string): void {
-    this.versions.set(relPath, (this.versions.get(relPath) ?? 0) + 1);
-  }
-
-  /** 根目录变更：清空全部缓存（新 root 的子项未加载）。 */
-  reset(): void {
-    this.dirChildren.clear();
-    this.dirLoaded.clear();
-    this.versions.clear();
-  }
-
-  /** 返回根层目录名（用于调试/空态文案，不参与渲染）。 */
-  get currentRoot(): string {
-    return this.root;
-  }
-}
-
-// 拖拽 / 菜单上下文：描述一次操作作用的「目标」。
-interface TargetRef {
-  relPath: string;
-  isDir: boolean;
-}
-
-// inline 编辑态（新建伪节点或重命名既有节点）。
-interface EditingState {
-  relPath: string; // 对新建：父目录相对路径（'' 为根）；对重命名：节点自身相对路径
-  isDir: boolean;
-  isNew: boolean;
-  // 新建伪节点在树里临时展示用的名字（编辑中），提交后落盘。
-  draftName: string;
-}
-
-// 右键菜单状态。target=null 表示在空白区域（目录内底部）右键。
-interface MenuState {
-  x: number;
-  y: number;
-  target: TargetRef | null;
-}
-
-// 新建伪节点（尚未落盘的临时子项），渲染在父目录 children 顶部。
-interface DraftNode extends FileNode {
-  isDraft: true;
-}
-
-type TreeNodeProps = {
-  node: FileNode;
-  depth: number;
-  model: FileTreeModel;
-  root: string;
-  onOpenFile: (relPath: string, fileName: string, root: string) => void;
-  expandedPaths: Set<string>;
-  onToggleExpanded: (fullPath: string, open: boolean) => void;
-  selection: Set<string>;
-  onToggleSelect: (fullPath: string, e: React.MouseEvent) => void;
-  onOpenContextMenu: (e: React.MouseEvent, target: TargetRef | null) => void;
-  editing: EditingState | null;
-  onCommitEdit: (value: string) => void;
-  onCancelEdit: () => void;
-  dropTarget: string | null;
-  onDragOverDir: (fullPath: string | null) => void;
-  onDropOnDir: (fullPath: string) => void;
-  onDragStartNodes: (fullPaths: string[], e: React.DragEvent) => void;
-  cutRelPaths: Set<string>;
-  // 本目录（node 为目录时）下正在新建的伪节点，渲染在 children 顶部。
-  draftChild: DraftNode | null;
-  /** { relPath → GitFileStatusEntry } */
-  gitStatusMap: Record<string, GitFileStatusEntry>;
-  /** 目录冒泡状态：仅对目录有效，表示子项有改动 */
-  gitBubbleMap: Record<string, string>;
-  /** 检查路径是否被 .gitignore 忽略 */
-  isIgnored: (fullPath: string) => boolean;
-};
-
-function TreeNode({
-  node,
-  depth,
-  model,
-  root,
-  onOpenFile,
-  expandedPaths,
-  onToggleExpanded,
-  selection,
-  onToggleSelect,
-  onOpenContextMenu,
-  editing,
-  onCommitEdit,
-  onCancelEdit,
-  dropTarget,
-  onDragOverDir,
-  onDropOnDir,
-  onDragStartNodes,
-  cutRelPaths,
-  draftChild,
-  gitStatusMap,
-  gitBubbleMap,
-  isIgnored,
-}: TreeNodeProps) {
-  const open = expandedPaths.has(node.fullPath);
-  const [children, setChildren] = useState<FileNode[]>(node.children ?? []);
-  const [loaded, setLoaded] = useState(node.loaded ?? false);
-  const [loading, setLoading] = useState(false);
-
-  // 监听本目录的模型版本：版本变化（refresh 触发）且已展开时重新拉取子项。
-  const token = model.version(node.fullPath);
-
-  const loadChildren = useCallback(async (force = false) => {
-    if (loaded && !force) return;
-    setLoading(true);
-    try {
-      const entries = await model.load(node.fullPath, force);
-      setChildren(entries);
-      setLoaded(true);
-    } catch {
-      // ignore — best-effort tree
-    } finally {
-      setLoading(false);
-    }
-  }, [loaded, node.fullPath, model]);
-
-  useEffect(() => {
-    if (open && loaded) {
-      loadChildren(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
-
-  // 外部变更自动刷新（对齐 VS Code FileWatcher）：目录展开后订阅其直接子项变更，
-  // 系统文件管理器在该目录新建/删除文件时，主进程经 'fs:change' 推送 → 这里刷新本目录。
-  // 防抖 150ms 合并编辑器保存等高频抖动；折叠或卸载时取消订阅。
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!node.isDir || !open) return;
-    // 测试环境 pi mock 可能无 fsWatch；判空跳过（生产环境正常订阅）。
-    if (typeof pi.fsWatch !== 'function') return;
-    const onChange = () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
-        model.refresh(node.fullPath);
-        loadChildren(true);
-      }, 150);
-    };
-    const unsubscribe = pi.fsWatch(root, node.fullPath, onChange);
-    return () => {
-      unsubscribe();
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [node.isDir, node.fullPath, open, root, model, loadChildren]);
-
-  const handleClick = useCallback((e: React.MouseEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      onToggleSelect(node.fullPath, e);
-      return;
-    }
-    if (node.isDir) {
-      const next = !open;
-      onToggleExpanded(node.fullPath, next);
-      if (next && !loaded) loadChildren();
-    } else {
-      // ⚠️ 集成契约：文件节点点击必须以 (fullPath, name, root) 调 onOpenFile，
-      // 否则 CodePreview / FileDrawer 文件预览失效。
-      onOpenFile(node.fullPath, node.name, root);
-    }
-  }, [node.isDir, node.fullPath, node.name, loaded, open, loadChildren, onOpenFile, onToggleExpanded, root, onToggleSelect]);
-
-  // 重命名态：编辑的是本节点自身（伪节点不在此行渲染）。
-  const isRenamingHere = editing != null && !editing.isNew && editing.relPath === node.fullPath;
-
-  // ── Git 状态推导 ──
-  const gitEntry = gitStatusMap[node.fullPath];
-  const gitBubble = gitBubbleMap[node.fullPath];
-  const gitCategory = gitEntry?.category ?? gitBubble ?? '';
-  const isStaged = gitEntry?.staged ?? false;
-  const isUnstaged = gitEntry?.unstaged ?? false;
-
-  const className = [
-    'file-row',
-    selection.has(node.fullPath) ? 'selected' : '',
-    cutRelPaths.has(node.fullPath) ? 'cut-pending' : '',
-    dropTarget === node.fullPath ? 'drop-target' : '',
-    isRenamingHere ? 'editing' : '',
-    gitCategory ? `git-${gitCategory}` : '',
-    // 被 .gitignore 忽略的文件/目录（自身或父目录在忽略集中）
-    !gitEntry && isIgnored(node.fullPath) ? 'git-ignored' : '',
-    // staged/unstaged 区分：仅 modified 需要区分，added 默认视为 staged
-    gitEntry && gitEntry.category === 'modified' && isStaged && !isUnstaged ? 'git-staged' : '',
-    gitEntry && gitEntry.category === 'modified' && isUnstaged && !isStaged ? 'git-unstaged' : '',
-    gitEntry && gitEntry.category === 'modified' && isStaged && isUnstaged ? 'git-staged-unstaged' : '',
-    // 目录冒泡：子项有改动时目录行显示特殊标记
-    gitBubble && !gitEntry ? 'git-bubble' : '',
-  ].filter(Boolean).join(' ');
-
-  const renderInput = (value: string, isDir: boolean) => (
-    <input
-      className="file-rename-input"
-      autoFocus
-      defaultValue={value}
-      onClick={(e) => e.stopPropagation()}
-      // VS Code 风格：聚焦即全选默认名，用户直接打字即覆盖（无需先删除）。
-      onFocus={(e) => (e.target as HTMLInputElement).select()}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          onCommitEdit((e.target as HTMLInputElement).value);
-        } else if (e.key === 'Escape') {
-          onCancelEdit();
-        }
-      }}
-      onBlur={(e) => onCommitEdit((e.target as HTMLInputElement).value)}
-    />
-  );
-
-  return (
-    <div>
-      <div
-        className={className}
-        draggable={!isRenamingHere}
-        onClick={handleClick}
-        onContextMenu={(e) => onOpenContextMenu(e, { relPath: node.fullPath, isDir: node.isDir })}
-        onDragStart={(e) => onDragStartNodes([node.fullPath], e)}
-        onDragOver={(e) => {
-          if (node.isDir) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            onDragOverDir(node.fullPath);
-          }
-        }}
-        onDragLeave={() => { if (node.isDir && dropTarget === node.fullPath) onDragOverDir(null); }}
-        onDrop={(e) => {
-          if (node.isDir) {
-            e.preventDefault();
-            onDragOverDir(null);
-            onDropOnDir(node.fullPath);
-          }
-        }}
-        style={{ paddingLeft: 8 + depth * 14 }}
-      >
-        {node.isDir && (
-          <svg
-            width="10" height="10" viewBox="0 0 10 10" fill="none"
-            stroke="var(--text-dim)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            style={{ flexShrink: 0, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.1s' }}
-          >
-            <polyline points="3 2 7 5 3 8" />
-          </svg>
-        )}
-        {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
-        <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-          {node.isDir ? <FolderIcon size={14} open={open} /> : getFileIcon(node.name, 14)}
-        </span>
-        {isRenamingHere ? (
-          renderInput(editing!.draftName, false)
-        ) : (
-          <span className="file-name" title={node.fullPath}>
-            {node.name}
-            {gitEntry?.isSymlink && <span className="git-symlink-arrow"> →</span>}
-          </span>
-        )}
-        {/* 子模块徽章 */}
-        {gitEntry?.isSubmodule && <span className="git-badge-submodule" title={gitEntry.submoduleDirty ? '子模块有未推送改动' : '子模块'}>S</span>}
-        {/* git 状态徽章字母 */}
-        {gitEntry && gitEntry.category !== 'submodule' && !isRenamingHere && (
-          <span className={`git-badge git-badge-${gitEntry.category}`} title={gitEntry.badge}>{gitEntry.badge}</span>
-        )}
-        {loading && (
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
-          </svg>
-        )}
-      </div>
-      {node.isDir && open && (
-        <div>
-          {/* 新建伪节点渲染在父目录 children 顶部（修复原 bug：原先覆盖父目录行本身）。 */}
-          {draftChild && (
-            <div className="file-row editing" style={{ paddingLeft: 8 + (depth + 1) * 14 }}>
-              <span style={{ width: 10, flexShrink: 0 }} />
-              <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-                {draftChild.isDir ? <FolderIcon size={14} open={false} /> : getFileIcon(draftChild.name, 14)}
-              </span>
-              {renderInput(draftChild.name, draftChild.isDir)}
-            </div>
-          )}
-          {children.map((child) => (
-            <TreeNode
-              key={child.fullPath}
-              node={child}
-              depth={depth + 1}
-              model={model}
-              root={root}
-              onOpenFile={onOpenFile}
-              expandedPaths={expandedPaths}
-              onToggleExpanded={onToggleExpanded}
-              selection={selection}
-              onToggleSelect={onToggleSelect}
-              onOpenContextMenu={onOpenContextMenu}
-              editing={editing}
-              onCommitEdit={onCommitEdit}
-              onCancelEdit={onCancelEdit}
-              dropTarget={dropTarget}
-              onDragOverDir={onDragOverDir}
-              onDropOnDir={onDropOnDir}
-              onDragStartNodes={onDragStartNodes}
-              cutRelPaths={cutRelPaths}
-              draftChild={null}
-              gitStatusMap={gitStatusMap}
-              gitBubbleMap={gitBubbleMap}
-              isIgnored={isIgnored}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface Props {
   root: string;
   onOpenFile: (relPath: string, fileName: string, root: string) => void;
@@ -450,8 +50,12 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
-  const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const prevRootRef = useRef<string | null>(null);
+
+  // 模型版本号：每次模型数据变化后自增，驱动行投影重算和虚拟列表重渲染。
+  const [modelRefreshKey, setModelRefreshKey] = useState(0);
+  // 正在加载子项的目录集合（用于显示加载中指示器）。
+  const [dirLoading, setDirLoading] = useState<Set<string>>(new Set());
 
   // 文件管理交互状态
   const [selection, setSelection] = useState<Set<string>>(new Set());
@@ -539,16 +143,18 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     });
   }, []);
 
-  // 统一刷新（对齐 VS Code ExplorerModel.refresh）：根层重拉 roots，子目录 bump 版本。
-  // 用防抖隔离 git 相关刷新，避免每次 fsWatch 触发都执行昂贵的 git 命令。
+  // ── 统一刷新 ──
   const gitRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const refreshDir = useCallback((relPath: string) => {
     model.refresh(relPath);
     if (relPath === '') {
-      const cancelled = { v: false };
+      // 根层：重新拉取 roots
       fetchEntries(root, '')
-        .then((entries) => { if (!cancelled.v) setRoots(entries); })
-        .catch((e) => { if (!cancelled.v) setError(e instanceof Error ? e.message : String(e)); });
+        .then((entries) => {
+          setRoots(entries);
+          setModelRefreshKey((k) => k + 1);
+        })
+        .catch((e) => setError(e instanceof Error ? e.message : String(e)));
       // 防抖 1s 执行 git 刷新，避免高频文件保存时反复调用 git status
       if (gitRefreshTimer.current) clearTimeout(gitRefreshTimer.current);
       gitRefreshTimer.current = setTimeout(() => {
@@ -556,17 +162,17 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         void refreshGitStatus();
         void refreshIgnoredPaths();
       }, 1000);
-      return () => { cancelled.v = true; };
+    } else {
+      // 子目录：强制重载模型缓存，然后触发重渲染
+      model.load(relPath, true).then(() => {
+        setModelRefreshKey((k) => k + 1);
+      });
     }
-    // 子目录：仅 bump 版本，TreeNode 在展开态自行重载。
-    setTreeRefreshKey((k) => k + 1);
   }, [root, model, refreshGitStatus, refreshIgnoredPaths]);
 
-  // 根目录（''）外部变更自动刷新：watch 根层直接子项，系统文件管理器在根目录
-  // 新建/删除文件时实时反映到文件树（对齐 VS Code FileWatcher）。防抖 150ms。
+  // 根目录（''）外部变更自动刷新
   useEffect(() => {
     if (!root) return;
-    // 测试环境 pi mock 可能无 fsWatch；判空跳过（生产环境正常订阅）。
     if (typeof pi.fsWatch !== 'function') return;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = pi.fsWatch(root, '', () => {
@@ -579,6 +185,35 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     };
   }, [root, refreshDir]);
 
+  // ── 已展开目录的外部变更监听 ──
+  // 每个展开的目录订阅其直接子项变更，收到变更后刷新该目录。
+  const dirWatchTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  useEffect(() => {
+    if (!root) return;
+    if (typeof pi.fsWatch !== 'function') return;
+
+    const unsubs: (() => void)[] = [];
+    const timers = dirWatchTimers.current;
+
+    expandedPaths.forEach((path) => {
+      if (path === '') return; // 根层已在外部独立监听
+      const onChange = () => {
+        if (timers.has(path)) clearTimeout(timers.get(path)!);
+        const timer = setTimeout(() => refreshDir(path), 150);
+        timers.set(path, timer);
+      };
+      const unsub = pi.fsWatch(root, path, onChange);
+      unsubs.push(unsub);
+    });
+
+    return () => {
+      unsubs.forEach((fn) => fn());
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, [root, expandedPaths, refreshDir]);
+
+  // ── 根目录加载 ──
   useEffect(() => {
     const rootChanged = prevRootRef.current !== root;
     prevRootRef.current = root;
@@ -601,14 +236,85 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
 
     setLoading(rootChanged || roots.length === 0);
     setError(null);
-    const cancelled = { v: false };
     fetchEntries(root, '')
-      .then((entries) => { if (!cancelled.v) setRoots(entries); })
-      .catch((e) => { if (!cancelled.v) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (!cancelled.v) setLoading(false); });
-    return () => { cancelled.v = true; };
+      .then((entries) => {
+        setRoots(entries);
+        setModelRefreshKey((k) => k + 1);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, refreshKey, treeRefreshKey]);
+  }, [root, refreshKey]);
+
+  // ── 展开目录的惰性加载 ──
+  // 当 expandedPaths 变化时，对尚未加载的目录发起异步加载。
+  const pendingLoads = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    expandedPaths.forEach((path) => {
+      if (model.isLoaded(path) || pendingLoads.current.has(path)) return;
+      pendingLoads.current.add(path);
+      setDirLoading((prev) => new Set(prev).add(path));
+      model.load(path).then(() => {
+        pendingLoads.current.delete(path);
+        setDirLoading((prev) => {
+          const next = new Set(prev);
+          next.delete(path);
+          return next;
+        });
+        setModelRefreshKey((k) => k + 1);
+      });
+    });
+  }, [expandedPaths, model]);
+
+  // ── 可见行投影（扁平化展开树）──
+  const rows = useMemo<VisibleRow[]>(() => {
+    const result: VisibleRow[] = [];
+
+    // 根层新建伪节点（relPath===''）
+    if (editing && editing.isNew && editing.relPath === '') {
+      result.push({
+        node: {
+          name: editing.draftName,
+          fullPath: `__draft__${editing.draftName}`,
+          isDir: editing.isDir,
+          size: 0,
+        },
+        depth: 0,
+        isExpanded: false,
+        isDraft: true,
+      } as VisibleRow);
+    }
+
+    const walk = (nodes: FileNode[], depth: number) => {
+      for (const node of nodes) {
+        const open = expandedPaths.has(node.fullPath);
+        result.push({ node, depth, isExpanded: open });
+
+        if (node.isDir && open) {
+          // 此目录下的新建伪节点
+          if (editing && editing.isNew && editing.relPath === node.fullPath) {
+            result.push({
+              node: {
+                name: editing.draftName,
+                fullPath: `${node.fullPath}/__draft__${editing.draftName}`,
+                isDir: editing.isDir,
+                size: 0,
+              },
+              depth: depth + 1,
+              isExpanded: false,
+              isDraft: true,
+            } as VisibleRow);
+          }
+          const children = model.getChildren(node.fullPath);
+          if (children) walk(children, depth + 1);
+        }
+      }
+    };
+
+    walk(roots, 0);
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roots, expandedPaths, editing, modelRefreshKey, model.isLoaded, model.getChildren]);
 
   // ── 选择 ──
   const onToggleSelect = useCallback((fullPath: string, e: React.MouseEvent) => {
@@ -621,14 +327,32 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
   }, []);
 
   // ── 右键菜单 ──
-  const onOpenContextMenu = useCallback((e: React.MouseEvent, target: TargetRef | null) => {
+  const onOpenContextMenu = useCallback((e: React.MouseEvent, target: { relPath: string; isDir: boolean } | null) => {
     e.preventDefault();
     e.stopPropagation();
     setMenu({ x: e.clientX, y: e.clientY, target });
   }, []);
 
+  // ── 行点击 ──
+  const handleRowClick = useCallback((node: FileNode, e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      onToggleSelect(node.fullPath, e);
+      return;
+    }
+    if (node.isDir) {
+      const open = expandedPaths.has(node.fullPath);
+      handleToggleExpanded(node.fullPath, !open);
+    } else {
+      onOpenFile(node.fullPath, node.name, root);
+    }
+  }, [expandedPaths, handleToggleExpanded, onOpenFile, root, onToggleSelect]);
+
+  // ── 行右键菜单触发（从虚拟列表冒泡）──
+  const handleRowContextMenu = useCallback((node: FileNode, e: React.MouseEvent) => {
+    onOpenContextMenu(e, { relPath: node.fullPath, isDir: node.isDir });
+  }, [onOpenContextMenu]);
+
   // ── 新建（inline 伪节点，输完名才落盘）──
-  // 新建伪节点渲染在父目录 children 顶部（见 TreeNode draftChild），不再覆盖父目录行。
   const startNew = useCallback((parentRel: string, isDir: boolean) => {
     setSelection(new Set());
     setEditing({ relPath: parentRel, isDir, isNew: true, draftName: isDir ? '新建文件夹' : '新建文件' });
@@ -650,7 +374,7 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     if (!editing || !root) { setEditing(null); return; }
     const name = value.trim();
     setEditing(null);
-    if (!name) return; // 空名 → 取消
+    if (!name) return;
 
     try {
       if (editing.isNew) {
@@ -661,10 +385,6 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         if (editing.isDir) await pi.fsMkdir(root, finalRel);
         else await pi.fsCreateFile(root, finalRel, '');
         refreshDir(parent);
-        // 对齐 VS Code：新建以用户真实输入的名字一次性落盘（仅一次写盘），
-        // 随后直接结束编辑（不进入重命名态）。文件靠 refreshDir(parent) 显示在树里。
-        // 根目录（parent===''）无对应 TreeNode 承载重命名 input，行为一致：结束编辑、依赖刷新显示新文件。
-        setEditing(null);
       } else {
         const parent = parentOf(editing.relPath);
         const desired = parent ? `${parent}/${name}` : name;
@@ -680,7 +400,6 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         }
       }
     } catch (e) {
-      // 落盘失败：刷新以恢复真实状态
       refreshDir(parentOf(editing.relPath));
       console.error('[file-tree] edit failed', e);
     }
@@ -757,24 +476,32 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     }
   }, [confirmDelete, root, refreshDir]);
 
-  // ── 拖拽（移动 / 复制到目录）──
+  // ── 拖拽 ──
   // ⚠️ 集成契约：必须保持 PI_FILE_DRAG_MIME 常量 + toAbsolutePath 逻辑不变，
   // 否则拖拽到 XtermTerminal 无法解析成绝对路径。
-  const onDragStartNodes = useCallback((fullPaths: string[], e: React.DragEvent) => {
+  const handleRowDragStart = useCallback((node: FileNode, e: React.DragEvent) => {
     if (!e.dataTransfer) return;
-    const carrying = fullPaths.filter((p) => selection.has(p));
-    const payload = carrying.length > 0 && carrying.some((p) => fullPaths.includes(p))
+    const payload = selection.has(node.fullPath) && selection.size > 0
       ? [...selection]
-      : fullPaths;
+      : [node.fullPath];
     const absList = payload.map((p) => toAbsolutePath(root, p));
     e.dataTransfer.setData(PI_FILE_DRAG_MIME, JSON.stringify(absList));
     e.dataTransfer.setData('text/plain', absList.join(' '));
     e.dataTransfer.effectAllowed = 'copyMove';
   }, [root, selection]);
 
-  const onDropOnDir = useCallback(async (destDir: string) => {
+  const handleRowDragOverDir = useCallback((node: FileNode, _e: React.DragEvent) => {
+    setDropTarget(node.fullPath);
+  }, []);
+
+  const handleRowDragLeaveDir = useCallback((node: FileNode) => {
+    setDropTarget((prev) => prev === node.fullPath ? null : prev);
+  }, []);
+
+  const handleRowDropOnDir = useCallback(async (node: FileNode, e: React.DragEvent) => {
     setDropTarget(null);
     if (!root) return;
+    const destDir = node.fullPath;
     const moving = selection.size > 0 ? [...selection] : [];
     if (!moving.length) return;
     try {
@@ -783,7 +510,7 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         const siblings = await pi.fsListNames(root, destDir);
         const finalName = await pi.fsUniqueName(base, siblings);
         const destRel = destDir ? `${destDir}/${finalName}` : finalName;
-        if (destRel === rel) continue; // 落到自身
+        if (destRel === rel) continue;
         await pi.fsRename(root, rel, destRel);
         refreshDir(parentOf(rel));
       }
@@ -794,7 +521,7 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     setSelection(new Set());
   }, [root, selection, refreshDir]);
 
-  // 菜单项构造（布局参考 VSCode Explorer 右键菜单）
+  // ── 菜单项构造 ──
   const menuItems: ContextMenuItem[] = useMemo(() => {
     if (!menu) return [];
     const clip = clipboard.get();
@@ -913,11 +640,6 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     );
   }
 
-  // 根层新建伪节点（relPath===''）：根无对应 TreeNode，故在列表顶部独立渲染一行。
-  const rootDraft: DraftNode | null = editing && editing.isNew && editing.relPath === ''
-    ? { name: editing.draftName, fullPath: `__draft__${editing.draftName}`, isDir: editing.isDir, size: 0, isDraft: true }
-    : null;
-
   return (
     <div
       className="file-tree"
@@ -929,56 +651,27 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         if (!onRow) onOpenContextMenu(e, null);
       }}
     >
-      {rootDraft && (
-        <div className="file-row editing" style={{ paddingLeft: 8 }}>
-          <span style={{ width: 10, flexShrink: 0 }} />
-          <span style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>
-            {rootDraft.isDir ? <FolderIcon size={14} open={false} /> : getFileIcon(rootDraft.name, 14)}
-          </span>
-          <input
-            className="file-rename-input"
-            autoFocus
-            defaultValue={rootDraft.name}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') onCommitEdit((e.target as HTMLInputElement).value);
-              else if (e.key === 'Escape') onCancelEdit();
-            }}
-            onBlur={(e) => onCommitEdit((e.target as HTMLInputElement).value)}
-          />
-        </div>
-      )}
-      {roots.map((node) => (
-        <TreeNode
-          key={node.fullPath}
-          node={node}
-          depth={0}
-          model={model}
-          root={root}
-          onOpenFile={onOpenFile}
-          expandedPaths={expandedPaths}
-          onToggleExpanded={handleToggleExpanded}
-          selection={selection}
-          onToggleSelect={onToggleSelect}
-          onOpenContextMenu={onOpenContextMenu}
-          editing={editing}
-          onCommitEdit={onCommitEdit}
-          onCancelEdit={onCancelEdit}
-          dropTarget={dropTarget}
-          onDragOverDir={setDropTarget}
-          onDropOnDir={onDropOnDir}
-          onDragStartNodes={onDragStartNodes}
-          cutRelPaths={cutRelPaths}
-          gitStatusMap={gitStatusMap}
-          gitBubbleMap={gitBubbleMap}
-          isIgnored={isIgnored}
-          draftChild={
-            editing && editing.isNew && editing.relPath === node.fullPath
-              ? { name: editing.draftName, fullPath: `${node.fullPath}/__draft__`, isDir: editing.isDir, size: 0, isDraft: true }
-              : null
-          }
-        />
-      ))}
+      <FileTreeVirtualRows
+        rows={rows}
+        expandedPaths={expandedPaths}
+        selection={selection}
+        cutRelPaths={cutRelPaths}
+        dropTarget={dropTarget}
+        editing={editing}
+        draggable={!editing}
+        gitStatusMap={gitStatusMap}
+        gitBubbleMap={gitBubbleMap}
+        isIgnored={isIgnored}
+        dirLoading={dirLoading}
+        onRowClick={handleRowClick}
+        onRowContextMenu={handleRowContextMenu}
+        onRowDragStart={handleRowDragStart}
+        onRowDragOverDir={handleRowDragOverDir}
+        onRowDragLeaveDir={handleRowDragLeaveDir}
+        onRowDropOnDir={handleRowDropOnDir}
+        onCommitEdit={onCommitEdit}
+        onCancelEdit={onCancelEdit}
+      />
 
       {menu && (
         <ContextMenu

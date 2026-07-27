@@ -68,37 +68,36 @@ html, body, #root {
   font-size: var(--fs-xs);
   color: var(--text-muted);
 }
-.cwd-label {
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: default;
-}
-.cwd-switch {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-  overflow: hidden;
-}
-.cwd-switch-btn {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 6px;
+.cwd-select {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 4px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: transparent;
+  background: var(--bg-app);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
   cursor: pointer;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-  transition: background-color var(--transition), color var(--transition);
+  transition: border-color var(--transition), color var(--transition);
 }
-.cwd-switch-btn:hover {
-  background: var(--bg-hover);
+.cwd-select:hover {
+  border-color: var(--accent-soft);
   color: var(--text);
+}
+.cwd-select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.cwd-select option {
+  color: var(--text);
+  background: var(--bg-app);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 
 /* ── 集成终端：Tab 栏 / Tab / 新建按钮 / xterm 宿主 ──
@@ -1668,7 +1667,15 @@ html, body, #root {
 .file-panel-empty { padding: var(--sp-4); color: var(--text-muted); font-size: var(--fs-sm); line-height: 1.6; }
 
 /* ── 文件树 ── */
-.file-tree { font-size: var(--fs-sm); }
+.file-tree { font-size: var(--fs-sm); height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.file-tree-virtual-scroll { overflow-y: auto; flex: 1; min-height: 0; }
+.file-tree-virtual-scroll::-webkit-scrollbar { width: 6px; }
+.file-tree-virtual-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb, rgba(128,128,128,0.3)); border-radius: 3px; }
+.file-row-chevron { flex-shrink: 0; color: var(--text-dim); }
+.file-row-spacer { width: 10px; flex-shrink: 0; }
+.file-row-icon { flex-shrink: 0; display: flex; align-items: center; color: var(--text-dim); }
+.file-row-loading { flex-shrink: 0; color: var(--text-dim); animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .file-row {
   display: flex;
   align-items: center;

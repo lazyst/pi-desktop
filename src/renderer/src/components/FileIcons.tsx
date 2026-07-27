@@ -1,62 +1,77 @@
-// Flat monochrome file & folder icons — all use currentColor / var(--text-dim)
-// Ported from pi-web/components/FileIcons.tsx (pure SVG, zero deps).
+// File & folder icons — powered by lucide-react.
+// Language-specific file icons use lucide's File as base with a text label overlay.
+// Special-purpose icons (shell, docker, env, git, lock, config, markdown) use
+// dedicated lucide icons for clearer semantics.
+
 import type { ReactNode } from 'react';
+import {
+  File,
+  Folder,
+  FolderOpen,
+  FileText,
+  FileTerminal,
+  FileLock,
+  FileCog,
+  GitBranch,
+  Container,
+  KeyRound,
+} from 'lucide-react';
 
 interface IconProps {
   size?: number;
 }
 
-const DIM = 'var(--text-dim)';
-
 // ── Folder ────────────────────────────────────────────────────────────────
 
 export function FolderIcon({ size = 14, open = false }: IconProps & { open?: boolean }) {
-  if (open) {
-    return (
-      <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-        <path d="M1 4.5A1 1 0 0 1 2 3.5H5.5L7 5h7.5v1H1V4.5Z" fill={DIM} />
-        <path d="M1 6h14.5L14 13H2L1 6Z" stroke={DIM} strokeWidth="1" fill={DIM} fillOpacity="0.12" />
-      </svg>
-    );
-  }
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-      <path d="M1 4.5A1 1 0 0 1 2 3.5H5.5L7 5H14a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4.5Z"
-        stroke={DIM} strokeWidth="1" fill={DIM} fillOpacity="0.1" />
-    </svg>
-  );
+  const Icon = open ? FolderOpen : Folder;
+  return <Icon size={size} strokeWidth={1.5} color="currentColor" />;
 }
 
 // ── Generic file (fallback) ────────────────────────────────────────────────
 
 export function GenericFileIcon({ size = 14 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none">
-      <path d="M3 2h7l3 3v9H3V2Z" stroke={DIM} strokeWidth="1" fill={DIM} fillOpacity="0.08" />
-      <path d="M10 2v3h3" stroke={DIM} strokeWidth="1" fill="none" strokeLinejoin="round" />
-    </svg>
-  );
+  return <File size={size} strokeWidth={1.5} color="currentColor" />;
 }
 
-// ── File with label text (used for most types) ────────────────────────────
-// Renders the file outline + a short text badge
+// ── File with label text (used for most language-specific icons) ──────────
+// Renders lucide's File icon as the base shape + a short text badge centered
+// on top. The text uses the monospace font so "TS", "JSX", "{}", etc. are
+// clearly distinguishable in the file tree.
 
 function LabelFileIcon({ label, size = 14 }: { label: string; size?: number }) {
-  const s = size / 14; // scale factor
   return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <text
-        x="7" y="9.5"
-        textAnchor="middle"
-        fontSize={3.4 * s}
-        fontFamily="var(--font-mono), monospace"
-        fontWeight="600"
-        fill={DIM}
-        letterSpacing="0"
-      >{label}</text>
-    </svg>
+    <span
+      style={{
+        position: 'relative',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: size,
+        height: size,
+        lineHeight: 1,
+      }}
+    >
+      <File size={size} strokeWidth={1.5} color="currentColor" />
+      <span
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: `${Math.max(4.5, size * 0.3)}px`,
+          fontFamily: 'var(--font-mono), monospace',
+          fontWeight: 700,
+          color: 'currentColor',
+          lineHeight: 1,
+          pointerEvents: 'none',
+          userSelect: 'none',
+        }}
+      >
+        {label}
+      </span>
+    </span>
   );
 }
 
@@ -78,7 +93,7 @@ export function PythonIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="PY" size={size} />;
 }
 export function JsonIcon({ size = 14 }: IconProps) {
-  return <LabelFileIcon label="{}" size={size} />;
+  return <LabelFileIcon label="{ }" size={size} />;
 }
 export function CssIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="CSS" size={size} />;
@@ -90,17 +105,7 @@ export function HtmlIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="HTM" size={size} />;
 }
 export function MarkdownIcon({ size = 14 }: IconProps) {
-  // file outline + M↓ symbol
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      {/* M */}
-      <path d="M3.5 9.5V7l1.5 1.5L6.5 7v2.5" stroke={DIM} strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      {/* down arrow */}
-      <path d="M8 7v2.5M7 9l1 1.5 1-1.5" stroke={DIM} strokeWidth="0.9" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-    </svg>
-  );
+  return <FileText size={size} strokeWidth={1.5} color="currentColor" />;
 }
 export function YamlIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="YML" size={size} />;
@@ -109,15 +114,7 @@ export function TomlIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="TOM" size={size} />;
 }
 export function ShellIcon({ size = 14 }: IconProps) {
-  // file outline + > prompt
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <path d="M4 7.5l2 1.5-2 1.5" stroke={DIM} strokeWidth="0.95" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <path d="M7.5 10.5h2.5" stroke={DIM} strokeWidth="0.95" strokeLinecap="round" />
-    </svg>
-  );
+  return <FileTerminal size={size} strokeWidth={1.5} color="currentColor" />;
 }
 export function RustIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="RS" size={size} />;
@@ -135,51 +132,16 @@ export function TerraformIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="TF" size={size} />;
 }
 export function DockerfileIcon({ size = 14 }: IconProps) {
-  // file outline + container stack
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <rect x="3.5" y="6.5" width="2" height="1.5" rx="0.3" stroke={DIM} strokeWidth="0.8" />
-      <rect x="6" y="6.5" width="2" height="1.5" rx="0.3" stroke={DIM} strokeWidth="0.8" />
-      <rect x="3.5" y="8.5" width="2" height="1.5" rx="0.3" stroke={DIM} strokeWidth="0.8" />
-    </svg>
-  );
+  return <Container size={size} strokeWidth={1.5} color="currentColor" />;
 }
 export function EnvIcon({ size = 14 }: IconProps) {
-  // file outline + key symbol
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <circle cx="5.5" cy="8.5" r="1.5" stroke={DIM} strokeWidth="0.9" />
-      <path d="M7 8.5h2.5M8.5 8.5v1.5" stroke={DIM} strokeWidth="0.9" strokeLinecap="round" />
-    </svg>
-  );
+  return <KeyRound size={size} strokeWidth={1.5} color="currentColor" />;
 }
 export function GitIcon({ size = 14 }: IconProps) {
-  // file outline + git branch lines
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <circle cx="5" cy="6.5" r="1" stroke={DIM} strokeWidth="0.85" />
-      <circle cx="9" cy="6.5" r="1" stroke={DIM} strokeWidth="0.85" />
-      <circle cx="5" cy="10" r="1" stroke={DIM} strokeWidth="0.85" />
-      <path d="M5 7.5V9" stroke={DIM} strokeWidth="0.85" strokeLinecap="round" />
-      <path d="M9 7.5v.5a2 2 0 0 1-2 2H6" stroke={DIM} strokeWidth="0.85" strokeLinecap="round" fill="none" />
-    </svg>
-  );
+  return <GitBranch size={size} strokeWidth={1.5} color="currentColor" />;
 }
 export function LockFileIcon({ size = 14 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <rect x="4.5" y="8.5" width="5" height="3" rx="0.6" stroke={DIM} strokeWidth="0.9" />
-      <path d="M5.5 8.5V7.5a1.5 1.5 0 0 1 3 0v1" stroke={DIM} strokeWidth="0.9" strokeLinecap="round" fill="none" />
-    </svg>
-  );
+  return <FileLock size={size} strokeWidth={1.5} color="currentColor" />;
 }
 export function DocFileIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="DOC" size={size} />;
@@ -188,15 +150,7 @@ export function PdfFileIcon({ size = 14 }: IconProps) {
   return <LabelFileIcon label="PDF" size={size} />;
 }
 export function ConfigIcon({ size = 14 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 14 14" fill="none">
-      <path d="M2.5 1h6l3 3v9h-9V1Z" stroke={DIM} strokeWidth="0.9" fill={DIM} fillOpacity="0.07" strokeLinejoin="round" />
-      <path d="M8.5 1v3h3" stroke={DIM} strokeWidth="0.9" fill="none" strokeLinejoin="round" />
-      <circle cx="7" cy="8.5" r="1.3" stroke={DIM} strokeWidth="0.9" />
-      <path d="M7 6.5v.7M7 10.3v.7M5 8.5h.7M8.3 8.5H9M5.5 6.9l.5.5M8.5 9.6l-.5-.5M5.5 10.1l.5-.5M8.5 7.4l-.5.5"
-        stroke={DIM} strokeWidth="0.8" strokeLinecap="round" />
-    </svg>
-  );
+  return <FileCog size={size} strokeWidth={1.5} color="currentColor" />;
 }
 
 // ── Main resolver ─────────────────────────────────────────────────────────
