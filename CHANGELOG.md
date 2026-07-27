@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.0] — 2026-07
+
+### 新增
+
+- **终端渲染层重构**：从 orca 移植通用终端基础设施，拆分 XtermTerminal 单体类为 14 个独立模块
+  - 输出队列调度器（output-scheduler）：前台/后台优先级队列，parse-clocked drain，backlog 上限
+  - 写管道健康监控（write-pipeline-health）：10s 超时探测 + probe 写确认，防止 WriteBuffer 死锁
+  - 写回调异常守卫（write-callback-guard）：防止同步 throw 冻结 xterm 写管道
+  - 滚动意图跟踪（scroll-intent）：显式跟踪 followOutput / pinnedViewport 意图
+  - Safe fit 滚动保持（fit）：resize 前后自动保存/恢复滚动位置
+  - Reflow 弹性锚点（reflow-scroll-anchor）：列宽变化导致内容重排后视口不漂移
+  - 滚动捕获/恢复（scroll）：使用 IMarker 精确跟踪视口位置，支持 deferred restore
+  - WebGL 自动决策（webgl-auto-policy）：智能判断 GPU/DOM 渲染器，Linux 软件渲染器自动降级
+  - 渲染暂停穿透（render-pause-release）：tab 切换后强制立即渲染
+  - ACK 信用追踪（ack-credit）：防止 pane 销毁时背压信用泄漏
+  - 实例销毁探针（instance-disposed）：可靠检测 xterm 实例是否已销毁
+  - 滚动条同步（scrollbar-sync）：resize 后强制滚动条 thumb 同步
+  - 滚动静像（scroll-buffer-snapshot）：纯函数读取 buffer 状态
+
+### 变更
+
+- **XtermTerminal.ts 重构**：1833 行单体类拆分为 14 个模块 + 集成层，保持全部公开接口不变
+- 移除过时的背压对齐文档（已合并到新架构）
+
+### 技术债务
+
+- 新增 250 个单元测试覆盖全部新模块，测试文件 13 个全部通过
+- 模块化后可独立测试每个子系统，降低修改风险
+
 ## [0.7.0] — 2026-07
 
 ### 新增

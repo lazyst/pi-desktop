@@ -63,6 +63,24 @@ import { MouseWheelClassifier } from './mouseWheelClassifier';
 import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
 
+// —— lib/terminal 模块注入 ——
+import { isXtermInstanceDisposed } from '../lib/terminal/instance-disposed';
+import { runGuardedWriteCompletionStep } from '../lib/terminal/write-callback-guard';
+import { discardInFlightTerminalOutputAckCredits } from '../lib/terminal/ack-credit';
+import { forceTerminalViewportScrollbarSync } from '../lib/terminal/scrollbar-sync';
+import { forceRepaintThroughRenderPause } from '../lib/terminal/render-pause-release';
+import { getTerminalWebglAutoDecision } from '../lib/terminal/webgl-auto-policy';
+import {
+  registerUndeliverableWriteHandler,
+} from '../lib/terminal/write-pipeline-health';
+import { configureTerminalOutputBacklogCap } from '../lib/terminal/output-scheduler';
+import {
+  captureScrollState as captureScrollStateModule,
+  restoreScrollState as restoreScrollStateModule,
+  releaseScrollStateMarker,
+} from '../lib/terminal/scroll';
+import type { ScrollState } from '../lib/terminal/scroll';
+
 // 终端字体栈：对齐 VS Code 默认（等宽优先）。鉴于已加载 Unicode11Addon 处理宽字符度量，
 // 不再需要此前「含 CJK 的等宽字体栈」hack——VS Code 同样不靠字体栈兜底 CJK 度量，而是交给
 // Unicode11Addon + xterm 原生渲染。移除主栈里的 'Microsoft YaHei Mono'/'Microsoft YaHei' 等
@@ -378,6 +396,10 @@ export class XtermTerminal implements LiveTerminal {
       // 注意：refresh 必须在 doResize 之后（doResize 可能被零尺寸拦截而跳过），
       // 此处直接用 this.term.rows 以确保至少重绘当前有效行数。
       try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
+      // 穿透 xterm RenderService 暂停状态：tab 切换后 IntersectionObserver 可能滞后一帧，
+      // 导致 RenderService._isPaused === true 吞掉 refresh 调用。forceRepaintThroughRenderPause
+      // 直接清除暂停标记并驱动同步全屏渲染，确保用户立即看到终端内容而非空白帧。
+      forceRepaintThroughRenderPause(this.term);
     }
   }
 
@@ -440,6 +462,11 @@ export class XtermTerminal implements LiveTerminal {
       const canvas = this.term.element.querySelector('canvas');
       const gl = (canvas?.getContext('webgl2') ?? canvas?.getContext('webgl')) as WebGLRenderingContext | null;
       gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    }
+    // 丢弃飞行中 ACK 信用：确保在 dispose 前释放所有未解析的写 ACK，
+    // 避免因回调永不触发而泄漏主进程的背压窗口。
+    if (this.term) {
+      discardInFlightTerminalOutputAckCredits(this.term);
     }
     try {
       this.term?.dispose();
@@ -863,47 +890,22 @@ export class XtermTerminal implements LiveTerminal {
 
   /**
    * 保存当前滚动位置的全量快照（对齐 Orca captureScrollState）。
-   * 包含：viewportY（绝对行号）、baseY（滚动缓冲区总行数）、wasAtBottom（是否贴底）、
-   * 以及 xterm.registerMarker 创建的物理 marker（在 resize 后仍能跟踪逻辑行）。
-   * 返回完整快照，恢复时先用 marker（精确），marker 失效后回退到绝对行号。
+   * 委托给 scroll.ts 模块，使用 IMarker 做精确逻辑行跟踪。
+   * 返回 ScrollState 类型（来自 scroll.ts），包含物理标记和逻辑行标记。
    */
-  captureScrollState(): { viewportY: number; baseY: number; wasAtBottom: boolean; marker?: IMarker } | null {
+  captureScrollState(): ScrollState | null {
     if (!this.term || this.disposed) return null;
-    const buf = this.term.buffer.active;
-    const viewportY = buf.viewportY;
-    const baseY = buf.baseY;
-    const wasAtBottom = viewportY >= baseY;
-    let marker: IMarker | undefined;
-    if (!wasAtBottom) {
-      const offset = viewportY - (baseY + buf.cursorY);
-      try {
-        const m = this.term.registerMarker(offset);
-        if (m) marker = m;
-      } catch { /* marker 注册失败静默忽略 */ }
-    }
-    return { viewportY, baseY, wasAtBottom, marker };
+    return captureScrollStateModule(this.term);
   }
 
   /**
    * 恢复滚动位置（对齐 Orca restoreTerminalStructuralScrollIntent）。
-   * 优先用 marker.line（精确到逻辑行），marker 失效后回退到绝对行号 viewportY。
+   * 委托给 scroll.ts 模块，优先用 marker（精确），marker 失效后回退到绝对行号。
    * 如果 wasAtBottom 为 true 或计算后目标行超出范围，scrollToBottom。
    */
-  restoreScrollState(state: { viewportY: number; baseY: number; wasAtBottom: boolean; marker?: IMarker | null } | null): void {
+  restoreScrollState(state: ScrollState | null): void {
     if (!this.term || this.disposed || !state) return;
-    if (state.wasAtBottom) {
-      this.term.scrollToBottom();
-      return;
-    }
-    // 优先用 marker（精确逻辑行跟踪）
-    if (state.marker && state.marker.line >= 0) {
-      this.term.scrollToLine(state.marker.line);
-      return;
-    }
-    // marker 失效回退到绝对行号
-    const buf = this.term.buffer.active;
-    const targetY = Math.min(state.viewportY, buf.baseY);
-    this.term.scrollToLine(targetY);
+    restoreScrollStateModule(this.term, state);
   }
 
   /** 终端内查找：前/后搜索（对齐 VS Code XtermTerminal.findNext/findPrevious + SearchAddon）。
@@ -1382,6 +1384,17 @@ export class XtermTerminal implements LiveTerminal {
       (len) => this.pi.acknowledgeDataEvent?.(this.sessionKey, len),
     );
 
+    // 写管道健康监控：注册写管道死锁处理器。
+    // 当 xterm 写管道因同步 throw 逃逸或实例已销毁而永久停滞时，
+    // 注册的处理器会被通知以触发面板恢复（重建 xterm 并重新挂载存活 PTY）。
+    registerUndeliverableWriteHandler(this.term, (reason) => {
+      console.warn(`[terminal] 写管道死锁 (${reason})，等待面板恢复。`);
+    });
+
+    // 配置输出 backlog 上限：基于 scrollback 行数计算容量，
+    // 超出上限时丢弃旧数据并写入警告消息，防止内存无限增长。
+    configureTerminalOutputBacklogCap(getScrollback());
+
     // 进程退出（含会话结束 onStatus('dead')）统一走 channel.onExit：exit 即 dead，语义等价。
     // 收尾 resize 对齐视口（原 onStatus('dead') 行为）。集成终端 exit 时壳已 unmount，无副作用。
     this.offExit = this.channel.onExit(() => {
@@ -1416,7 +1429,9 @@ export class XtermTerminal implements LiveTerminal {
    *
    * 对齐 VS Code _enableWebglRenderer：注册 onContextLoss，GPU 上下文丢失时不闪退、整会话降级
    * DOM 渲染器（rendererLocked 仍恒定，不切回 WebGL 以免度量再跳变），并在后续 resize/可见时用
-   * requestRefreshDimensions 触发一次重新测量（此处由 doResize(true) 承担）。 */
+   * requestRefreshDimensions 触发一次重新测量（此处由 doResize(true) 承担）。
+   *
+   * auto 决策委托给 webgl-auto-policy.ts 的 getTerminalWebglAutoDecision 模块。 */
   private enableWebgl(): void {
     const term = this.term;
     if (!term || this.rendererLocked) return;
@@ -1425,6 +1440,17 @@ export class XtermTerminal implements LiveTerminal {
     if (forced === 'dom') {
       console.info('[terminal] 渲染器已按 PI_DESKTOP_RENDERER=dom 强制锁定为 DOM 渲染器。');
       return;
+    }
+    // auto 决策：委托给 webgl-auto-policy.ts 模块
+    // 在非 Linux 系统上直接允许 WebGL；Linux 上检测渲染器类型（硬件/软件）
+    if (forced !== 'webgl') {
+      const decision = getTerminalWebglAutoDecision();
+      if (!decision.allowWebgl) {
+        console.info(
+          `[terminal] WebGL 已按 auto 策略禁用（${decision.reason}），锁定为 DOM 渲染器。`,
+        );
+        return;
+      }
     }
     try {
       const addon = new WebglAddon();
@@ -1546,7 +1572,7 @@ export class XtermTerminal implements LiveTerminal {
    * flush 对齐：递增 _latestWriteSeq 并在回调中推进 _latestParsedSeq，
    * 使 flush 的写完成确认涵盖所有写入段。 */
   private _writeProcessDataUnsafe(data: string): void {
-    if (this.disposed || !this.term) return;
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
     const term = this.term;
     const seq = ++this._latestWriteSeq;
 
@@ -1558,17 +1584,27 @@ export class XtermTerminal implements LiveTerminal {
 
     try {
       term.write(data, () => {
-        // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
-        this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        // 使用 runGuardedWriteCompletionStep 保护每一步，防止同步 throw 逃逸到 xterm WriteBuffer
+        // （见 write-callback-guard.ts 的说明：未捕获的异常会永久冻结终端面板）
+        runGuardedWriteCompletionStep('write-parsed', () => {
+          // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
+          this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        });
 
-        // 背压 ack：对齐 VS Code，所有写入段（含前导 OSC 标记）都调 acknowledgeDataEvent
-        this.ackBufferer?.ack(data.length);
+        runGuardedWriteCompletionStep('ack', () => {
+          // 背压 ack：对齐 VS Code，所有写入段（含前导 OSC 标记）都调 acknowledgeDataEvent
+          this.ackBufferer?.ack(data.length);
+        });
 
-        // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-        this.restoreScrollState(savedState);
+        runGuardedWriteCompletionStep('restore-scroll', () => {
+          // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
+          this.restoreScrollState(savedState);
+        });
 
-        // 对齐 VS Code _onData：写解析完毕后通知外部消费者
-        this.onData?.(data);
+        runGuardedWriteCompletionStep('on-data', () => {
+          // 对齐 VS Code _onData：写解析完毕后通知外部消费者
+          this.onData?.(data);
+        });
       });
     } catch {
       /* 终端已销毁等边界 */
@@ -1587,7 +1623,7 @@ export class XtermTerminal implements LiveTerminal {
    * @param trackCommit 是否跟踪写完成确认。true 时记录 writePromise 供外部 await。
    *                    对齐 VS Code IProcessDataEvent.trackCommit 语义。 */
   private _writeProcessData(data: string, trackCommit = false): void {
-    if (this.disposed || !this.term) return;
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
     const term = this.term;
     const seq = ++this._latestWriteSeq;
 
@@ -1605,23 +1641,35 @@ export class XtermTerminal implements LiveTerminal {
 
     try {
       term.write(data, () => {
-        this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        // 使用 runGuardedWriteCompletionStep 保护每一步，防止同步 throw 逃逸到 xterm WriteBuffer
+        // （见 write-callback-guard.ts 的说明：未捕获的异常会永久冻结终端面板）
+        runGuardedWriteCompletionStep('write-parsed', () => {
+          this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+        });
 
-        // 背压回传（对齐 VSCode AckDataBufferer 独立类）：
-        // 通过 ackBufferer.ack 累积消费字符数到阈值再发 IPC，
-        // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
-        // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
-        this.ackBufferer?.ack(data.length);
+        runGuardedWriteCompletionStep('ack', () => {
+          // 背压回传（对齐 VSCode AckDataBufferer 独立类）：
+          // 通过 ackBufferer.ack 累积消费字符数到阈值再发 IPC，
+          // 对齐 VS Code terminalProcessManager.ts 的 CharCountAckSize=5000 累积策略，
+          // 减少高频小段 write 回调下的主进程 ↔ 渲染程通信量。
+          this.ackBufferer?.ack(data.length);
+        });
 
-        // 对齐 VS Code cb?.()：写完成回调（resolve writePromise），
-        // 在 onData 之前触发，与 VSCode 的 cb?.() → _onData 顺序一致。
-        resolveWrite?.();
+        runGuardedWriteCompletionStep('resolve-write', () => {
+          // 对齐 VS Code cb?.()：写完成回调（resolve writePromise），
+          // 在 onData 之前触发，与 VSCode 的 cb?.() → _onData 顺序一致。
+          resolveWrite?.();
+        });
 
-        // 对齐 VS Code _onData：写解析完毕后通知外部消费者
-        this.onData?.(data);
+        runGuardedWriteCompletionStep('on-data', () => {
+          // 对齐 VS Code _onData：写解析完毕后通知外部消费者
+          this.onData?.(data);
+        });
 
-        // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-        this.restoreScrollState(savedState);
+        runGuardedWriteCompletionStep('restore-scroll', () => {
+          // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
+          this.restoreScrollState(savedState);
+        });
       });
     } catch {
       /* 终端已销毁等边界 */
@@ -1638,39 +1686,50 @@ export class XtermTerminal implements LiveTerminal {
 
   /** resize 回调：X/Y 同时变化（立即/小 buffer 路径，对齐 VS Code _resizeBothCallback）。
    * 对齐 VS Code：resize（尤其列宽变化导致的 reflow）会触发 xterm 内部
-   * buffer.ydisp = buffer.ybase 重置视口到底部，故在 resize 前后 save/restore 滚动位置。 */
+   * buffer.ydisp = buffer.ybase 重置视口到底部，故使用 scroll.ts 的
+   * captureScrollState/restoreScrollState 在 fit 前后捕获和恢复滚动位置，
+   * 并在 fit 后同步滚动条。 */
   private _resizeBoth(cols: number, rows: number): void {
-    if (this.disposed || !this.fit || !this.term) return;
-    const savedState = this.captureScrollState();
+    if (this.disposed || !this.fit || !this.term || isXtermInstanceDisposed(this.term)) return;
+    const savedState = captureScrollStateModule(this.term);
     try {
       this.fit.fit();
     } catch {
       /* fit 失败（尺寸为 0 等边界）时跳过 */
     }
-    this.restoreScrollState(savedState);
+    if (savedState) {
+      restoreScrollStateModule(this.term, savedState);
+    }
+    forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
 
   /** resize 回调：仅 X（列宽）变化（防抖路径，对齐 VS Code _resizeXCallback）。
-   * 对齐 VS Code：列宽变化引发 reflow，可能改变 ybase/ydisp，故 save/restore。 */
+   * 对齐 VS Code：列宽变化引发 reflow，可能改变 ybase/ydisp，故使用 scroll.ts 的
+   * captureScrollState/restoreScrollState 在 fit 前后捕获和恢复滚动位置，
+   * 并在 fit 后同步滚动条。 */
   private _resizeX(cols: number): void {
-    if (this.disposed || !this.fit || !this.term) return;
-    const savedState = this.captureScrollState();
+    if (this.disposed || !this.fit || !this.term || isXtermInstanceDisposed(this.term)) return;
+    const savedState = captureScrollStateModule(this.term);
     try {
       this.fit.fit();
     } catch {
       /* fit 失败边界 */
     }
-    this.restoreScrollState(savedState);
+    if (savedState) {
+      restoreScrollStateModule(this.term, savedState);
+    }
+    forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
 
   /** resize 回调：仅 Y（行数）变化（即时路径，对齐 VS Code _resizeYCallback）。
    * 对齐 VS Code：xterm 的 resize 内部会重置 buffer.ydisp = buffer.ybase，
-   * 导致用户已上滚的视口 snap 到底部，故在 resize 前后 save/restore 滚动位置。 */
+   * 导致用户已上滚的视口 snap 到底部，故使用 scroll.ts 的 captureScrollState/
+   * restoreScrollState 在 resize 前后捕获和恢复滚动位置，并在 resize 后同步滚动条。 */
   private _resizeY(rows: number): void {
-    if (this.disposed || !this.term) return;
-    const savedState = this.captureScrollState();
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
+    const savedState = captureScrollStateModule(this.term);
     if (rows !== this.term.rows) {
       try {
         this.term.resize(this.term.cols, rows);
@@ -1678,7 +1737,10 @@ export class XtermTerminal implements LiveTerminal {
         /* resize 边界 */
       }
     }
-    this.restoreScrollState(savedState);
+    if (savedState) {
+      restoreScrollStateModule(this.term, savedState);
+    }
+    forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
 

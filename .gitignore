@@ -6,6 +6,7 @@ dist/
 playwright-report/
 test-results/
 release/
+package-lock.json
 
 # codegraph index (local AST cache)
 .codegraph/
