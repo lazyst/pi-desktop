@@ -1003,10 +1003,6 @@ html, body, #root {
   background: var(--bg-hover);
   outline: none;
 }
-.context-menu-item:focus-visible {
-  outline: 1px solid var(--accent-soft);
-  outline-offset: -1px;
-}
 .context-menu-item-icon {
   display: flex;
   align-items: center;
