@@ -607,6 +607,17 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
       },
     });
 
+    // ── 非目录：用系统默认程序打开（HTML→浏览器，PDF→阅读器，图片→看图软件等） ──
+    if (!isDir) {
+      items.push({
+        label: '用系统默认程序打开',
+        onClick: () => {
+          const absPath = toAbsolutePath(root, relPath);
+          void pi.fsOpenWithSystem(absPath);
+        },
+      });
+    }
+
     return items;
   }, [menu, selection, root, startNew, startRename, doCut, doCopy, doPaste, requestDelete]);
 
