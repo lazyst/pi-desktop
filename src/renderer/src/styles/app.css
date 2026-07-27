@@ -1062,12 +1062,18 @@ html, body, #root {
   background: rgba(0, 0, 0, 0.55);
 }
 .confirm-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   width: min(360px, calc(100vw - 32px));
   padding: var(--sp-4);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-modal);
+  z-index: 2001;
+  word-break: break-all;
 }
 .confirm-title {
   margin: 0 0 var(--sp-2);
