@@ -26,9 +26,11 @@ interface Props {
   onDestroyTerminal?: (id: string) => void;
   /** 已添加到左侧栏的工作目录列表（供下拉切换）。 */
   addedDirs?: string[];
+  /** 新建会话（来自空状态按钮）。 */
+  onOpen?: (req: { key?: string; cwd?: string; name?: string }) => void;
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs, onOpen }: Props) {
   const tabs = useTabStore((s) => s.tabs) as Tab[];
   const activeTabId = useTabStore((s) => s.activeTabId);
   const activeCwd = useTabStore((s) => s.activeCwd);
@@ -176,9 +178,17 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs }: Props) 
         {/* 无可见 tab 且无 keep-alive 内容时显示空状态 */}
         {cwdAllTabs.length === 0 && (
           <div className="empty-state">
-            {activeCwd
-              ? '当前目录没有打开的 tab，从左侧选择一个会话。'
-              : '请先在左侧添加工作目录，然后选择会话。'}
+            {activeCwd ? (
+              <button
+                className="empty-state-new-session-btn"
+                onClick={() => onOpen?.({ cwd: activeCwd })}
+              >
+                <span className="empty-state-plus">+</span>
+                <span>新建会话</span>
+              </button>
+            ) : (
+              '请先在左侧添加工作目录，然后选择会话。'
+            )}
           </div>
         )}
       </div>

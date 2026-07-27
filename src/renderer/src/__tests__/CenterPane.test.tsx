@@ -125,7 +125,7 @@ describe('CenterPane — 按工作目录分组', () => {
       expect(container.querySelector('.empty-state')).toBeTruthy();
     });
 
-    it('activeCwd 有值但目录下无任何 tab 时渲染空状态提示', () => {
+    it('activeCwd 有值但目录下无任何 tab 时渲染新建会话按钮', () => {
       useTabStore.setState({
         tabs: [],
         activeCwd: '/a',
@@ -134,6 +134,7 @@ describe('CenterPane — 按工作目录分组', () => {
       });
       const { container } = renderCenterPane();
       expect(container.querySelector('.empty-state')).toBeTruthy();
+      expect(container.querySelector('.empty-state-new-session-btn')).toBeTruthy();
     });
 
     it('activeCwd 有值且目录下有 hidden tab（keep-alive）时不显示空状态', () => {

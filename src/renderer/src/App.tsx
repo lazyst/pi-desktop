@@ -550,6 +550,7 @@ export default function App() {
         onOpenFile={handleOpenFile}
         onDestroyTerminal={handleDestroyTerminal}
         addedDirs={Array.from(visibleDirs)}
+        onOpen={handleOpen}
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}
