@@ -137,7 +137,7 @@ describe('CenterPane — 按工作目录分组', () => {
       expect(container.querySelector('.empty-state-new-session-btn')).toBeTruthy();
     });
 
-    it('activeCwd 有值且目录下有 hidden tab（keep-alive）时不显示空状态', () => {
+    it('activeCwd 有值且目录下有隐藏 tab 时不显示空状态', () => {
       useTabStore.setState({
         tabs: [
           { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: true, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
@@ -153,8 +153,8 @@ describe('CenterPane — 按工作目录分组', () => {
     });
   });
 
-  describe('keep-alive：会话 tab 关闭后 hidden:true 且内容实例不卸载', () => {
-    it('关闭会话 tab → 调 store.closeCenterTab，tab 进入 hidden 但内容 div 仍挂载', () => {
+  describe('关闭会话 tab 后 tab 被移除', () => {
+    it('关闭会话 tab → 调 store.closeCenterTab，tab 被移除', () => {
       seedTabs([
         { id: 's1', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/root', name: 'sess-a' } as Tab,
         { id: 's2', kind: 'session', location: 'editor', title: 'sess-b', hidden: false, order: 1, key: '/b', cwd: '/root', name: 'sess-b' } as Tab,
@@ -163,7 +163,7 @@ describe('CenterPane — 按工作目录分组', () => {
       const closeCenterTab = vi.spyOn(useTabStore.getState(), 'closeCenterTab');
 
       const { container } = renderCenterPane();
-      // 所有 tab 内容 div 都挂载（keep-alive）。
+      // 所有 tab 内容 div 都挂载。
       const panes = container.querySelectorAll('[data-testid="terminal-pane"]');
       expect(panes.length).toBe(2);
 
@@ -174,27 +174,22 @@ describe('CenterPane — 按工作目录分组', () => {
 
       expect(closeCenterTab).toHaveBeenCalledWith('s1');
       const s = useTabStore.getState();
-      expect(s.tabs.find((t) => t.id === 's1')!.hidden).toBe(true);
-      expect(s.tabs).toHaveLength(2);
+      expect(s.tabs.find((t) => t.id === 's1')).toBeUndefined();
+      expect(s.tabs).toHaveLength(1);
     });
 
-    it('重新打开（openSession 同 key）取消 hidden → 内容实例被复用而非重建', () => {
+    it('关闭后重新打开会创建新 tab 实例', () => {
       seedTabs([
-        { id: '/a', kind: 'session', location: 'editor', title: 'sess-a', hidden: true, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
+        { id: '/a', kind: 'session', location: 'editor', title: 'sess-a', hidden: false, order: 0, key: '/a', cwd: '/a', name: 'sess-a' } as Tab,
       ]);
       const { container } = renderCenterPane();
-      // 隐藏态下，TabBar 不渲染该 tab；但内容 div 仍挂载（keep-alive）。
-      expect(container.querySelectorAll('.center-pane .terminal-tab').length).toBe(0);
-      const panes = container.querySelectorAll('[data-testid="terminal-pane"]');
-      expect(panes.length).toBe(1);
+      // 关闭 tab
+      const closeBtn = container.querySelector('.center-pane .terminal-tab .tab-close') as HTMLElement;
+      fireEvent.click(closeBtn);
 
-      // 从侧边栏重开（openSession 同 key）→ 取消 hidden。
-      act(() => {
-        useTabStore.getState().openSession({ key: '/a', cwd: '/a', name: 'sess-a' });
-      });
-      const s = useTabStore.getState();
-      expect(s.tabs.find((t) => t.id === '/a')!.hidden).toBe(false);
-      expect(s.activeTabId).toBe('/a');
+      // tab 被移除，内容 div 不再挂载
+      expect(container.querySelectorAll('[data-testid="terminal-pane"]').length).toBe(0);
+      expect(useTabStore.getState().tabs.find((t) => t.id === '/a')).toBeUndefined();
     });
   });
 

@@ -255,29 +255,27 @@ describe('tabStore — 状态容器与 action', () => {
   });
 
   describe('closeCenterTab', () => {
-    it('session 终端：关闭 = 仅隐藏 keep-alive（hidden:true 且不卸载），激活指针移到同目录下一个可见 tab', () => {
+    it('session 终端：关闭 = 真移除，激活指针移到同目录下一个可见 tab', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().openSession({ key: 's2', cwd: '/a', name: 'sess-b' });
       getState().selectTab('s1');
-      // 关闭 s1 → 实例仍在 tabs 中，仅置 hidden，内容实例不卸载（切回恢复滚动/历史）。
+      // 关闭 s1 → 实例被移除，不再 keep-alive。
       getState().closeCenterTab('s1');
       const s = getState();
-      expect(s.tabs).toHaveLength(2);
-      const s1 = s.tabs.find((t) => t.id === 's1')!;
-      expect(s1.hidden).toBe(true);
-      // keep-alive：隐藏不卸载；但激活指针应移到下一个可见 tab，避免 TabBar 无选中项。
-      // TabBar 只渲染 visibleTabs（!hidden），若 activeTabId 指向 hidden tab 则无 tab 高亮。
+      expect(s.tabs).toHaveLength(1);
+      expect(s.tabs.find((t) => t.id === 's1')).toBeUndefined();
+      // 激活指针移到下一个可见 tab。
       expect(s.activeTabId).toBe('s2');
     });
 
-    it('session 已隐藏再 closeCenterTab 为 no-op（不会重复翻转或误卸载）', () => {
+    it('session 已关闭再 closeCenterTab 为 no-op（同 id 不存在则跳过）', () => {
       getState().openSession({ key: 's1', cwd: '/a', name: 'sess-a' });
       getState().closeCenterTab('s1');
       const before = getState().tabs;
       getState().closeCenterTab('s1');
       const s = getState();
       expect(s.tabs).toBe(before);
-      expect(s.tabs[0].hidden).toBe(true);
+      expect(s.tabs.find((t) => t.id === 's1')).toBeUndefined();
     });
 
     it('preview / diff 关闭 = 真移除（无 keep-alive）', () => {

@@ -639,22 +639,28 @@ export const useTabStore = create<TabStore>((set) => ({
       const tab = state.tabs.find((t) => t.id === id);
       if (!tab) return {};
       const tabCwd = getTabCwd(tab);
-      // session / integrated-terminal 终端：keep-alive，仅隐藏不卸载。
-      // session-content / preview / diff：真移除。
+      // session / integrated-terminal 终端：不再 keep-alive，关闭即真移除。
+      // 进程终止由调用方（onDestroySession / onDestroyTerminal）先处理，
+      // 再到 store 做 tab 移除。
       if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
-        if (state.tabs.some((t) => t.id === id && t.hidden)) return {};
-        const tabs = state.tabs.map((t) => (t.id === id ? { ...t, hidden: true } : t));
-        const patch: Partial<TabStore> = { tabs };
+        const remaining = state.tabs.filter((t) => t.id !== id);
+        const patch: Partial<TabStore> = { tabs: remaining };
         if (state.activeTabId === id) {
           const cwd = state.activeCwd ?? tabCwd;
           const nextId =
-            previousTabInHistory(state.cwdTabHistory, tabs, cwd, id) ??
-            firstVisibleInCwd(tabs, cwd);
+            previousTabInHistory(state.cwdTabHistory, remaining, cwd, id) ??
+            firstVisibleInCwd(remaining, cwd);
           patch.activeTabId = nextId;
-          patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, tabs, cwd, nextId);
+          patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
           patch.cwdTabHistory = nextId
             ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-            : state.cwdTabHistory;
+            : cleanTabHistory(state.cwdTabHistory, remaining);
+        } else if (state.cwdActiveTab[tabCwd] === id) {
+          const nextId = firstVisibleInCwd(remaining, tabCwd);
+          patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, tabCwd, nextId);
+          patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
+        } else {
+          patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
         }
         return patch;
       }

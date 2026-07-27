@@ -503,6 +503,21 @@ export default function App() {
     }
   }, []);
 
+  // 关闭 session tab → 终止进程 + 真移除 tab（区别于 keep-alive 隐藏）。
+  // 对齐用户预期：关闭终端 tab ≡ 终止终端进程。
+  const handleDestroySession = useCallback(async (id: string) => {
+    try {
+      const tabs = useTabStore.getState().tabs;
+      const tab = tabs.find((t) => t.id === id) as SessionTab | undefined;
+      if (tab) {
+        await pi.terminate(tab.key);
+      }
+      useTabStore.getState().closeTab(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   // 侧边栏右键「查看会话」：在中间区以 tab 形式展示会话内容。
   const handleViewContent = useCallback((sessionKey: string, sessionName: string) => {
     // 从 disk 中查找该会话的 cwd
@@ -549,6 +564,7 @@ export default function App() {
       <CenterPane
         onOpenFile={handleOpenFile}
         onDestroyTerminal={handleDestroyTerminal}
+        onDestroySession={handleDestroySession}
         addedDirs={Array.from(visibleDirs)}
         onOpen={handleOpen}
       />

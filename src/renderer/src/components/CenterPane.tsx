@@ -24,13 +24,15 @@ interface Props {
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
   /** 集成终端 × 关闭：先在主进程杀 PTY，再移除 tab。传 undefined 时走 keep-alive 隐藏。 */
   onDestroyTerminal?: (id: string) => void;
+  /** session tab × 关闭：终止进程后再移除 tab。 */
+  onDestroySession?: (id: string) => void;
   /** 已添加到左侧栏的工作目录列表（供下拉切换）。 */
   addedDirs?: string[];
   /** 新建会话（来自空状态按钮）。 */
   onOpen?: (req: { key?: string; cwd?: string; name?: string }) => void;
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs, onOpen }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen }: Props) {
   const tabs = useTabStore((s) => s.tabs) as Tab[];
   const activeTabId = useTabStore((s) => s.activeTabId);
   const activeCwd = useTabStore((s) => s.activeCwd);
@@ -84,8 +86,10 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, addedDirs, onOpen }:
       const tab = tabs.find((t) => t.id === id);
       if (tab?.kind === 'integrated-terminal') {
         onDestroyTerminal(id);   // 杀 PTY + 移除 tab
+      } else if (tab?.kind === 'session' && onDestroySession) {
+        onDestroySession(id);    // 终止进程 + 移除 tab
       } else {
-        closeCenterTab(id);     // session/preview/diff 走原逻辑
+        closeCenterTab(id);     // preview/diff 走原逻辑
       }
     } else {
       closeCenterTab(id);
