@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.7.0] — 2026-07
+
+### 新增
+
+- **文件树虚拟滚动重构**：用 @tanstack/react-virtual 替代递归渲染，
+  拆分 FileTree 为 file-tree-types/model/Row/VirtualRows 四个模块，
+  大量文件下性能显著提升
+- **工作区切换改进**：主内容区目录标签改为下拉菜单，可切换到任意已
+  添加的工作目录；启动时从 lastActiveDir 恢复上次选择，
+  首次安装默认选 appWorkDir
+- **会话内容查看**：侧边栏右键菜单新增「查看会话」，在中间区 Tab 展示
+  SessionContentView 组件，按用户消息分组，区分思考过程与最终回复
+  - 同一轮次内所有 thinking + tool 调用合并为一个 Process 折叠块
+  - 仅保留最后一个 assistant 的最终回复，其余折叠到 Process 中
+  - 加载完成后自动滚动到底部
+  - 设置面板会话管理自动继承相同展示逻辑
+- **工作区空状态**：无 tab 时显示居中「新建会话」按钮替代文本提示
+- **Tab 计数显示优化**：移除侧边栏分组终端计数，下拉框改为自定义组件
+  显示各 Session 的 tab 数量
+
+### 变更
+
+- **文件树 UI 组件替换**：用 lucide-react 替换自实现 SVG 图标；
+  用 @radix-ui/react-context-menu 替换自实现 ContextMenu；
+  用 @radix-ui/react-alert-dialog 替换自实现 ConfirmDialog
+- 移除侧边栏分组终端计数徽标
+
+### 修复
+
+- **关闭 session tab 时终止进程**：之前关闭 session tab 仅隐藏，
+  进程 keep-alive 在后台运行，现改为正常终止
+- **确认弹窗被遮罩层覆盖且内容溢出**：修复 z-index 层级和内容溢出问题
+
+---
+
 ## [0.6.0] — 2025-07
 
 ### 新增
