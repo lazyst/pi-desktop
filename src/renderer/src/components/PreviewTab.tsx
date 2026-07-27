@@ -97,7 +97,26 @@ export function PreviewTab({ root, path, active, onOpenFile, onClose, onRegister
         }
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
+        // 目录错误（EISDIR）：降级到系统文件管理器打开，而非显示错误。
+        const errMsg = e instanceof Error ? e.message : String(e);
+        if (errMsg.includes('EISDIR')) {
+          const abs = toAbsolutePath(root, path);
+          await pi.fsOpenWithSystem(abs).catch(() => {});
+          if (!cancelled) {
+            setKind('binary');
+            setError(null);
+          }
+          return;
+        }
+        // 文件不存在（ENOENT）：显示友好提示。
+        if (errMsg.includes('ENOENT')) {
+          setError('文件不存在或已被删除');
+          setKind('binary');
+          setIsMarkdown(false);
+          return;
+        }
+        // 其他错误：显示友好提示（隐藏原始 IPC 错误详情）。
+        setError('无法打开文件');
         setKind('binary');
         setIsMarkdown(false);
       }
