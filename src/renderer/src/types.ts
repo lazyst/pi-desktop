@@ -58,6 +58,10 @@ export interface AppConfig {
   // 右栏（文件树/Git）上一次选择的目录，跨会话持久化。
   // 首次打开时为空，应用自动选择 appWorkDir；后续启动恢复此值。
   lastActiveDir: string;
+  // 左侧栏是否折叠
+  sidebarCollapsed: boolean;
+  // 右栏（文件树/Git）是否折叠
+  rightPanelCollapsed: boolean;
 
   // ── 终端光标配置 ──
   // 光标闪烁，默认 true。

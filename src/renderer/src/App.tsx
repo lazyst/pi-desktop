@@ -47,6 +47,9 @@ export default function App() {
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>(defaultConfig().collapsedGroups);
   // 右栏（文件树 / Git）宽度（持久化于 config.rightPanelWidth）。
   const [rightPanelWidth, setRightPanelWidth] = useState<number>(defaultConfig().rightPanelWidth);
+  // 左侧栏和右栏的折叠状态
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(defaultConfig().sidebarCollapsed);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState<boolean>(defaultConfig().rightPanelCollapsed);
   // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
   // is written. Lets the sidebar highlight the promoted entry as the active one.
   const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
@@ -374,6 +377,23 @@ export default function App() {
     setRightPanelWidth(w);
     pi.setConfig({ rightPanelWidth: w }).catch(() => {});
   };
+
+  const handleToggleSidebar = () => {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      pi.setConfig({ sidebarCollapsed: next }).catch(() => {});
+      return next;
+    });
+  };
+
+  const handleToggleRightPanel = () => {
+    setRightPanelCollapsed((prev) => {
+      const next = !prev;
+      pi.setConfig({ rightPanelCollapsed: next }).catch(() => {});
+      return next;
+    });
+  };
+
   // 待确认的危险操作：单条删除 / 清空目录 / 批量删除，统一用一份确认弹窗。
   type PendingDelete =
     | { kind: 'session'; key: string; name: string }
@@ -506,7 +526,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <TitleBar onOpenSettings={() => setSettingsOpen(true)} />
+      <TitleBar
+        onOpenSettings={() => setSettingsOpen(true)}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={handleToggleSidebar}
+        rightPanelCollapsed={rightPanelCollapsed}
+        onToggleRightPanel={handleToggleRightPanel}
+      />
       <div className="app-shell">
       <Sidebar
         sessions={sessions}
@@ -537,6 +563,7 @@ export default function App() {
         collapsedGroups={collapsedGroups}
         onCollapseGroup={handleCollapseGroup}
         onViewContent={handleViewContent}
+        collapsed={sidebarCollapsed}
       />
       <CenterPane
         onOpenFile={handleOpenFile}
@@ -554,6 +581,7 @@ export default function App() {
         onOpenCommit={openCommitDiff}
         width={rightPanelWidth}
         onResize={handleRightPanelResize}
+        collapsed={rightPanelCollapsed}
       />
       </div>
       {confirm && (

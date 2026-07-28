@@ -37,6 +37,7 @@ interface Props {
   onOpenCommit: (cwd: string, hash: string) => void;
   width: number;
   onResize: (w: number) => void;
+  collapsed?: boolean;
 }
 
 export function RightPanel({
@@ -48,6 +49,7 @@ export function RightPanel({
   onOpenCommit,
   width,
   onResize,
+  collapsed,
 }: Props) {
   // 右栏自身的 Tab 切换（文件树 / Git）。
   const [tab, setTab] = useState<RightTab>('files');
@@ -168,7 +170,7 @@ export function RightPanel({
   }, [onResizerMove, onResizerUp]);
 
   return (
-    <div className="right-panel" ref={rightPanelRef} style={{ width: rpWidth }}>
+    <div className={`right-panel${collapsed ? ' right-panel--collapsed' : ''}`} ref={rightPanelRef} style={{ width: collapsed ? 0 : rpWidth }}>
       <TabBar
         tabs={[
           { id: 'files', title: '文件', kind: 'preview', closable: false },
@@ -215,13 +217,15 @@ export function RightPanel({
       </div>
 
       {/* 右缘 4px 拖拽条：整高、ew-resize、hover 淡高亮 */}
-      <div
-        className="right-panel-resizer"
-        onMouseDown={onResizerDown}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="拖拽调整右栏宽度"
-      />
+      {!collapsed && (
+        <div
+          className="right-panel-resizer"
+          onMouseDown={onResizerDown}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖拽调整右栏宽度"
+        />
+      )}
     </div>
   );
 }

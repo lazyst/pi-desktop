@@ -38,6 +38,10 @@ export function defaultConfig(): AppConfig {
     collapsedGroups: [],
     // 右栏（文件树/Git）上一次选择的目录，首次启动为空
     lastActiveDir: '',
+    // 左侧栏初始不折叠
+    sidebarCollapsed: false,
+    // 右栏初始不折叠
+    rightPanelCollapsed: false,
 
     // 终端光标
     cursorBlink: true,

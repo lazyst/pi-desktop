@@ -135,3 +135,31 @@ export function IconSession({ size = 16, className }: IconProps) {
     </svg>
   );
 }
+
+// 左侧栏折叠/展开按钮图标：展开时箭头向左（指示折叠），折叠时箭头向右（指示展开）。
+// collapsed 为 true 时箭头指向右，false 时箭头指向左。
+export function IconSidebarToggle({ size = 16, className, collapsed }: IconProps & { collapsed?: boolean }) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      {collapsed ? (
+        <path d="M9 6l6 6-6 6" />
+      ) : (
+        <path d="M15 6l-6 6 6 6" />
+      )}
+    </svg>
+  );
+}
+
+// 右栏折叠/展开按钮图标：展开时箭头向右（指示折叠），折叠时箭头向左（指示展开）。
+// collapsed 为 true 时箭头指向左，false 时箭头指向右。
+export function IconRightPanelToggle({ size = 16, className, collapsed }: IconProps & { collapsed?: boolean }) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      {collapsed ? (
+        <path d="M15 6l-6 6 6 6" />
+      ) : (
+        <path d="M9 6l6 6-6 6" />
+      )}
+    </svg>
+  );
+}

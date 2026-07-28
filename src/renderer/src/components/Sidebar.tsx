@@ -50,12 +50,14 @@ interface Props {
   collapsedGroups?: string[];
   // 折叠状态变更回调：与 onSidebarResize 同模式，由 App 回写 config。
   onCollapseGroup?: (cwd: string, collapsed: boolean) => void;
+  // 左侧栏整体折叠
+  collapsed?: boolean;
 }
 
 export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, onViewContent, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
   sidebarWidth, onSidebarResize, addedDirs, appWorkDir, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd,
-  collapsedGroups, onCollapseGroup }: Props) {
+  collapsedGroups, onCollapseGroup, collapsed }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
 
@@ -145,7 +147,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
 
   return (
     <>
-      <aside className="sidebar" ref={sidebarRef} style={{ width }}>
+      <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} ref={sidebarRef} style={{ width: collapsed ? 0 : width }}>
       <div className="sidebar-header">
         <span className="sidebar-title">会话</span>
         <div className="sidebar-actions">
@@ -327,13 +329,15 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
         })}
       </div>
       {/* 右侧 4px 拖拽条：整高、ew-resize、hover 淡高亮；与窗口右缘的 rz-right 缩放热区不冲突 */}
-      <div
-        className="sidebar-resizer"
-        onMouseDown={onResizerDown}
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="拖拽调整侧边栏宽度"
-      />
+      {!collapsed && (
+        <div
+          className="sidebar-resizer"
+          onMouseDown={onResizerDown}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="拖拽调整侧边栏宽度"
+        />
+      )}
       </aside>
       {menu && (
         <ContextMenu

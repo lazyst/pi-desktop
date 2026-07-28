@@ -535,6 +535,15 @@ html, body, #root {
   position: relative;
 }
 
+/* 左侧栏折叠态：宽度归零、溢出隐藏、无边框 */
+.sidebar--collapsed {
+  width: 0 !important;
+  overflow: hidden;
+  border-right: none;
+  padding: 0;
+  margin: 0;
+}
+
 /* 侧边栏拖拽条：右边框 4px、整高、ew-resize；hover 淡淡高亮成强调色。
    位于侧边栏右缘，与窗口最右的 rz-right 缩放热区（窗口最右 4px）不冲突。 */
 .sidebar-resizer {
@@ -1123,6 +1132,28 @@ html, body, #root {
   color: var(--text);
   letter-spacing: var(--ls-label);
 }
+.titlebar-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  -webkit-app-region: no-drag;
+}
+.titlebar-panel-toggle {
+  width: 28px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 0;
+  -webkit-app-region: no-drag;
+  transition: background-color var(--transition), color var(--transition);
+}
+.titlebar-panel-toggle:hover { background: var(--bg-hover); color: var(--text); }
+.titlebar-panel-toggle:focus-visible { box-shadow: var(--focus-ring); }
 .titlebar-spacer { flex: 1; }
 .titlebar-actions {
   display: flex;
@@ -2577,6 +2608,15 @@ html, body, #root {
   border-left: 1px solid var(--border);
   color: var(--text);
   position: relative;
+}
+
+/* 右栏折叠态：宽度归零、溢出隐藏、无边框 */
+.right-panel--collapsed {
+  width: 0 !important;
+  overflow: hidden;
+  border-left: none;
+  padding: 0;
+  margin: 0;
 }
 .right-panel-resizer {
   position: absolute;
