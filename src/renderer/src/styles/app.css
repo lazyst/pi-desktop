@@ -3396,3 +3396,61 @@ html, body, #root {
   flex-direction: column;
   gap: var(--sp-3);
 }
+
+/* ── Skills 分类展示 ── */
+.pi-skill-group {
+  margin-bottom: var(--sp-3);
+}
+.pi-skill-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-sm);
+  background: var(--bg-hover);
+  margin-bottom: var(--sp-2);
+  cursor: pointer;
+  user-select: none;
+}
+.pi-skill-group-header:hover {
+  background: var(--bg-active);
+}
+.pi-chevron {
+  display: inline-block;
+  font-size: 10px;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+.pi-skill-group-title {
+  flex: 1;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
+}
+.pi-skill-group-actions {
+  display: flex;
+  gap: var(--sp-1);
+}
+.pi-skill-group-items {
+  padding-left: var(--sp-4);
+  overflow: hidden;
+  max-height: 2000px;
+  opacity: 1;
+  transition: max-height 0.3s ease, opacity 0.25s ease, margin-bottom 0.3s ease;
+  margin-bottom: 0;
+}
+.pi-skill-group-items.pi-collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin-bottom: 0;
+}
+.pi-skill-card-meta {
+  margin-bottom: var(--sp-2);
+}
+.pi-skill-source {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  word-break: break-all;
+}
+

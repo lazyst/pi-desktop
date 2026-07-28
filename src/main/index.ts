@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { exec } from 'node:child_process';
+import { exec, execSync } from 'node:child_process';
 import { UnifiedTerminalPool } from './unifiedTerminalPool';
 import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './sessionPool';
@@ -656,75 +656,298 @@ function unescapeField(s: string): string {
   });
 
   // Skills 管理
-  const skillsDir = path.join(piAgentDir, 'skills');
-  const disabledSkillsDir = path.join(piAgentDir, 'skills', '.disabled');
+  // Pi 加载的全局 skill 目录（两个）：~/.pi/agent/skills/ 和 ~/.agents/skills/
+  const SKILL_ROOTS = [
+    path.join(piAgentDir, 'skills'),
+    path.join(os.homedir(), '.agents', 'skills'),
+  ];
 
-  function listSkills(): Array<{ name: string; dir: string; disabled: boolean; description?: string }> {
-    const result: Array<{ name: string; dir: string; disabled: boolean; description?: string }> = [];
-    if (fs.existsSync(skillsDir)) {
-      for (const entry of fs.readdirSync(skillsDir, { withFileTypes: true })) {
+  function readSkillDescription(skillDir: string): string | undefined {
+    const skillMd = path.join(skillDir, 'SKILL.md');
+    if (fs.existsSync(skillMd)) {
+      const content = fs.readFileSync(skillMd, 'utf-8');
+      const match = content.match(/description:\s*"([^"]+)"|description:\s*([^\r\n]+)/);
+      return match?.[1] || match?.[2]?.trim() || undefined;
+    }
+    return undefined;
+  }
+
+  function findSkillRoot(name: string): { root: string; disabled: boolean } | null {
+    for (const root of SKILL_ROOTS) {
+      const normal = path.join(root, name);
+      if (fs.existsSync(normal) && fs.statSync(normal).isDirectory()) {
+        return { root, disabled: false };
+      }
+      const disabled = path.join(root, '.disabled', name);
+      if (fs.existsSync(disabled) && fs.statSync(disabled).isDirectory()) {
+        return { root, disabled: true };
+      }
+    }
+    return null;
+  }
+
+  interface SkillInfo {
+    name: string;
+    disabled: boolean;
+    description?: string;
+    source: string | null;
+    sourceUrl: string | null;
+    sourceType: string | null;
+  }
+
+  function listSkills(): SkillInfo[] {
+    // 1) 读取缓存中的 source 映射（skill name → source 信息）
+    const state = readPiToolState();
+    const sourceCache: Record<string, { source: string; sourceUrl: string; sourceType: string }> =
+      (state.skillSourceCache as any) || {};
+
+    // 2) 扫描文件系统获取所有 skill（快，不调 npx）
+    const result: SkillInfo[] = [];
+    const seenNames = new Set<string>();
+
+    for (const root of SKILL_ROOTS) {
+      if (!fs.existsSync(root)) continue;
+      for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
         if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          const skillDir = path.join(skillsDir, entry.name);
-          const skillMd = path.join(skillDir, 'SKILL.md');
-          let description: string | undefined;
-          if (fs.existsSync(skillMd)) {
-            const content = fs.readFileSync(skillMd, 'utf-8');
-            const match = content.match(/description:\s*"([^"]+)"|description:\s*([^\r\n]+)/);
-            description = match?.[1] || match?.[2]?.trim() || undefined;
-          }
-          result.push({ name: entry.name, dir: skillDir, disabled: false, description });
+          const skillDir = path.join(root, entry.name);
+          const description = readSkillDescription(skillDir);
+          const cached = sourceCache[entry.name];
+          result.push({
+            name: entry.name,
+            disabled: false,
+            description,
+            source: cached?.source ?? null,
+            sourceUrl: cached?.sourceUrl ?? null,
+            sourceType: cached?.sourceType ?? null,
+          });
+          seenNames.add(entry.name);
         }
       }
     }
-    if (fs.existsSync(disabledSkillsDir)) {
-      for (const entry of fs.readdirSync(disabledSkillsDir, { withFileTypes: true })) {
-        if (entry.isDirectory() && !entry.name.startsWith('.')) {
-          const skillDir = path.join(disabledSkillsDir, entry.name);
-          const skillMd = path.join(skillDir, 'SKILL.md');
-          let description: string | undefined;
-          if (fs.existsSync(skillMd)) {
-            const content = fs.readFileSync(skillMd, 'utf-8');
-            const match = content.match(/description:\s*"([^"]+)"|description:\s*([^\r\n]+)/);
-            description = match?.[1] || match?.[2]?.trim() || undefined;
-          }
-          result.push({ name: entry.name, dir: skillDir, disabled: true, description });
+
+    // 3) 扫描 .disabled 目录
+    for (const root of SKILL_ROOTS) {
+      const disabledDir = path.join(root, '.disabled');
+      if (!fs.existsSync(disabledDir)) continue;
+      for (const entry of fs.readdirSync(disabledDir, { withFileTypes: true })) {
+        if (entry.isDirectory() && !entry.name.startsWith('.') && !seenNames.has(entry.name)) {
+          const skillDir = path.join(disabledDir, entry.name);
+          const description = readSkillDescription(skillDir);
+          const cached = sourceCache[entry.name];
+          result.push({
+            name: entry.name,
+            disabled: true,
+            description,
+            source: cached?.source ?? null,
+            sourceUrl: cached?.sourceUrl ?? null,
+            sourceType: cached?.sourceType ?? null,
+          });
+          seenNames.add(entry.name);
         }
       }
     }
+
     return result;
+  }
+
+  /** 刷新 source 缓存：调用 npx skills 更新分类信息 */
+  function refreshSkillSourceCache(): void {
+    try {
+      const output = execSync('npx skills ls -g --json', {
+        encoding: 'utf-8',
+        timeout: 30000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        shell: true,
+      });
+      const npxResults: any[] = JSON.parse(output);
+      const cache: Record<string, { source: string; sourceUrl: string; sourceType: string }> = {};
+      for (const skill of npxResults) {
+        if (skill.source) {
+          cache[skill.name] = {
+            source: skill.source,
+            sourceUrl: skill.sourceUrl || '',
+            sourceType: skill.sourceType || '',
+          };
+        }
+      }
+      const state = readPiToolState();
+      state.skillSourceCache = cache;
+      writePiToolState(state);
+    } catch {
+      // npx skills 不可用时跳过
+    }
   }
 
   ipcMain.handle('pi:skills:list', () => ({ skills: listSkills() }));
 
-  ipcMain.handle('pi:skills:disable', (_e, name: string) => {
-    const src = path.join(skillsDir, name);
-    const dst = path.join(disabledSkillsDir, name);
-    if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) return { success: false, error: 'Skill not found' };
-    if (!fs.existsSync(disabledSkillsDir)) fs.mkdirSync(disabledSkillsDir, { recursive: true });
+  /** 刷新 source 缓存（npx skills 刷新） */
+  ipcMain.handle('pi:skills:refreshCache', () => {
+    refreshSkillSourceCache();
+    return { skills: listSkills() };
+  });
+
+  ipcMain.handle('pi:skills:disable', (_e, payload: { name: string; source?: string | null }) => {
+    const found = findSkillRoot(payload.name);
+    if (!found || found.disabled) return { success: false, error: 'Skill not found or already disabled' };
+    const src = path.join(found.root, payload.name);
+    const dst = path.join(found.root, '.disabled', payload.name);
+    const disabledDir = path.join(found.root, '.disabled');
+    if (!fs.existsSync(disabledDir)) fs.mkdirSync(disabledDir, { recursive: true });
     fs.renameSync(src, dst);
+    // 保存 source 信息到缓存，方便恢复时保留分类
+    if (payload.source) {
+      try {
+        const state = readPiToolState();
+        if (!state.disabledSkills) state.disabledSkills = {};
+        (state.disabledSkills as Record<string, string>)[payload.name] = payload.source;
+        writePiToolState(state);
+      } catch { /* ignore */ }
+    }
     return { success: true };
   });
 
   ipcMain.handle('pi:skills:enable', (_e, name: string) => {
-    const src = path.join(disabledSkillsDir, name);
-    const dst = path.join(skillsDir, name);
-    if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) return { success: false, error: 'Disabled skill not found' };
+    const found = findSkillRoot(name);
+    if (!found || !found.disabled) return { success: false, error: 'Disabled skill not found' };
+    const src = path.join(found.root, '.disabled', name);
+    const dst = path.join(found.root, name);
     fs.renameSync(src, dst);
+    // 清理缓存中的 source 记录
+    try {
+      const state = readPiToolState();
+      if (state.disabledSkills && typeof state.disabledSkills === 'object') {
+        delete (state.disabledSkills as Record<string, string>)[name];
+        writePiToolState(state);
+      }
+    } catch { /* ignore */ }
     return { success: true };
   });
 
-  ipcMain.handle('pi:skills:delete', (_e, name: string) => {
-    const normal = path.join(skillsDir, name);
-    const disabled = path.join(disabledSkillsDir, name);
-    if (fs.existsSync(normal)) {
-      fs.rmSync(normal, { recursive: true, force: true });
-      return { success: true };
+  ipcMain.handle('pi:skills:delete', async (_e, payload: { name: string; disabled?: boolean }) => {
+    // 1) 如果是 active skill，先尝试用 npx skills remove 清理
+    if (!payload.disabled) {
+      try {
+        execSync(`npx skills remove "${payload.name}" -g -y`, {
+          timeout: 15000,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          windowsHide: true,
+          shell: true,
+        });
+      } catch {
+        // npx skills remove 失败，fallback 到文件系统
+      }
     }
-    if (fs.existsSync(disabled)) {
-      fs.rmSync(disabled, { recursive: true, force: true });
-      return { success: true };
+
+    // 2) 从两个根的 .disabled 目录也清理（防止残留）
+    let deleted = false;
+    for (const root of SKILL_ROOTS) {
+      const normal = path.join(root, payload.name);
+      if (fs.existsSync(normal)) {
+        fs.rmSync(normal, { recursive: true, force: true });
+        deleted = true;
+      }
+      const disabled = path.join(root, '.disabled', payload.name);
+      if (fs.existsSync(disabled)) {
+        fs.rmSync(disabled, { recursive: true, force: true });
+        deleted = true;
+      }
     }
-    return { success: false, error: 'Skill not found' };
+
+    // 清理缓存
+    try {
+      const state = readPiToolState();
+      if (state.disabledSkills && typeof state.disabledSkills === 'object') {
+        delete (state.disabledSkills as Record<string, string>)[payload.name];
+        writePiToolState(state);
+      }
+    } catch { /* ignore */ }
+
+    return { success: deleted, error: deleted ? undefined : 'Skill not found' };
+  });
+
+  // 批量禁用/启用/删除
+  ipcMain.handle('pi:skills:batchDisable', (_e, payload: { names: string[]; source?: string | null }) => {
+    const results: Array<{ name: string; success: boolean; error?: string }> = [];
+    for (const name of payload.names) {
+      const found = findSkillRoot(name);
+      if (!found || found.disabled) {
+        results.push({ name, success: false, error: 'Skill not found or already disabled' });
+        continue;
+      }
+      const src = path.join(found.root, name);
+      const dst = path.join(found.root, '.disabled', name);
+      const disabledDir = path.join(found.root, '.disabled');
+      try {
+        if (!fs.existsSync(disabledDir)) fs.mkdirSync(disabledDir, { recursive: true });
+        fs.renameSync(src, dst);
+        results.push({ name, success: true });
+      } catch (err) {
+        results.push({ name, success: false, error: String(err) });
+      }
+    }
+    // 缓存 source 信息
+    if (payload.source) {
+      try {
+        const state = readPiToolState();
+        if (!state.disabledSkills) state.disabledSkills = {};
+        for (const r of results) {
+          if (r.success) {
+            (state.disabledSkills as Record<string, string>)[r.name] = payload.source;
+          }
+        }
+        writePiToolState(state);
+      } catch { /* ignore */ }
+    }
+    return { results };
+  });
+
+  ipcMain.handle('pi:skills:batchDelete', async (_e, payload: { names: string[] }) => {
+    const results: Array<{ name: string; success: boolean; error?: string }> = [];
+    for (const name of payload.names) {
+      try {
+        // 尝试 npx skills remove
+        try {
+          execSync(`npx skills remove "${name}" -g -y`, {
+            timeout: 15000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            shell: true,
+          });
+        } catch { /* fallback */ }
+
+        // 清理所有目录
+        let deleted = false;
+        for (const root of SKILL_ROOTS) {
+          const normal = path.join(root, name);
+          if (fs.existsSync(normal)) {
+            fs.rmSync(normal, { recursive: true, force: true });
+            deleted = true;
+          }
+          const disabled = path.join(root, '.disabled', name);
+          if (fs.existsSync(disabled)) {
+            fs.rmSync(disabled, { recursive: true, force: true });
+            deleted = true;
+          }
+        }
+        results.push({ name, success: deleted });
+      } catch (err) {
+        results.push({ name, success: false, error: String(err) });
+      }
+    }
+    // 清理缓存
+    try {
+      const state = readPiToolState();
+      if (state.disabledSkills && typeof state.disabledSkills === 'object') {
+        for (const r of results) {
+          if (r.success) {
+            delete (state.disabledSkills as Record<string, string>)[r.name];
+          }
+        }
+        writePiToolState(state);
+      }
+    } catch { /* ignore */ }
+    return { results };
   });
 
   // 扩展管理

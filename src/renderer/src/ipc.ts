@@ -112,10 +112,13 @@ export interface PiApi {
   piMcpConfigs(): Promise<Array<{ id: string; label: string; path: string; exists: boolean; config: unknown }>>;
   piMcpConfigsSave(payload: { id: string; config: unknown }): Promise<{ success: boolean; path: string }>;
   piMcpStatus(): Promise<{ installed: boolean; version?: string }>;
-  piSkillsList(): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string }> }>;
-  piSkillsDisable(name: string): Promise<{ success: boolean; error?: string }>;
+  piSkillsList(): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string; source: string | null; sourceUrl: string | null; sourceType: string | null }> }>;
+  piSkillsDisable(payload: { name: string; source?: string | null }): Promise<{ success: boolean; error?: string }>;
   piSkillsEnable(name: string): Promise<{ success: boolean; error?: string }>;
-  piSkillsDelete(name: string): Promise<{ success: boolean; error?: string }>;
+  piSkillsDelete(payload: { name: string; disabled?: boolean }): Promise<{ success: boolean; error?: string }>;
+  piSkillsBatchDisable(payload: { names: string[]; source?: string | null }): Promise<{ results: Array<{ name: string; success: boolean; error?: string }> }>;
+  piSkillsBatchDelete(payload: { names: string[] }): Promise<{ results: Array<{ name: string; success: boolean; error?: string }> }>;
+  piSkillsRefreshCache(): Promise<{ skills: Array<{ name: string; disabled: boolean; description?: string; source: string | null; sourceUrl: string | null; sourceType: string | null }> }>;
   piExtensionsList(): Promise<{ extensions: Array<{ name: string; type: string; source: string; disabled: boolean; managed: boolean; dir?: string }> }>;
   piExtensionsDisable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
   piExtensionsEnable(payload: { name: string; type: string; source: string; dir?: string }): Promise<{ success: boolean; error?: string }>;
