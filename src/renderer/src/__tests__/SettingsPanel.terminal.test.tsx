@@ -13,7 +13,7 @@ const CONFIG: AppConfig = {
 
 const PROFILES: TerminalProfile[] = [
   { id: 'pwsh', label: 'PowerShell', path: 'C:\\pwsh.exe', args: [], platform: 'windows' },
-  { id: 'cmd', label: 'Command Prompt', path: 'C:\\cmd.exe', args: [], platform: 'windows' },
+  { id: 'cmd', label: 'CMD', path: 'C:\\cmd.exe', args: [], platform: 'windows' },
   { id: 'git-bash', label: 'Git Bash', path: 'C:\\git\\bash.exe', args: ['--login', '-i'], platform: 'windows' },
 ];
 
@@ -37,7 +37,7 @@ describe('SettingsPanel 终端设置', () => {
     expect(await screen.findByText('默认终端')).toBeInTheDocument();
     // 下拉里包含探测到的 profile 标签
     expect(screen.getByText('PowerShell')).toBeInTheDocument();
-    expect(screen.getByText('Command Prompt')).toBeInTheDocument();
+    expect(screen.getByText('CMD')).toBeInTheDocument();
     expect(screen.getByText('Git Bash')).toBeInTheDocument();
     // 默认选中 pwsh（来自 config.defaultTerminalProfile）
     const select = screen.getByLabelText('默认终端') as HTMLSelectElement;

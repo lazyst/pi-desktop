@@ -105,7 +105,7 @@ export type Platform = 'windows' | 'macos' | 'linux';
 // 一个可用的终端 profile（shell 描述）。id 稳定（如 'pwsh' / 'cmd' / 'git-bash' / 'default' / 'custom'）。
 export interface TerminalProfile {
   id: string;
-  label: string;       // 展示名，如 'PowerShell' / 'Command Prompt' / 'Git Bash'
+  label: string;       // 展示名，如 'PowerShell' / 'CMD' / 'Git Bash'
   path: string;        // shell 可执行文件绝对路径
   args: string[];      // 启动参数，如 git-bash 用 ['--login','-i']
   platform: Platform | 'all';

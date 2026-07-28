@@ -54,7 +54,7 @@ function detectWindowsProfiles(): TerminalProfile[] {
     : path.join(windir, 'System32');
 
   // Command Prompt（固定位置，始终探测）。
-  const cmd = makeProfileIfExists('cmd', 'Command Prompt', path.join(system32, 'cmd.exe'), 'windows');
+  const cmd = makeProfileIfExists('cmd', 'CMD', path.join(system32, 'cmd.exe'), 'windows');
   if (cmd) profiles.push(cmd);
 
   // Windows PowerShell（系统自带，固定位置）。
@@ -96,10 +96,15 @@ function detectWindowsProfiles(): TerminalProfile[] {
   const gitExe = findOnPath('git.exe');
   if (gitExe) {
     const gitDir = path.dirname(gitExe); // 形如 ...\Git\cmd 或 ...\Git\bin
-    gitBashCandidates.push(path.join(gitDir, '..', 'Git', 'bin', 'bash.exe'));
-    gitBashCandidates.push(path.join(gitDir, '..', 'Git', 'usr', 'bin', 'bash.exe'));
+    gitBashCandidates.push(path.join(gitDir, '..', 'bin', 'bash.exe'));
+    gitBashCandidates.push(path.join(gitDir, '..', 'usr', 'bin', 'bash.exe'));
   }
-  // 2) scoop 安装。
+  // 2) 直接从 PATH 中找 bash.exe（用户可能把 Git\bin 或 Git\usr\bin 加进了 PATH）。
+  const bashOnPath = findOnPath('bash.exe');
+  if (bashOnPath) {
+    gitBashCandidates.push(bashOnPath);
+  }
+  // 3) scoop 安装。
   const userProfile = process.env.UserProfile;
   if (userProfile) {
     gitBashCandidates.push(path.join(userProfile, 'scoop', 'apps', 'git', 'current', 'bin', 'bash.exe'));
@@ -180,7 +185,7 @@ export function detectTerminalProfiles(): TerminalProfile[] {
     if (platform === 'windows') {
       const windir = process.env.windir || 'C:\\Windows';
       const system32 = path.join(windir, 'System32');
-      profiles = [{ id: 'cmd', label: 'Command Prompt', path: path.join(system32, 'cmd.exe'), args: [], platform: 'windows' }];
+      profiles = [{ id: 'cmd', label: 'CMD', path: path.join(system32, 'cmd.exe'), args: [], platform: 'windows' }];
     } else {
       // macOS/Linux：优先 $SHELL，否则 /bin/sh，再否则 /bin/bash。
       const shellEnv = process.env.SHELL;
@@ -233,7 +238,7 @@ export function getDefaultShellProfile(): TerminalProfile {
     const windir = process.env.windir || 'C:\\Windows';
     return {
       id: 'cmd',
-      label: 'Command Prompt',
+      label: 'CMD',
       path: path.join(windir, 'System32', 'cmd.exe'),
       args: [],
       platform: 'windows',

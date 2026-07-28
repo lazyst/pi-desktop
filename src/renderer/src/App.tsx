@@ -58,6 +58,8 @@ export default function App() {
   // App 仅保留「终端新建 / 销毁」所需的主进程 IPC 协调逻辑（见下方 handler）。
   // 缓存探测到的 profile 列表，避免每次新建都探测。
   const profilesRef = useRef<TerminalProfile[] | null>(null);
+  // profile 列表状态（供 TabBar 下拉菜单展示）
+  const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
   // 当前激活会话（从 store tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
   // 中间区 tab / 激活指针直接订阅 store。
   const tabs = useTabStore((s) => s.tabs);
@@ -185,6 +187,13 @@ export default function App() {
     // 订阅主进程主动推送的集成终端实例列表（create/destroy/exit 时），
     // 保证左侧分组计数实时（对齐 ADR §6「主动推送，避免轮询」）。
     const offTermList = pi.onTerminalList?.((list) => useTabStore.getState().setTerminals(list));
+    // 预加载终端 profile 列表（供 TabBar 下拉菜单展示）
+    pi.listTerminalProfiles()
+      .then((profiles) => {
+        profilesRef.current = profiles;
+        setTerminalProfiles(profiles);
+      })
+      .catch(() => {});
     // 订阅 pi 进程内部执行 /new 时主进程的推送
     const offNewFromPi = pi.onNewFromPi?.(({ ptyId, uuid, cwd, name }) => {
       const newKey = `pi-${uuid}`;
@@ -482,6 +491,26 @@ export default function App() {
   const handleNewTerminalInCwd = useCallback((cwd: string) => doCreateTerminal(cwd), [doCreateTerminal]);
   const handleNewTerminalInAppWorkDir = useCallback(() => doCreateTerminal(appWorkDirRef.current || ''), [doCreateTerminal]);
 
+  // 在中间区 TabBar 新建终端（默认 profile）
+  const handleNewTerminal = useCallback(() => {
+    doCreateTerminal();
+  }, [doCreateTerminal]);
+
+  // 在中间区 TabBar 新建终端（指定 profile）
+  const handleNewTerminalWithProfile = useCallback(async (profileId: string) => {
+    try {
+      const profiles = profilesRef.current;
+      if (!profiles) return;
+      const profile = profiles.find((p) => p.id === profileId);
+      if (!profile) return;
+      const targetCwd = useTabStore.getState().activeCwd || appWorkDirRef.current || defaultConfig().appWorkDir || '';
+      const info = await pi.spawnTerminal({ command: undefined, cwd: targetCwd, profile });
+      useTabStore.getState().openTerminal(info.id, info.cwd, info.title);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   // 点击侧边栏目录名称 → 切换到该目录的 tab 条，不打开新会话。
   const handleSelectCwd = useCallback((cwd: string) => {
     useTabStore.getState().setActiveCwd(cwd);
@@ -571,6 +600,9 @@ export default function App() {
         onDestroySession={handleDestroySession}
         addedDirs={Array.from(visibleDirs)}
         onOpen={handleOpen}
+        onNewTerminal={handleNewTerminal}
+        onNewTerminalWithProfile={handleNewTerminalWithProfile}
+        terminalProfiles={terminalProfiles}
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}

@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import {
   DndContext,
   PointerSensor,
@@ -15,7 +16,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal } from './icons';
+import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal, IconArrowDown } from './icons';
 import { buildGroupedRows } from './tabGrouping';
 export type { RenderedRow } from './tabGrouping';
 
@@ -50,6 +51,10 @@ interface Props {
   // 分隔符为非 sortable 静态元素，所有 tab 仍在同一 SortableContext 中可跨段拖拽。
   // 分组仅改变展示顺序/分隔，不改变 tabs 数据顺序（父层传入顺序即视觉顺序）。
   groupBy?: (t: TabBarItem) => string | undefined;
+  // 新建终端按钮（VS Code 风格）：加号创建默认终端，下拉箭头展开选择指定终端类型
+  onNewTerminal?: () => void;
+  onNewTerminalWithProfile?: (profileId: string) => void;
+  terminalProfiles?: Array<{ id: string; label: string }>;
 }
 
 const renderKindIcon = (kind: TabKind) => {
@@ -131,6 +136,76 @@ function SortableTab({
   );
 }
 
+// 新建终端按钮组（VS Code 风格）
+function NewTerminalButton({
+  onNewTerminal,
+  onNewTerminalWithProfile,
+  terminalProfiles,
+}: {
+  onNewTerminal: () => void;
+  onNewTerminalWithProfile?: (profileId: string) => void;
+  terminalProfiles?: Array<{ id: string; label: string }>;
+}) {
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [dropdownOpen]);
+
+  return (
+    <div className="terminal-new-btn-group" ref={ref}>
+      <button
+        type="button"
+        className="terminal-new-btn-main"
+        aria-label="新建终端"
+        title="新建终端"
+        onClick={() => { onNewTerminal(); setDropdownOpen(false); }}
+      >
+        <IconTerminal size={14} />
+      </button>
+      <button
+        type="button"
+        className="terminal-new-btn-arrow"
+        aria-label="选择终端类型"
+        title="选择终端类型"
+        onClick={() => setDropdownOpen(!dropdownOpen)}
+      >
+        <IconArrowDown size={10} />
+      </button>
+      {dropdownOpen && (
+        <div className="terminal-profile-dropdown">
+          {terminalProfiles && terminalProfiles.length > 0 ? (
+            terminalProfiles.map((p) => (
+              <div
+                key={p.id}
+                className="terminal-profile-dropdown-item"
+                onClick={() => {
+                  onNewTerminalWithProfile?.(p.id);
+                  setDropdownOpen(false);
+                }}
+              >
+                {p.label}
+              </div>
+            ))
+          ) : (
+            <div className="terminal-profile-dropdown-item disabled">
+              暂无可用终端
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 通用 Tab 条：支持三种 tab kind（session/preview/diff）显示不同前缀图标，
 // 每个 tab 右侧 × 关单个 tab，最右可选「+」新建按钮。复用 TerminalTabBar 的
 // 视觉类名体系（terminal-tabbar / terminal-tab / tab-close / tab-new），CSS 无需大改。
@@ -141,7 +216,7 @@ function SortableTab({
 // 的 id 列表」交给 onReorder（父层调 store.reorderTabs 仅改 order，不碰渲染实例）。
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles }: Props) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -199,6 +274,13 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
             <IconNewSession size={14} />
           </button>
         )}
+        {onNewTerminal && (
+          <NewTerminalButton
+            onNewTerminal={onNewTerminal}
+            onNewTerminalWithProfile={onNewTerminalWithProfile}
+            terminalProfiles={terminalProfiles}
+          />
+        )}
       </div>
     );
   }
@@ -245,6 +327,13 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
             >
               <IconNewSession size={14} />
             </button>
+          )}
+          {onNewTerminal && (
+            <NewTerminalButton
+              onNewTerminal={onNewTerminal}
+              onNewTerminalWithProfile={onNewTerminalWithProfile}
+              terminalProfiles={terminalProfiles}
+            />
           )}
         </div>
       </SortableContext>

@@ -30,9 +30,15 @@ interface Props {
   addedDirs?: string[];
   /** 新建会话（来自空状态按钮）。 */
   onOpen?: (req: { key?: string; cwd?: string; name?: string }) => void;
+  /** 新建终端（默认 profile） */
+  onNewTerminal?: () => void;
+  /** 新建终端（指定 profile） */
+  onNewTerminalWithProfile?: (profileId: string) => void;
+  /** 可用终端 profile 列表 */
+  terminalProfiles?: Array<{ id: string; label: string }>;
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles }: Props) {
   const tabs = useTabStore((s) => s.tabs) as Tab[];
   const activeTabId = useTabStore((s) => s.activeTabId);
   const activeCwd = useTabStore((s) => s.activeCwd);
@@ -180,6 +186,9 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
         onClose={requestCloseTab}
         onReorder={(orderedIds) => reorderTabs(orderedIds)}
         showNew={false}
+        onNewTerminal={onNewTerminal}
+        onNewTerminalWithProfile={onNewTerminalWithProfile}
+        terminalProfiles={terminalProfiles}
       />
       <div className="center-pane-body">
         {/* 跨目录 keep-alive：所有 tab 内容永久挂载在 DOM 中。
