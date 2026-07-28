@@ -236,13 +236,24 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
         {cwdAllTabs.length === 0 && (
           <div className="empty-state">
             {activeCwd ? (
-              <button
-                className="empty-state-new-session-btn"
-                onClick={() => onOpen?.({ cwd: activeCwd })}
-              >
-                <span className="empty-state-plus">+</span>
-                <span>新建会话</span>
-              </button>
+              <div className="empty-state-buttons">
+                <button
+                  className="empty-state-new-session-btn"
+                  onClick={() => onOpen?.({ cwd: activeCwd })}
+                >
+                  <span className="empty-state-plus">+</span>
+                  <span>新建会话</span>
+                </button>
+                {onNewTerminal && (
+                  <button
+                    className="empty-state-new-session-btn"
+                    onClick={onNewTerminal}
+                  >
+                    <span className="empty-state-plus">+</span>
+                    <span>新建终端</span>
+                  </button>
+                )}
+              </div>
             ) : (
               '请先在左侧添加工作目录，然后选择会话。'
             )}

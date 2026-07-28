@@ -913,6 +913,13 @@ html, body, #root {
   color: var(--text-muted);
 }
 
+.empty-state-buttons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
 .empty-state-new-session-btn {
   display: flex;
   flex-direction: column;
