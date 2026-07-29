@@ -60,8 +60,7 @@ html, body, #root {
   display: flex;
   align-items: center;
   flex: none;
-  height: 24px;
-  padding: 0 8px;
+  height: 27px;
   gap: 8px;
   background: var(--bg-app);
   border-bottom: 1px solid var(--border);
@@ -71,14 +70,16 @@ html, body, #root {
 .cwd-select-wrapper {
   position: relative;
   flex: 1;
+  height: 100%;
+  display: flex;
 }
 
 .cwd-select {
   width: 100%;
-  padding: 1px 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--bg-app);
+  /* padding: 1px 4px; */
+  border: none;
+  /* border-radius: var(--r-sm); */
+  background: transparent;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
@@ -88,7 +89,10 @@ html, body, #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: border-color var(--transition), color var(--transition);
+  transition: background-color var(--transition), color var(--transition);
+}
+.cwd-select:hover {
+  background: var(--bg-hover);
 }
 .cwd-select:hover {
   border-color: var(--accent-soft);

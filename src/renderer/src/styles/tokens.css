@@ -93,6 +93,9 @@
 
 * { box-sizing: border-box; }
 
+/* 全局按钮重置：消除浏览器默认 padding/margin/border，由各组件显式设置 */
+button { padding: 0; margin: 0; border: none; background: none; font: inherit; color: inherit; }
+
 html, body, #root { height: 100%; margin: 0; }
 
 body {
