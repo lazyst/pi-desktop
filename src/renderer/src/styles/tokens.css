@@ -149,9 +149,9 @@ body {
   --text-dim: #3b434d;
 
   /* Accent + semantic */
-  --accent: #3b5bdb;
-  --accent-hover: #2f4bc4;
-  --accent-soft: rgba(59, 91, 219, 0.45);
+  --accent: #4a8cf7;
+  --accent-hover: #3a7ae8;
+  --accent-soft: rgba(74, 140, 247, 0.45);
   --success: #1a7f37;
   --danger: #cf222e;
   --danger-hover: #b91c28;

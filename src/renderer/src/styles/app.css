@@ -410,7 +410,7 @@ html, body, #root {
   font-size: var(--fs-sm);
   color: var(--text);
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   padding: var(--sp-1) var(--sp-2);
   outline: none;
@@ -461,7 +461,7 @@ html, body, #root {
 .settings-section {
   margin-bottom: var(--sp-5);
   padding-bottom: var(--sp-5);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-strong);
 }
 .settings-section:last-child {
   border-bottom: none;
@@ -496,7 +496,7 @@ html, body, #root {
   display: inline-block;
   width: 36px;
   height: 20px;
-  background: var(--bg-over);
+  background: var(--border-strong);
   border-radius: 10px;
   position: relative;
   transition: background-color var(--transition);
@@ -510,7 +510,7 @@ html, body, #root {
   left: 2px;
   width: 16px;
   height: 16px;
-  background: var(--text);
+  background: #ffffff;
   border-radius: 50%;
   transition: transform var(--transition);
 }
@@ -524,7 +524,7 @@ html, body, #root {
   font-size: var(--fs-sm);
   color: var(--text);
   background: var(--bg-panel);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   padding: var(--sp-1) var(--sp-2);
   outline: none;
@@ -1291,7 +1291,7 @@ html, body, #root {
   flex-direction: column;
   padding: var(--sp-4);
   background: var(--bg-elevated);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
@@ -1317,7 +1317,7 @@ html, body, #root {
   flex-direction: column;
   gap: var(--sp-1);
   padding-right: var(--sp-3);
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-strong);
 }
 .nav-item {
   text-align: left;
@@ -1332,7 +1332,7 @@ html, body, #root {
   transition: background-color var(--transition), color var(--transition), border-color var(--transition);
 }
 .nav-item:hover { background: var(--bg-hover); color: var(--text); }
-.nav-item.active { background: var(--bg-active); color: var(--accent); border-color: var(--border-strong); }
+.nav-item.active { background: var(--bg-active); color: var(--accent); }
 .settings-content {
   flex: 1;
   min-height: 0;
@@ -1364,7 +1364,7 @@ html, body, #root {
   cursor: pointer;
   transition: background-color var(--transition), color var(--transition);
 }
-.seg + .seg { border-left: 1px solid var(--border); }
+.seg + .seg { border-left: 1px solid var(--border-strong); }
 .seg:hover { background: var(--bg-hover); color: var(--text); }
 .seg.active { background: var(--bg-active); color: var(--accent); }
 .seg.active:hover { background: var(--bg-active); color: var(--accent-hover); }
@@ -1397,8 +1397,8 @@ html, body, #root {
   cursor: pointer;
   transition: background-color var(--transition), color var(--transition);
 }
-.stepper-btn + .stepper-value { border-left: 1px solid var(--border); }
-.stepper-btn:last-child { border-left: 1px solid var(--border); }
+.stepper-btn + .stepper-value { border-left: 1px solid var(--border-strong); }
+.stepper-btn:last-child { border-left: 1px solid var(--border-strong); }
 .stepper-btn:hover:not(:disabled) { background: var(--bg-hover); color: var(--accent); }
 .stepper-btn:disabled { color: var(--text-faint); cursor: not-allowed; opacity: 0.5; }
 .stepper-value {
@@ -2804,7 +2804,7 @@ html, body, #root {
 /* 导航分隔线与段落标签 */
 .nav-separator {
   height: 1px;
-  background: var(--border);
+  background: var(--border-strong);
   margin: var(--sp-2) 0;
 }
 .nav-section-label {
@@ -2980,7 +2980,7 @@ html, body, #root {
   padding: var(--sp-1) var(--sp-2);
   background: var(--bg-app);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   outline: none;
   transition: border-color var(--transition);
@@ -2997,7 +2997,7 @@ html, body, #root {
   padding: var(--sp-1) var(--sp-2);
   background: var(--bg-app);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   outline: none;
   cursor: pointer;
@@ -3017,7 +3017,7 @@ html, body, #root {
 .pi-toggle-slider {
   width: 36px;
   height: 20px;
-  background: var(--border);
+  background: var(--border-strong);
   border-radius: 10px;
   position: relative;
   transition: background var(--transition);
@@ -3029,7 +3029,7 @@ html, body, #root {
   left: 2px;
   width: 16px;
   height: 16px;
-  background: var(--text);
+  background: #ffffff;
   border-radius: 50%;
   transition: transform var(--transition);
 }
@@ -3077,7 +3077,6 @@ html, body, #root {
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  background: var(--bg-hover);
   cursor: pointer;
   user-select: none;
 }
@@ -3106,20 +3105,20 @@ html, body, #root {
   color: var(--text-muted);
 }
 .pi-section {
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-strong);
   padding-top: var(--sp-2);
   margin-top: var(--sp-2);
 }
 .pi-section-title {
   font-size: var(--fs-sm);
   color: var(--text-muted);
-  margin-bottom: var(--sp-2);
 }
 .pi-collapse-icon {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
-  width: 12px;
+  width: 16px;
   text-align: center;
+  flex-shrink: 0;
 }
 .pi-btn-danger {
   font-family: var(--font-mono);
@@ -3202,7 +3201,7 @@ html, body, #root {
   padding-right: var(--sp-2);
 }
 .pi-mcp-install-card {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-md);
   padding: var(--sp-4);
   text-align: center;
@@ -3228,7 +3227,6 @@ html, body, #root {
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
-  background: var(--bg-hover);
   cursor: pointer;
   user-select: none;
 }
@@ -3266,7 +3264,7 @@ html, body, #root {
   justify-content: space-between;
 }
 .pi-mcp-server {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   overflow: hidden;
 }
@@ -3275,7 +3273,8 @@ html, body, #root {
   align-items: center;
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-2);
-  background: var(--bg-hover);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border-strong);
 }
 .pi-mcp-server-name {
   flex: 1;
@@ -3398,7 +3397,17 @@ html, body, #root {
   gap: var(--sp-2);
   cursor: pointer;
   user-select: none;
-  padding: var(--sp-1) 0;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--border-strong);
+  margin-top: var(--sp-2);
+}
+.pi-collapsible-header:hover {
+  background: var(--bg-hover);
+  border-radius: var(--r-sm);
+  padding-left: var(--sp-1);
+  padding-right: var(--sp-1);
+  margin-left: calc(-1 * var(--sp-1));
+  margin-right: calc(-1 * var(--sp-1));
 }
 .pi-collapsible-header:hover .pi-section-title {
   color: var(--text);
@@ -3578,5 +3587,83 @@ html, body, #root {
   font-size: var(--fs-xs);
   color: var(--text-faint);
   word-break: break-all;
+}
+
+/* ── MCP 配置增强样式 ── */
+
+/* 提示文本 */
+.pi-hint-text {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+/* 只读标签值 */
+.pi-tag-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--bg-hover);
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  white-space: nowrap;
+}
+
+/* MCP field-row 中的 hint 对齐 */
+.pi-mcp-server-body .pi-hint-text {
+  margin-top: -2px;
+  margin-bottom: var(--sp-1);
+  padding-left: 104px; /* label 宽度 100px + gap 4px */
+}
+
+/* 高级设置区域内的 hint */
+.pi-collapsible-body .pi-hint-text {
+  margin-top: -2px;
+  margin-bottom: var(--sp-2);
+}
+
+/* 带单位输入框在小布局中的适配 */
+.pi-mcp-server-body .input-unit-group .num-input {
+  width: 80px;
+}
+
+/* 认证方式选择器行 */
+.pi-mcp-server-body .pi-field-row .pi-select {
+  flex: 1;
+  max-width: 300px;
+}
+
+/* 全局设置和导入区域的分隔 */
+.pi-mcp-server-list + .pi-collapsible {
+  border-top: 1px solid var(--border-strong);
+  padding-top: var(--sp-2);
+}
+
+/* 服务器卡片内部分隔线 */
+.pi-section-divider {
+  border-top: 1px solid var(--border-strong);
+  margin: var(--sp-1) 0;
+}
+
+/* 服务器卡片主体中 hint 文本与 field-row 同一行右对齐 */
+.pi-mcp-server-body .pi-field-row .pi-hint-text {
+  margin: 0;
+  padding: 0;
+  flex: 0 1 auto;
+  max-width: 280px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* collapsible-body 内的 hint 保持块级样式 */
+.pi-collapsible-body .pi-hint-text {
+  margin-top: -2px;
+  margin-bottom: var(--sp-2);
+}
+
+/* 全局设置前缀标签宽度适配 */
+.pi-mcp-file-body .pi-collapsible-body .pi-field-row label {
+  flex: 0 0 120px;
 }
 

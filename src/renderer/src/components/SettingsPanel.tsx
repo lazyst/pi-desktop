@@ -23,8 +23,31 @@ type NavKey = 'general' | 'sessions' | 'terminal' | 'pi-config' | 'pi-models' | 
 //  - 常规：主题、关闭按钮行为（原有设置项迁移至此）。
 //  - 会话管理：展示全部磁盘会话（按目录分组），支持单条删除、清空目录、批量删除。
 //  - Pi 设置：集成 pi-tool 的配置管理功能（配置文件、模型、MCP、Skills、扩展）。
+const NAV_STORAGE_KEY = 'pi-desktop:settings-nav';
+
+function loadSavedNav(): NavKey {
+  try {
+    const saved = localStorage.getItem(NAV_STORAGE_KEY);
+    if (saved && ['general', 'sessions', 'terminal', 'pi-config', 'pi-models', 'pi-mcp', 'pi-skills', 'pi-extensions'].includes(saved)) {
+      return saved as NavKey;
+    }
+  } catch { /* ignore */ }
+  return 'general';
+}
+
+function saveNav(nav: NavKey) {
+  try {
+    localStorage.setItem(NAV_STORAGE_KEY, nav);
+  } catch { /* ignore */ }
+}
+
 export function SettingsPanel({ onClose }: Props) {
-  const [nav, setNav] = useState<NavKey>('general');
+  const [nav, setNav] = useState<NavKey>(loadSavedNav);
+
+  const handleNav = (key: NavKey) => {
+    setNav(key);
+    saveNav(key);
+  };
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -41,7 +64,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'general' ? ' active' : ''}`}
               aria-current={nav === 'general'}
-              onClick={() => setNav('general')}
+              onClick={() => handleNav('general')}
             >
               常规
             </button>
@@ -49,7 +72,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'sessions' ? ' active' : ''}`}
               aria-current={nav === 'sessions'}
-              onClick={() => setNav('sessions')}
+              onClick={() => handleNav('sessions')}
             >
               会话管理
             </button>
@@ -57,7 +80,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'terminal' ? ' active' : ''}`}
               aria-current={nav === 'terminal'}
-              onClick={() => setNav('terminal')}
+              onClick={() => handleNav('terminal')}
             >
               终端
             </button>
@@ -67,7 +90,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'pi-config' ? ' active' : ''}`}
               aria-current={nav === 'pi-config'}
-              onClick={() => setNav('pi-config')}
+              onClick={() => handleNav('pi-config')}
             >
               配置文件
             </button>
@@ -75,7 +98,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'pi-models' ? ' active' : ''}`}
               aria-current={nav === 'pi-models'}
-              onClick={() => setNav('pi-models')}
+              onClick={() => handleNav('pi-models')}
             >
               模型配置
             </button>
@@ -83,7 +106,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'pi-mcp' ? ' active' : ''}`}
               aria-current={nav === 'pi-mcp'}
-              onClick={() => setNav('pi-mcp')}
+              onClick={() => handleNav('pi-mcp')}
             >
               MCP 管理
             </button>
@@ -91,7 +114,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'pi-skills' ? ' active' : ''}`}
               aria-current={nav === 'pi-skills'}
-              onClick={() => setNav('pi-skills')}
+              onClick={() => handleNav('pi-skills')}
             >
               Skills 管理
             </button>
@@ -99,7 +122,7 @@ export function SettingsPanel({ onClose }: Props) {
               type="button"
               className={`nav-item${nav === 'pi-extensions' ? ' active' : ''}`}
               aria-current={nav === 'pi-extensions'}
-              onClick={() => setNav('pi-extensions')}
+              onClick={() => handleNav('pi-extensions')}
             >
               扩展管理
             </button>
@@ -165,7 +188,7 @@ function GeneralSettings() {
             className={`seg${theme === 'dark' ? ' active' : ''}`}
             onClick={() => choose('dark')}
           >
-            暗色
+            深色
           </button>
           <button
             type="button"
@@ -174,7 +197,7 @@ function GeneralSettings() {
             className={`seg${theme === 'light' ? ' active' : ''}`}
             onClick={() => choose('light')}
           >
-            亮色
+            浅色
           </button>
         </div>
       </div>
