@@ -250,11 +250,23 @@ function ScrollableTabBar({ children, leafId }: {
     });
   }, []);
 
-  // 监听滚动事件
+  // 监听滚动事件 + 鼠标滚轮水平滚动
   useEffect(() => {
     const el = scrollContainerRef.current;
     if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // 如果已是水平滚轮手势，让浏览器原生处理
+      if (e.deltaX !== 0 && e.deltaY === 0) return;
+      // 将垂直滚轮转换为水平滚动
+      const scrollAmount = e.deltaY;
+      el.scrollLeft += scrollAmount;
+      e.preventDefault();
+    };
+
     el.addEventListener('scroll', updateScrollState, { passive: true });
+    el.addEventListener('wheel', handleWheel, { passive: false });
+
     // 初始计算
     updateScrollState();
     // 用 ResizeObserver 监听容器尺寸变化（tab 增删时）
@@ -262,6 +274,7 @@ function ScrollableTabBar({ children, leafId }: {
     ro.observe(el);
     return () => {
       el.removeEventListener('scroll', updateScrollState);
+      el.removeEventListener('wheel', handleWheel);
       ro.disconnect();
     };
   }, [updateScrollState]);

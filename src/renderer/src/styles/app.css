@@ -165,7 +165,7 @@ html, body, #root {
 
 /* 实际可滚动的 tab 容器 */
 .tabbar-scroll-container {
-  overflow-x: auto;
+  overflow-x: overlay;
   overflow-y: hidden;
   flex: 1;
   /* 隐藏滚动条（保留功能） */
@@ -177,14 +177,19 @@ html, body, #root {
   scrollbar-color: var(--text-muted) transparent;
 }
 .tabbar-scroll-container::-webkit-scrollbar {
-  height: 3px;
+  height: 2px;
+}
+.tabbar-scroll-container::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
 }
 .tabbar-scroll-container::-webkit-scrollbar-track {
   background: transparent;
 }
 .tabbar-scroll-container::-webkit-scrollbar-thumb {
   background: transparent;
-  border-radius: 2px;
+  border-radius: 1px;
   transition: background 0.15s;
 }
 .tabbar-scroll-container:hover::-webkit-scrollbar-thumb {
@@ -269,8 +274,8 @@ html, body, #root {
   color: var(--text);
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  border-top: 2px solid transparent;
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -280,8 +285,8 @@ html, body, #root {
 .terminal-tab.active {
   background: var(--bg-active);
   color: var(--accent);
-  /* 去掉左侧高亮边框，改为 tab 底部高亮 */
-  border-bottom-color: var(--accent);
+  /* tab 顶部高亮边框 */
+  border-top-color: var(--accent);
 }
 /* Tab 上的关闭 ×：默认隐藏，hover 整条或激活态时淡入 */
 .tab-close {
