@@ -9,14 +9,15 @@ import { SessionFileManager } from './sessionFileManager';
 import type { IPtyLike } from './types';
 import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir, watchFile } from './fsBridge';
 import { gitStatus, gitLog, gitDiff, gitFileStatusMap, gitIgnoredPaths } from './gitBridge';
-import { checkForUpdate, getUpdateStatus, getCurrentVersion, downloadUpdate, installUpdate, cancelDownload } from './updateChecker';
 import { ReferenceCountedWatcher } from './shared/ReferenceCountedWatcher';
+import { PtyOwnershipRegistry } from './ptyOwnershipRegistry';
 import { registerTerminalHandlers } from './handlers/terminalHandlers';
 import { registerSessionHandlers } from './handlers/sessionHandlers';
 import { registerConfigHandlers } from './handlers/configHandlers';
 import { registerFsHandlers } from './handlers/fsHandlers';
 import { registerGitHandlers } from './handlers/gitHandlers';
 import { registerPiToolHandlers } from './handlers/piToolHandlers';
+import { registerUpdateHandlers } from './handlers/updateHandlers';
 import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desktop-sync-source';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -367,13 +368,13 @@ function unescapeField(s: string): string {
   const sessionsDir = resolveSessionsDir();
   const sessionFileManager = new SessionFileManager(sessionsDir);
   const piBin = resolvePi();
-  // PTY 数据路由表：live-<uuid> → Set<pi-<uuid>>（/new 创建的子 session 也需接收 PTY 数据）
-  const dataRoutes = new Map<string, Set<string>>();
+  // PTY 所有权注册表：统一管理 dataRoutes + ptyOwners + 虚拟 session 映射
+  const ptyRegistry = new PtyOwnershipRegistry();
   const unifiedPool = new UnifiedTerminalPool({
     cols: 80, rows: 24,
     piBin,
     sessionsDir,
-    // 所有终端数据统一经 term:data 通道发送
+    // 所有终端数据统一经 terminal:data 通道发送
     // 同时检测 pi 扩展输出的 OSC 序列（/new 命令通知）
     onData: (id, data) => {
       if (win.isDestroyed()) return;
@@ -388,9 +389,7 @@ function unescapeField(s: string): string {
         const name = unescapeField(nameRaw);
         // 把新 session key 加入路由表，使子 session 的 tab 也能收到 PTY 数据
         const newKey = `pi-${uuid}`;
-        const routes = dataRoutes.get(id) ?? new Set();
-        routes.add(newKey);
-        dataRoutes.set(id, routes);
+        ptyRegistry.addRoute(id, newKey);
         // 通知渲染进程：新 session 已创建
         win.webContents.send('session:new-from-pi', { ptyId: id, uuid, cwd, name });
         // 解除旧 session 的磁盘 alias，使点击磁盘条目时 spawn 新进程而非复用已有 PTY
@@ -398,52 +397,60 @@ function unescapeField(s: string): string {
         // 从数据中剥离 OSC 序列，避免显示在终端中
         const cleanData = data.replace(/\x1b\]633;PiNew;[^\x07]*\x07/, '');
         if (cleanData) {
-          win.webContents.send('term:data', { id, data: cleanData });
+          win.webContents.send('terminal:data', { id, data: cleanData });
           // 同时把数据路由到子 session
-          for (const routeId of routes) {
-            win.webContents.send('term:data', { id: routeId, data: cleanData });
+          const routes = ptyRegistry.getRoutes(id);
+          if (routes) {
+            for (const routeId of routes) {
+              win.webContents.send('terminal:data', { id: routeId, data: cleanData });
+            }
           }
         }
       } else {
-        win.webContents.send('term:data', { id, data });
+        win.webContents.send('terminal:data', { id, data });
         // 把数据路由到子 session
-        const routes = dataRoutes.get(id);
+        const routes = ptyRegistry.getRoutes(id);
         if (routes) {
           for (const routeId of routes) {
-            win.webContents.send('term:data', { id: routeId, data });
+            win.webContents.send('terminal:data', { id: routeId, data });
           }
         }
       }
     },
     // pi 会话状态变更（running / dead），供侧边栏绿点更新
     onStatus: (key, status) => { if (!win.isDestroyed()) win.webContents.send('session:status', { key, status }); },
-    // 所有终端退出统一经 term:exit 通道发送
+    // 所有终端退出统一经 terminal:exit 通道发送
     onExit: (id) => {
       if (!win.isDestroyed()) {
-        win.webContents.send('term:exit', { id });
+        win.webContents.send('terminal:exit', { id });
         // 清理路由表中的子 session
-        const routes = dataRoutes.get(id);
-        if (routes) {
-          for (const routeId of routes) {
-            win.webContents.send('term:exit', { id: routeId });
-          }
-          dataRoutes.delete(id);
+        const result = ptyRegistry.remove(id);
+        for (const routeId of result.routes) {
+          win.webContents.send('terminal:exit', { id: routeId });
         }
         pushTerminalList();
       }
     },
     onRelink: (from, to) => { if (!win.isDestroyed()) win.webContents.send('session:relink', { from, to }); },
     // 实例列表变化时推送
-    onList: (list) => { if (!win.isDestroyed()) win.webContents.send('term:list', { list }); },
+    onList: (list) => { if (!win.isDestroyed()) win.webContents.send('terminal:list', { list }); },
   });
 
   function pushTerminalList(): void {
     if (win.isDestroyed()) return;
-    win.webContents.send('term:list', { list: unifiedPool.list() });
+    win.webContents.send('terminal:list', { list: unifiedPool.list() });
   }
 
   // ===== 统一终端 IPC =====
-  registerTerminalHandlers(ipcMain, win, unifiedPool, pushTerminalList, ensureAppWorkDir);
+  registerTerminalHandlers(ipcMain, win, unifiedPool, pushTerminalList, ensureAppWorkDir, ptyRegistry);
+
+  // 添加 session:query-owner IPC handler 供 renderer 查询 PTY 所有权
+  ipcMain.handle('session:query-owner', (_e, key: string) => {
+    const owner = ptyRegistry.getOwner(key);
+    const ptyId = ptyRegistry.findPtyByVirtualOwner(key);
+    const virtual = ptyRegistry.getVirtual(key);
+    return { owner, ptyId, virtual };
+  });
 
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
   // 使用 child_process.exec 绕过 Electron 30+ 的 shell.openExternal 安全确认对话框。
@@ -454,6 +461,9 @@ function unescapeField(s: string): string {
   // Pi 工具配置 IPC（settings、models、MCP、skills、extensions）
   const piAgentDir = path.join(os.homedir(), '.pi', 'agent');
   registerPiToolHandlers(ipcMain, win, piAgentDir);
+
+  // 版本更新检查 IPC
+  registerUpdateHandlers(ipcMain, win);
 
   // 文件系统 IPC 已在 registerFsHandlers 中注册
 
@@ -480,50 +490,6 @@ function unescapeField(s: string): string {
 
   // ===== 会话文件管理 IPC（session:*） =====
   registerSessionHandlers(ipcMain, win, sessionFileManager, unifiedPool, sessionsDir);
-
-  // 文件系统 + Git IPC 已在 registerFsHandlers / registerGitHandlers 中注册
-  // ╌╌ 版本更新检查 ╌╌
-  ipcMain.handle('update:check', async () => {
-    try {
-      return await checkForUpdate();
-    } catch (err) {
-      console.error('[update:check] failed:', err);
-      throw new Error('检查更新失败');
-    }
-  });
-  ipcMain.handle('update:get-status', () => getUpdateStatus());
-  // 获取当前版本（无需网络请求，立即返回）
-  ipcMain.handle('update:get-current-version', () => getCurrentVersion());
-  // 下载更新：下载最新 release 安装包，通过 IPC 事件推送进度
-  ipcMain.handle('update:download', async () => {
-    try {
-      const filePath = await downloadUpdate((progress) => {
-        if (!win.isDestroyed()) {
-          win.webContents.send('update:download-progress', progress);
-        }
-      });
-      return { success: true, filePath };
-    } catch (err) {
-      console.error('[update:download] failed:', err);
-      throw new Error(err instanceof Error ? err.message : '下载失败');
-    }
-  });
-  // 取消下载
-  ipcMain.on('update:cancel-download', () => {
-    cancelDownload();
-  });
-  // 安装更新：运行已下载的安装包
-  ipcMain.handle('update:install', async (_e, filePath: string) => {
-    try {
-      installUpdate(filePath);
-      // 安装包启动后，退出当前应用以便安装程序覆盖文件
-      app.quit();
-      return { success: true };
-    } catch (err) {
-      console.error('[update:install] failed:', err);
-      throw new Error(err instanceof Error ? err.message : '安装失败');
-    }
-  });
 
   // Git 工作区实时监听已在 registerGitHandlers 中注册
 

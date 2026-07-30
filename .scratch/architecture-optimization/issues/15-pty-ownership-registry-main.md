@@ -4,10 +4,11 @@
 
 **Blocked by:** 02 — terminalHandlers.ts
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] 创建 `src/main/ptyOwnershipRegistry.ts`，包含完整 API（`setOwner` 1:1、`addRoute` 1:N、`remove`、`resolveVirtual`、`setVirtual`、`deleteVirtual`）
-- [ ] 添加单元测试（现有先例：`sessionPool.test.ts`）
-- [ ] 在 `main/index.ts`（或 handler 模块）中实例化并替换 `dataRoutes` + `ptyOwners`
-- [ ] 添加 `session:query-owner` IPC handler 供 renderer 查询
-- [ ] 验证 `pnpm typecheck` 和 `pnpm test` 通过
+- [x] 创建 `src/main/ptyOwnershipRegistry.ts`，包含完整 API（`setOwner` 1:1、`addRoute` 1:N、`remove`、`getVirtual`、`setVirtual`、`deleteVirtual`）
+- [x] 添加单元测试（18 个测试全部通过）
+- [x] 在 `main/index.ts` 中实例化并替换 `dataRoutes`
+- [x] 在 `terminalHandlers.ts` 中替换 `ptyOwners` Map
+- [x] 添加 `session:query-owner` IPC handler 供 renderer 查询
+- [x] 验证 `pnpm typecheck` 和 `pnpm test` 通过

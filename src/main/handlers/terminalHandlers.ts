@@ -1,5 +1,6 @@
 import type { TerminalProfile } from '../../renderer/src/types';
 import type { UnifiedTerminalPool } from '../unifiedTerminalPool';
+import type { PtyOwnershipRegistry } from '../ptyOwnershipRegistry';
 import { detectTerminalProfiles } from '../shellProfiles';
 
 /**
@@ -13,12 +14,12 @@ export function registerTerminalHandlers(
   unifiedPool: UnifiedTerminalPool,
   pushTerminalList: () => void,
   ensureAppWorkDir: () => string,
+  ptyRegistry: PtyOwnershipRegistry,
 ): void {
-  // PTY owner 注册：渲染进程告知主进程某个 PTY 的初始 owner key
+  // 渲染进程告知主进程某个 PTY 的初始 owner key
   // 用于主进程在 PTY 退出时清理所有关联的 sub-session
-  const ptyOwners = new Map<string, string>();
   ipcMain.on('session:register-pty-owner', (_e, { ptyId, ownerKey }: { ptyId: string; ownerKey: string }) => {
-    ptyOwners.set(ptyId, ownerKey);
+    ptyRegistry.setOwner(ptyId, ownerKey);
   });
 
   // 滚动缓冲区持久化（内存暂存）

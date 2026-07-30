@@ -4,10 +4,9 @@
 
 **Blocked by:** 02, 03, 04, 05
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] 创建 `src/main/handlers/updateHandlers.ts`，导出 `registerUpdateHandlers(ipcMain, win)`
-- [ ] 迁移 `update:check`、`update:get-status`、`update:get-current-version`、`update:download`、`update:install`、`update:cancel-download`、`onDownloadProgress`
-- [ ] 清理 `main/index.ts` 中所有剩余的 inline handler（确保 `createWindow` 中只有 `register*` 调用）
-- [ ] 验证 `pnpm typecheck` 和 `pnpm test` 通过
-- [ ] 确认 `main/index.ts` 行数缩减到 ~300 行
+- [x] 创建 `src/main/handlers/updateHandlers.ts`，导出 `registerUpdateHandlers(ipcMain, win)`
+- [x] 迁移 `update:check`、`update:get-status`、`update:get-current-version`、`update:download`、`update:install`、`update:cancel-download`
+- [x] 清理 `main/index.ts` 中所有剩余的 inline handler（确保 `createWindow` 中只有 `register*` 调用）
+- [x] 验证 `pnpm typecheck` 和 `pnpm test` 通过

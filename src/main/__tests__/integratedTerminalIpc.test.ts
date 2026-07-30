@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 const ipcHandlers: Record<string, (...a: any[]) => any> = {};
 const ipcListeners: Record<string, (...a: any[]) => any> = {};
 let readyResolver: (() => void) | undefined;
-// 捕获 createWindow 内构造的 win.webContents.send，便于断言「主动推送 term:list」。
+// 捕获 createWindow 内构造的 win.webContents.send，便于断言「主动推送 terminal:list」。
 const sentSpy = vi.fn();
 
 // 记录传给 UnifiedTerminalPool 构造器的 onData/onExit 回调，便于后续模拟数据/退出事件。
@@ -162,8 +162,8 @@ describe('terminal:* IPC → UnifiedTerminalPool bridge', () => {
     expect(poolFns.destroy).toHaveBeenCalledWith(fakeInfo.id);
   });
 
-  it('pool onData → webContents.send("term:data") delivers data to renderer channel', () => {
-    // 验证主进程把池的 onData 输出经 term:data 通道下发（IntegratedChannel 据此 onData）。
+  it('pool onData → webContents.send("terminal:data") delivers data to renderer channel', () => {
+    // 验证主进程把池的 onData 输出经 terminal:data 通道下发（IntegratedChannel 据此 onData）。
     expect(typeof capturedOnData).toBe('function');
     // 直接验证契约形状：捕获的回调接受 (id, data)。
     expect(capturedOnData!.length).toBe(2); // (id, data)
@@ -171,20 +171,20 @@ describe('terminal:* IPC → UnifiedTerminalPool bridge', () => {
     // 不抛错即契约成立（真实下发路径由集成/手动验证）。
   });
 
-  it('pool onExit → renderer exit channel (term:exit) contract is captured', () => {
+  it('pool onExit → renderer exit channel (terminal:exit) contract is captured', () => {
     expect(typeof capturedOnExit).toBe('function');
     expect(capturedOnExit!.length).toBe(1); // (id)
     sentSpy.mockClear();
     capturedOnExit!('term-x');
     // 退出即主动推送最新终端列表（ADR §6「主动推送，避免轮询」）。
-    expect(sentSpy).toHaveBeenCalledWith('term:list', { list: expect.any(Array) });
+    expect(sentSpy).toHaveBeenCalledWith('terminal:list', { list: expect.any(Array) });
   });
 
-  it('terminal:create pushes term:list after creating a terminal', async () => {
+  it('terminal:create pushes terminal:list after creating a terminal', async () => {
     poolFns.create.mockReturnValue(fakeInfo);
     sentSpy.mockClear();
     await ipcHandlers['terminal:create'](null, { profile, cwd: 'C:\\work' });
     // create 后同样主动推送，保证渲染层计数实时。
-    expect(sentSpy).toHaveBeenCalledWith('term:list', { list: expect.any(Array) });
+    expect(sentSpy).toHaveBeenCalledWith('terminal:list', { list: expect.any(Array) });
   });
 });

@@ -45,8 +45,8 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.invoke('session:saveImage', { data, ext }),
   onData: (cb: (key: string, data: string) => void) => {
     const handler = (_e: unknown, m: { id: string; data: string }) => cb(m.id, m.data);
-    ipcRenderer.on('term:data', handler);
-    return () => ipcRenderer.removeListener('term:data', handler);
+    ipcRenderer.on('terminal:data', handler);
+    return () => ipcRenderer.removeListener('terminal:data', handler);
   },
   onStatus: (cb: (key: string, status: SessionStatus) => void) => {
     const handler = (_e: unknown, m: { key: string; status: SessionStatus }) => cb(m.key, m.status);
@@ -55,8 +55,8 @@ contextBridge.exposeInMainWorld('pi', {
   },
   onExit: (cb: (key: string) => void) => {
     const handler = (_e: unknown, m: { id: string }) => cb(m.id);
-    ipcRenderer.on('term:exit', handler);
-    return () => ipcRenderer.removeListener('term:exit', handler);
+    ipcRenderer.on('terminal:exit', handler);
+    return () => ipcRenderer.removeListener('terminal:exit', handler);
   },
   onRelink: (cb: (from: string, to: string) => void) => {
     const handler = (_e: unknown, m: { from: string; to: string }) => cb(m.from, m.to);
@@ -178,21 +178,21 @@ contextBridge.exposeInMainWorld('pi', {
   terminalResize: (id: string, cols: number, rows: number) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
   onTerminalData: (cb: (id: string, data: string) => void) => {
     const handler = (_e: unknown, m: { id: string; data: string }) => cb(m.id, m.data);
-    ipcRenderer.on('term:data', handler);
-    return () => ipcRenderer.removeListener('term:data', handler);
+    ipcRenderer.on('terminal:data', handler);
+    return () => ipcRenderer.removeListener('terminal:data', handler);
   },
   onTerminalExit: (cb: (id: string) => void) => {
     const handler = (_e: unknown, m: { id: string }) => cb(m.id);
-    ipcRenderer.on('term:exit', handler);
-    return () => ipcRenderer.removeListener('term:exit', handler);
+    ipcRenderer.on('terminal:exit', handler);
+    return () => ipcRenderer.removeListener('terminal:exit', handler);
   },
   saveTerminalBuffer: (id: string, data: string) => ipcRenderer.send('terminal:saveBuffer', { id, data }),
   loadTerminalBuffer: (id: string): Promise<string | undefined> => ipcRenderer.invoke('terminal:loadBuffer', id),
   updateTerminalCwd: (id: string, cwd: string) => ipcRenderer.send('terminal:updateCwd', { id, cwd }),
   onTerminalList: (cb: (list: IntegratedTerminalInfo[]) => void) => {
     const handler = (_e: unknown, m: { list: IntegratedTerminalInfo[] }) => cb(m.list);
-    ipcRenderer.on('term:list', handler);
-    return () => ipcRenderer.removeListener('term:list', handler);
+    ipcRenderer.on('terminal:list', handler);
+    return () => ipcRenderer.removeListener('terminal:list', handler);
   },
   // pi 进程内部执行 /new 时主进程推送的通知
   onNewFromPi: (cb: (payload: { ptyId: string; uuid: string; cwd: string; name: string }) => void) => {
@@ -204,6 +204,9 @@ contextBridge.exposeInMainWorld('pi', {
   registerPtyOwner: (ptyId: string, ownerKey: string) => {
     ipcRenderer.send('session:register-pty-owner', { ptyId, ownerKey });
   },
+  // 查询 PTY 所有权（供 renderer 端替换 ptyOwnersRef 和 _virtualToPty）
+  queryPtyOwner: (key: string): Promise<{ owner?: string; ptyId?: string; virtual?: string }> =>
+    ipcRenderer.invoke('session:query-owner', key),
 
   // ╌╌ pi-tool 集成：Pi 配置、模型、MCP、Skills、扩展 ╌╌
   piSettingsGet: (scope: 'global' | 'project'): Promise<{ data: unknown; raw: string; path: string; exists: boolean }> =>

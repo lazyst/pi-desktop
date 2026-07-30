@@ -11,7 +11,7 @@ import { useTabStore } from './store/tabStore';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { usePanelLayout } from './hooks/usePanelLayout';
-import { useSessionStatus, _virtualToPty } from './hooks/useSessionStatus';
+import { useSessionStatus } from './hooks/useSessionStatus';
 import { useSidebarState } from './hooks/useSidebarState';
 import { defaultConfig } from '../../main/config';
 import type { TerminalProfile } from './types';
@@ -129,15 +129,10 @@ export default function App() {
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
     try {
-      // 虚拟 session（pi-<uuid>）：从模块级映射查找 PTY ID
+      // 虚拟 session（pi-<uuid>）：通过 IPC 查询 PtyOwnershipRegistry
       if (req.key?.startsWith('pi-')) {
-        // 优先从模块级映射查找，回退到 ptyOwnersRef 搜索
-        let ptyId = _virtualToPty.get(req.key);
-        if (!ptyId) {
-          for (const [pid, owner] of ptyOwnersRef.current) {
-            if (owner === req.key) { ptyId = pid; break; }
-          }
-        }
+        const result = await pi.queryPtyOwner?.(req.key);
+        const ptyId = result?.virtual ?? result?.ptyId;
         if (ptyId) {
           const tabs = useTabStore.getState().tabs;
           const existing = tabs.find(
@@ -154,7 +149,8 @@ export default function App() {
       // 旧条目（live key，PTY 已被 /new 重新分配）：spawn 新进程
       // 注意：disk key（.jsonl）不走此路径，由正常流程打开已保存的会话文件
       if (req.key?.startsWith('live-')) {
-        const reassignedPtyIds = new Set(_virtualToPty.values());
+        const result = await pi.queryPtyOwner?.(req.key);
+        const reassignedPtyIds = result?.virtual ? new Set([result.virtual]) : new Set();
         if (reassignedPtyIds.has(req.key)) {
           const info = await pi.openSession({ cwd: req.cwd, name: req.name });
           useTabStore.getState().openSession({ key: info.key, cwd: info.cwd, name: info.name });
@@ -246,10 +242,11 @@ export default function App() {
     }
   };
 
-  const handleTerminate = (key: string) => {
+  const handleTerminate = async (key: string) => {
     // 虚拟 session 的 key 是 pi-<uuid>，需要翻译成 PTY 的 live key
     if (key.startsWith('pi-')) {
-      const ptyId = _virtualToPty.get(key);
+      const result = await pi.queryPtyOwner?.(key);
+      const ptyId = result?.virtual;
       if (ptyId) { pi.terminate(ptyId); return; }
     }
     pi.terminate(key);
@@ -306,12 +303,12 @@ export default function App() {
 
   // 集成终端 × 关闭：杀 PTY 再移除 tab（区别于 session 的 keep-alive 隐藏）。
   // 对齐用户预期：关闭终端 tab ≡ 终止终端进程，侧边栏计数相应减一。
-  // 必须异步：pi.destroyTerminal 返回 Promise，主进程处理完后 push term:list。
+  // 必须异步：pi.destroyTerminal 返回 Promise，主进程处理完后 push terminal:list。
   const handleDestroyTerminal = useCallback(async (id: string) => {
     try {
       await pi.destroyTerminal(id);
       // destroyTerminal 触发主进程 terminal:destroy → pushTerminalList →
-      // term:list IPC → onTerminalList → setTerminals → 侧边栏计数自动更新。
+      // terminal:list IPC → onTerminalList → setTerminals → 侧边栏计数自动更新。
       useTabStore.getState().closeTab(id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

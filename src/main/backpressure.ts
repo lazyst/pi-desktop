@@ -6,7 +6,7 @@
 // 以下再 ptyProcess.resume() 恢复。三层阈值见下方 FlowControlConstants。
 //
 // 本项目数据流：PTY → 主进程 5ms 聚合(emitData，等效 VS Code pty host 端
-// TerminalDataBufferer，减少 IPC 消息量) → IPC(term:data / session:data)
+// TerminalDataBufferer，减少 IPC 消息量) → IPC(terminal:data / session:data)
 // → 渲染端直接 xterm.write → ack 经 IPC 回传主进程。
 // 由于 node-pty 的 IPty 原生提供 pause()/resume()（VS Code 同款接口），本项目
 // 采用与 VS Code 完全一致的「源头反压」：BackpressureController 在翻转阈值时

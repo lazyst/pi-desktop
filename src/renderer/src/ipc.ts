@@ -103,6 +103,8 @@ export interface PiApi {
   onNewFromPi?: (cb: (payload: { ptyId: string; uuid: string; cwd: string; name: string }) => void) => void;
   // 注册 PTY 初始 owner（pi-desktop 同步扩展用）
   registerPtyOwner?: (ptyId: string, ownerKey: string) => void;
+  // 查询 PTY 所有权（替换 ptyOwnersRef 和 _virtualToPty）
+  queryPtyOwner?: (key: string) => Promise<{ owner?: string; ptyId?: string; virtual?: string }>;
 
   // ╌╌ pi-tool 集成：Pi 配置、模型、MCP、Skills、扩展 ╌╌
   piSettingsGet(scope: 'global' | 'project'): Promise<{ data: unknown; raw: string; path: string; exists: boolean }>;
