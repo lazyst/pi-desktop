@@ -50,3 +50,33 @@ _Avoid_：Workspace, Directory, Workdir
 - 若根 SplitLeaf 无 Tab，显示空状态（"新建会话"/"新建终端"按钮）。
 - 新建 Tab 默认进入当前活跃的 SplitLeaf。
 - Tab 拖拽仅限同 SplitLeaf 内重排，不支持跨 SplitLeaf 拖拽。
+
+**DragOverlay（拖拽幽灵）**：
+跨 leaf 拖拽时，被拖拽 Tab 的视觉副本，跟随鼠标移动。源 Tab 在原位保持占位（半透明）。
+_Avoid_：Ghost, Drag Preview
+
+**插入指示线（Insertion Indicator）**：
+跨 leaf 拖拽时，在目标 TabBar 中显示的一条竖线，指示 Tab 将被插入的位置。
+_Avoid_：Drop Indicator, Insertion Line
+
+**跨 Leaf 拖拽（Cross-Leaf Drag）**：
+将 Tab 从一个 SplitLeaf 拖拽到同 cwd 下的另一个 SplitLeaf 中。Tab 从源 leaf 的 tabs 中移除，追加到目标 leaf 的 tabs 中。
+_Avoid_：Cross-Pane Drag, Tab Migration
+
+## Rules
+
+- 每个 SplitLeaf 拥有独立的 `tabs: Tab[]` 和 `activeTabId`，不与其他 SplitLeaf 共享。
+- 每个 cwd 拥有独立的分屏树，切换 cwd 时中间区整体替换。
+- 分屏按钮在 TabBar 右侧，两个按钮分别对应水平分屏（左右）和垂直分屏（上下）。
+- 点击分屏按钮时，当前 SplitLeaf 被一分为二，新 SplitLeaf 自动创建一个集成终端 Tab。
+- 关闭 SplitLeaf 中最后一个 Tab 时，该 SplitLeaf 被关闭（从分屏树中移除），其兄弟 SplitLeaf 扩展填充空间。
+- 若根 SplitLeaf 无 Tab，显示空状态（"新建会话"/"新建终端"按钮）。
+- 新建 Tab 默认进入当前活跃的 SplitLeaf。
+- Tab 拖拽重排分两种：同 leaf 内拖拽重排（reorder）和跨 leaf 拖拽移动（move）。
+- 跨 leaf 拖拽仅限同一 cwd 内，不支持跨 cwd 拖拽。
+- 跨 leaf 拖拽使用移动语义：Tab 从源 leaf 移除，追加到目标 leaf。
+- 跨 leaf 拖拽后，目标 leaf 成为活跃 leaf，被拖拽的 Tab 自动激活。
+- 跨 leaf 拖拽时，若目标 leaf 中已存在同一 session/diff/key，拖拽被阻止。
+- 跨 leaf 拖拽移走最后一个 Tab 后，源 leaf 自动关闭（closeLeaf）。
+- 拖拽回同一 leaf 等同于同 leaf 重排（reorder）。
+- 终端 Tab（integrated-terminal）允许跨 leaf 拖拽，同其他 Tab 行为一致。
