@@ -115,6 +115,26 @@ function SplitPaneDragProvider({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // 构建每个 leaf 的默认 items（按 visible tab 顺序）
+  // 用于初始化 leafItems 和在 leafItems 为空时兜底
+  const defaultLeafItems = useMemo(() => {
+    const items: Record<string, string[]> = {};
+    const tree = cwdTrees[cwd];
+    if (!tree) return items;
+    const traverse = (node: SplitTree) => {
+      if (node.type === 'leaf') {
+        items[node.id] = node.tabs
+          .filter((t) => !t.hidden)
+          .sort((a, b) => a.order - b.order)
+          .map((t) => t.id);
+      } else {
+        for (const child of node.children) traverse(child);
+      }
+    };
+    traverse(tree);
+    return items;
+  }, [cwdTrees, cwd]);
+
   // 非活跃 cwd 不响应拖拽
   if (!isActive) {
     return <>{children}</>;
@@ -132,12 +152,18 @@ function SplitPaneDragProvider({
     activeDragItemRef.current = { tabId, sourceLeafId };
     setActiveDragTab(found.tab);
 
-    // 从 source leaf 的 items 中移除该 tab id
+    // 初始化 leafItems：从 defaultLeafItems 出发，只移除被拖的 tab
+    // 保留其他 tab，使 onDragOver 能正确计算插入位置
     setLeafItems((prev) => {
-      const sourceLeafItems = (prev[sourceLeafId] ?? []).filter((id) => id !== tabId);
-      return { ...prev, [sourceLeafId]: sourceLeafItems };
+      // 如果 prev 已有内容，从 prev 出发；否则从 defaultLeafItems 出发
+      const base = Object.keys(prev).length > 0 ? prev : defaultLeafItems;
+      const sourceItems = base[sourceLeafId] ?? [];
+      const filtered = sourceItems.filter((id) => id !== tabId);
+      // 如果没变化，不触发更新
+      if (filtered.length === sourceItems.length && prev[sourceLeafId] === filtered) return prev;
+      return { ...base, [sourceLeafId]: filtered };
     });
-  }, [cwdTrees]);
+  }, [cwdTrees, defaultLeafItems]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
     const { active, over } = event;
@@ -315,26 +341,6 @@ function SplitPaneDragProvider({
 
     moveTabAcrossLeafs(activeId, sourceLeafId, targetLeafId, targetIndex);
   }, [cwdTrees, reorderTabsInLeaf, moveTabAcrossLeafs]);
-
-  // 构建每个 leaf 的默认 items（按 visible tab 顺序）
-  // 仅在 leafItems 为空时使用
-  const defaultLeafItems = useMemo(() => {
-    const items: Record<string, string[]> = {};
-    const tree = cwdTrees[cwd];
-    if (!tree) return items;
-    const traverse = (node: SplitTree) => {
-      if (node.type === 'leaf') {
-        items[node.id] = node.tabs
-          .filter((t) => !t.hidden)
-          .sort((a, b) => a.order - b.order)
-          .map((t) => t.id);
-      } else {
-        for (const child of node.children) traverse(child);
-      }
-    };
-    traverse(tree);
-    return items;
-  }, [cwdTrees, cwd]);
 
   // 合并默认 items 和动态 items：动态 items 优先
   const mergedLeafItems = useMemo(() => {
