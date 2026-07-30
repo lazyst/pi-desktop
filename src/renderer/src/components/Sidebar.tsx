@@ -132,7 +132,8 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
   }
   // 始终渲染「应用工作目录」分组（收容与具体项目无关的闲聊/临时集成终端），
   // 即使其下暂无会话也显示，以提供独立的新建入口。
-  if (appWorkDir && !cwdIndex.has(appWorkDir)) {
+  // 避免重复：如果 appWorkDir 已在 addedDirs 中，不再重复添加
+  if (appWorkDir && !cwdIndex.has(appWorkDir) && !addedDirs?.includes(appWorkDir)) {
     groups.push({ cwd: appWorkDir, items: [], isAppWorkDir: true });
   }
 
