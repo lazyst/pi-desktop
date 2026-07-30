@@ -274,7 +274,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
               className="split-pane-btn"
               aria-label="水平分屏"
               title="水平分屏（左右）"
-              onClick={() => onSplitPane(leafId, 'horizontal')}
+              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
             >
               <IconSplitHorizontal size={14} />
             </button>
@@ -283,7 +283,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
               className="split-pane-btn"
               aria-label="垂直分屏"
               title="垂直分屏（上下）"
-              onClick={() => onSplitPane(leafId, 'vertical')}
+              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
             >
               <IconSplitVertical size={14} />
             </button>
@@ -350,7 +350,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
                 className="split-pane-btn"
                 aria-label="水平分屏"
                 title="水平分屏（左右）"
-                onClick={() => onSplitPane(leafId, 'horizontal')}
+                onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
               >
                 <IconSplitHorizontal size={14} />
               </button>
@@ -359,7 +359,7 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
                 className="split-pane-btn"
                 aria-label="垂直分屏"
                 title="垂直分屏（上下）"
-                onClick={() => onSplitPane(leafId, 'vertical')}
+                onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
               >
                 <IconSplitVertical size={14} />
               </button>

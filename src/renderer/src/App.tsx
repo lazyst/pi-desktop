@@ -371,6 +371,9 @@ export default function App() {
 
       // 创建分屏结构
       useTabStore.getState().splitPane(leafId, direction);
+      // 立即捕获新 leaf 的 id（双重保险：即使事件冒泡改变了 activeLeafId，
+      // 这里也有正确的引用）
+      const newLeafId = useTabStore.getState().activeLeafId;
 
       // 在新 leaf 中创建终端
       if (parentCwd) {
@@ -381,7 +384,8 @@ export default function App() {
         const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
         if (!profile) return;
         const info = await pi.spawnTerminal({ command: undefined, cwd: parentCwd, profile });
-        useTabStore.getState().openTerminal(info.id, info.cwd, info.title);
+        // 显式指定 newLeafId，确保终端加到新 leaf（而非依赖 activeLeafId）
+        useTabStore.getState().openTerminal(info.id, info.cwd, info.title, newLeafId ?? undefined);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

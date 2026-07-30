@@ -5,7 +5,7 @@ vi.mock('../../components/paneManager', () => ({
   capturePaneScrollState: vi.fn(),
 }));
 
-import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs } from '../splitStore';
+import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs, findLeaf } from '../splitStore';
 import type { Tab, TabKind, TabLocation, SessionTab, TabLoc } from '../splitStore';
 
 /** 重置 store 到初始空状态。 */
@@ -657,6 +657,56 @@ describe('splitStore — 数据模型与基础操作', () => {
       s = getState();
       expect(s.activeCwd).toBe('/empty2');
       expect(s.activeLeafId).toBeTruthy();
+    });
+  });
+
+  describe('分屏 + 自动创建终端 — 正确分配到新 leaf', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+    });
+
+    it('splitPane 后 openTerminal 自动分配到新 leaf（无 leafId 参数）', () => {
+      const s = getState();
+      const oldLeafId = s.cwdActiveLeafId['/a']!;
+      
+      // 模拟 splitPane 后 activeLeafId 已指向新 leaf
+      getState().splitPane(oldLeafId, 'horizontal');
+      
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      expect(tree.type).toBe('split');
+      if (tree.type === 'split') {
+        const newLeafId = tree.children[1].id;
+        // activeLeafId 应指向新 leaf
+        expect(s2.activeLeafId).toBe(newLeafId);
+        
+        // 模拟 openTerminal（无 leafId）—— 应分配到新 leaf
+        getState().openTerminal('term-1', '/a', 'Terminal 1');
+        
+        const s3 = getState();
+        // 验证终端在 newLeaf 中
+        const newLeafFound = findLeaf(s3.cwdTrees, newLeafId);
+        expect(newLeafFound).not.toBeNull();
+        expect(newLeafFound!.leaf.tabs.some((t) => t.id === 'term-1')).toBe(true);
+        
+        // 验证终端不在 oldLeaf 中
+        const oldLeafFound = findLeaf(s3.cwdTrees, oldLeafId);
+        expect(oldLeafFound).not.toBeNull();
+        expect(oldLeafFound!.leaf.tabs.some((t) => t.id === 'term-1')).toBe(false);
+      }
+    });
+
+    it('openTerminal 指定 leafId 可分配到指定 leaf', () => {
+      const s = getState();
+      const leafId = s.cwdActiveLeafId['/a']!;
+      
+      // 直接 openTerminal 指定 leafId
+      getState().openTerminal('term-2', '/a', 'Terminal 2', leafId);
+      
+      const s2 = getState();
+      const found = findLeaf(s2.cwdTrees, leafId);
+      expect(found).not.toBeNull();
+      expect(found!.leaf.tabs.some((t) => t.id === 'term-2')).toBe(true);
     });
   });
 });
