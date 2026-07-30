@@ -1,6 +1,48 @@
 # Changelog
 
-## [0.8.7] — 2026-07
+## [0.9.7] — 2026-07
+
+### 新增
+
+- **分屏（Split Pane）**：中间区支持分屏，每个 cwd 拥有独立的递归分屏树：
+  - 分屏按钮（水平/垂直）创建新 pane，自动打开集成终端
+  - 关闭 leaf 中最后一个 tab 时自动关闭该 leaf
+  - 空 leaf 显示空状态（新建会话/新建终端）
+  - SplitDivider 拖拽调整 pane 比例
+  - 所有 cwd 分屏树同时存在于 DOM 中（keep-alive），非活跃 cwd 隐藏
+- **Tab 跨 Leaf 拖拽**：支持在同 cwd 的不同 leaf 间拖拽移动 tab，
+  源 leaf 的最后一个 tab 被移出时自动关闭源 leaf，
+  相同 session/diff/key 的 tab 禁止拖入目标 leaf（去重保护）
+- **Tab 同 Leaf 重排**：拖拽时实时插入指示线，其他 tab 移位露出空隙
+- **TabBar 滚动**（VS Code 风格）：
+  - 水平滚动容器，左右箭头按钮 + 渐变阴影指示边缘内容
+  - 鼠标滚轮直接水平滚动（无需 Shift）
+  - 自定义 2px 悬浮滚动条指示器，hover 时淡入，不占 TabBar 高度
+  - 右侧按钮组（新建终端、分屏）始终固定可见
+- **配置与工作目录迁移**：
+  - 配置文件迁移至 `~/.pi/pi-workbench/config.json`
+  - 默认工作目录改为 `~/.pi/pi-workbench/defaultWorkbench`
+  - 启动时恢复上次打开的目录（`lastActiveDir`）
+- **应用重命名**：从 pi-desktop 重命名为 pi-workbench
+
+### 修复
+
+- 分屏终端打开时事件传播竞态导致分配到错误 leaf
+- SplitDivider 渲染在最后而非子 pane 之间，导致分割线不可见
+- 同 leaf 拖拽因 useCallback 闭包陈旧显示红色无效状态
+- 跨 leaf 拖拽时目标 leaf 其他 tab 消失（SortableContext items 管理缺失）
+- 跨 leaf 拖拽时目标 leaf 其他 tab 消失（items 覆盖 defaultLeafItems）
+- 点击选择工作目录导致应用全屏黑屏
+- `overflow: overlay` 在 Chromium 128 中已移除，降级为 `auto`
+- `scrollbar-width: thin` 与 `::-webkit-scrollbar` 冲突导致自定义无效
+- 启动时未恢复上次打开的目录
+- 无溢出时滚动条误显示
+
+### 样式
+
+- TabBar active tab 底部高亮移到顶部
+- 分屏按钮组与新建终端按钮之间添加视觉分隔
+- 所有 `.split-pane` 统一 `position: absolute; inset: 0` 修复黑屏
 
 ### 新增
 
