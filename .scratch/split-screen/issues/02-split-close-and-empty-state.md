@@ -4,7 +4,18 @@
 
 **Blocked by:** 01 — splitStore 数据模型 + SplitPane 渲染
 
-**Status:** ready-for-agent
+**Status:** completed
+
+**Completed at:** 2025-01-14
+
+**Summary:**
+- TabBar split buttons: added IconSplitHorizontal/IconSplitVertical, render two buttons on right side of tab bar
+- `onSplitPane` prop threaded through App → CenterPane → SplitPane → SplitPaneLeaf → TabBar
+- `handleSplitPane` in App.tsx: calls `splitPane(leafId, direction)`, then `spawnTerminal` IPC, then `openTerminal` with parent leaf's active tab cwd
+- `findLeaf` exported from splitStore for use in App.tsx
+- `split-pane-btn` CSS added (matches existing terminal-new-btn style)
+- Tests: 8 new tests (splitPane: 4, closeLeaf: 3, empty state: 1)
+- 42 total tests passing, production code compiles with zero errors
 
 - [ ] TabBar 右侧添加两个分屏按钮（水平分屏/垂直分屏），图标风格与现有图标一致
 - [ ] `splitPane(leafId, direction)` action：

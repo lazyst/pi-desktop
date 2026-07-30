@@ -527,4 +527,75 @@ describe('splitStore — 数据模型与基础操作', () => {
       }
     });
   });
+
+  describe('reorderTabsInLeaf — Tab 重排', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      getState().openSession({ key: '/a/s2', cwd: '/a', name: 'sess-b' });
+      getState().openSession({ key: '/a/s3', cwd: '/a', name: 'sess-c' });
+    });
+
+    it('重排后 order 更新', () => {
+      const s = getState();
+      const leafId = s.cwdActiveLeafId['/a']!;
+      s.reorderTabsInLeaf(leafId, ['/a/s3', '/a/s1', '/a/s2']);
+
+      const s2 = getState();
+      const allTabs = getAllTabs(s2);
+      const ordered = allTabs
+        .filter((t) => t.cwd === '/a')
+        .sort((a, b) => a.order - b.order);
+      expect(ordered.map((t) => t.id)).toEqual(['/a/s3', '/a/s1', '/a/s2']);
+    });
+
+    it('不影响不在 orderedIds 中的 tab', () => {
+      const s = getState();
+      const leafId = s.cwdActiveLeafId['/a']!;
+      s.reorderTabsInLeaf(leafId, ['/a/s3', '/a/s1']);
+
+      const s2 = getState();
+      const allTabs = getAllTabs(s2);
+      const s2tab = allTabs.find((t) => t.id === '/a/s2');
+      expect(s2tab?.order).toBe(1);
+    });
+  });
+
+  describe('setRatios — 调整分割比例', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      const s = getState();
+      const leafId = s.cwdActiveLeafId['/a']!;
+      s.splitPane(leafId, 'horizontal');
+    });
+
+    it('setRatios 更新分屏比例', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        s.setRatios(tree.id, [0.7, 0.3]);
+
+        const s2 = getState();
+        const tree2 = s2.cwdTrees['/a'];
+        if (tree2.type === 'split') {
+          expect(tree2.ratios[0]).toBeCloseTo(0.7);
+          expect(tree2.ratios[1]).toBeCloseTo(0.3);
+        }
+      }
+    });
+
+    it('setRatios 直接设置比例', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        s.setRatios(tree.id, [0.7, 0.3]);
+
+        const s2 = getState();
+        const tree2 = s2.cwdTrees['/a'];
+        if (tree2.type === 'split') {
+          expect(tree2.ratios[0]).toBe(0.7);
+          expect(tree2.ratios[1]).toBe(0.3);
+        }
+      }
+    });
+  });
 });
