@@ -264,6 +264,17 @@ html, body, #root {
 }
 .split-pane-btn:hover { background: var(--bg-hover); color: var(--text); }
 
+/* 分屏按钮组与新建终端按钮之间的视觉分隔 */
+.split-pane-btn-sep {
+  flex: none;
+  align-self: center;
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
+  opacity: 0.4;
+}
+
 /* ── 新建终端按钮组（VS Code 风格）：加号按钮 + 下拉箭头 ── */
 .terminal-new-btn-group {
   display: inline-flex;

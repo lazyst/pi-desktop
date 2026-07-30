@@ -267,8 +267,27 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
             </div>
           ),
         )}
+        {newVisible && onNew && (
+          <button
+            type="button"
+            className="tab-new terminal-new-btn"
+            aria-label="新建"
+            title="新建"
+            onClick={onNew}
+          >
+            <IconNewSession size={14} />
+          </button>
+        )}
+        {onNewTerminal && (
+          <NewTerminalButton
+            onNewTerminal={onNewTerminal}
+            onNewTerminalWithProfile={onNewTerminalWithProfile}
+            terminalProfiles={terminalProfiles}
+          />
+        )}
         {onSplitPane && leafId && (
           <>
+            <div className="split-pane-btn-sep" />
             <button
               type="button"
               className="split-pane-btn"
@@ -288,24 +307,6 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
               <IconSplitVertical size={14} />
             </button>
           </>
-        )}
-        {newVisible && onNew && (
-          <button
-            type="button"
-            className="tab-new terminal-new-btn"
-            aria-label="新建"
-            title="新建"
-            onClick={onNew}
-          >
-            <IconNewSession size={14} />
-          </button>
-        )}
-        {onNewTerminal && (
-          <NewTerminalButton
-            onNewTerminal={onNewTerminal}
-            onNewTerminalWithProfile={onNewTerminalWithProfile}
-            terminalProfiles={terminalProfiles}
-          />
         )}
       </div>
     );
@@ -343,8 +344,27 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
               />
             ),
           )}
+          {newVisible && onNew && (
+            <button
+              type="button"
+              className="tab-new terminal-new-btn"
+              aria-label="新建"
+              title="新建"
+              onClick={onNew}
+            >
+              <IconNewSession size={14} />
+            </button>
+          )}
+          {onNewTerminal && (
+            <NewTerminalButton
+              onNewTerminal={onNewTerminal}
+              onNewTerminalWithProfile={onNewTerminalWithProfile}
+              terminalProfiles={terminalProfiles}
+            />
+          )}
           {onSplitPane && leafId && (
             <>
+              <div className="split-pane-btn-sep" />
               <button
                 type="button"
                 className="split-pane-btn"
@@ -364,24 +384,6 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
                 <IconSplitVertical size={14} />
               </button>
             </>
-          )}
-          {newVisible && onNew && (
-            <button
-              type="button"
-              className="tab-new terminal-new-btn"
-              aria-label="新建"
-              title="新建"
-              onClick={onNew}
-            >
-              <IconNewSession size={14} />
-            </button>
-          )}
-          {onNewTerminal && (
-            <NewTerminalButton
-              onNewTerminal={onNewTerminal}
-              onNewTerminalWithProfile={onNewTerminalWithProfile}
-              terminalProfiles={terminalProfiles}
-            />
           )}
         </div>
       </SortableContext>
