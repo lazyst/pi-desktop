@@ -30,9 +30,11 @@ interface Props {
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
   /** 删除会话文件（直接删除，不弹确认框） */
   onDeleteSession?: (key: string, name: string) => void;
+  /** 删除会话文件（带确认弹窗，确认后关闭对应 tab） */
+  onDeleteSessionRequest?: (key: string, name: string, tabId: string) => void;
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, onSplitPane, onDeleteSession }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, onSplitPane, onDeleteSession, onDeleteSessionRequest }: Props) {
   const cwdTrees = useSplitStore((s) => s.cwdTrees);
   const activeCwd = useSplitStore((s) => s.activeCwd);
   const cwdOrder = useSplitStore((s) => s.cwdOrder);
@@ -196,6 +198,7 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
             addedDirs={addedDirs}
             onSplitPane={onSplitPane}
             onDeleteSession={onDeleteSession}
+            onDeleteSessionRequest={onDeleteSessionRequest}
           />
         ))}
       </div>

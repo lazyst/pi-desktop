@@ -62,6 +62,8 @@ interface Props {
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
   // 删除会话文件（直接删除，不弹确认框）
   onDeleteSession?: (key: string, name: string) => void;
+  // 删除会话文件（带确认弹窗，确认后关闭对应 tab）
+  onDeleteSessionRequest?: (key: string, name: string, tabId: string) => void;
 }
 
 // ── DragContext（跨 leaf 拖拽状态传递） ──
@@ -468,6 +470,7 @@ function SplitPaneLeaf({
   addedDirs,
   onSplitPane,
   onDeleteSession,
+  onDeleteSessionRequest,
 }: Props & { leaf: SplitLeaf }) {
   const selectTab = useSplitStore((s) => s.selectTab);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
@@ -586,7 +589,7 @@ function SplitPaneLeaf({
                       title="删除会话文件"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onDeleteSession?.(sc.sessionKey, sc.sessionName);
+                        onDeleteSessionRequest?.(sc.sessionKey, sc.sessionName, sc.id);
                       }}
                     >
                       删除

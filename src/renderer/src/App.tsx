@@ -242,6 +242,12 @@ export default function App() {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
+  // 用于 session-content 页面的删除：带确认弹窗，确认后关闭对应 tab
+  const pendingCloseTabIdRef = useRef<string | null>(null);
+  const handleDeleteSessionRequest = useCallback((key: string, name: string, tabId: string) => {
+    pendingCloseTabIdRef.current = tabId;
+    setConfirm({ kind: 'session', key, name });
+  }, []);
 
   const handleClearDirectory = (cwd: string) => {
     const count = disk.filter((d) => d.cwd === cwd).length;
@@ -261,6 +267,12 @@ export default function App() {
     try {
       if (pending.kind === 'session') {
         await pi.deleteSession(pending.key);
+        // 关闭对应的 session-content tab（如果有）
+        const tabId = pendingCloseTabIdRef.current;
+        pendingCloseTabIdRef.current = null;
+        if (tabId) {
+          useTabStore.getState().closeCenterTab(tabId);
+        }
       } else if (pending.kind === 'directory') {
         await pi.clearDirectory(pending.cwd);
         handleExitSelect(true); // 清空后退出多选态并清空选择
@@ -457,6 +469,7 @@ export default function App() {
         terminalProfiles={terminalProfiles}
         onSplitPane={handleSplitPane}
         onDeleteSession={handleDeleteDirect}
+        onDeleteSessionRequest={handleDeleteSessionRequest}
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}
