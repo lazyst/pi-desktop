@@ -165,11 +165,11 @@ html, body, #root {
 
 /* 实际可滚动的 tab 容器 */
 .tabbar-scroll-container {
-  overflow-x: overlay;
+  overflow-x: auto;
   overflow-y: hidden;
   flex: 1;
-  /* 隐藏滚动条（保留功能） */
-  scrollbar-width: thin;
+  /* 覆盖全局 * { scrollbar-width: thin }，让 ::-webkit-scrollbar 生效 */
+  scrollbar-width: auto;
   scrollbar-color: transparent transparent;
   transition: scrollbar-color 0.15s;
 }
