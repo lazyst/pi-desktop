@@ -100,7 +100,10 @@ export function useSidebarState(
       for (const d of diskList) init[d.key] = 'dead';
       setStatusMap((m) => ({ ...init, ...m }));
     }).catch(() => setDisk([]));
+  }, [initialized, setStatusMap]);
 
+  // 独立 effect 订阅主进程事件（空 deps，只注册一次，避免 cleanup 误注销）
+  useEffect(() => {
     // 订阅主进程索引推送：更新 disk 列表
     const offIndex = pi.onIndex((groups) => {
       const diskList = toDisk(groups);
@@ -137,7 +140,7 @@ export function useSidebarState(
     });
 
     return () => { offIndex?.(); offRelink?.(); };
-  }, [initialized, setStatusMap]);
+  }, []);
 
   // ── Handlers ──
 
