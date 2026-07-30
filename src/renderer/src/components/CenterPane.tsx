@@ -28,9 +28,11 @@ interface Props {
   terminalProfiles?: Array<{ id: string; label: string }>;
   /** 分屏回调 */
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
+  /** 删除会话文件（直接删除，不弹确认框） */
+  onDeleteSession?: (key: string, name: string) => void;
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, onSplitPane }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, onSplitPane, onDeleteSession }: Props) {
   const cwdTrees = useSplitStore((s) => s.cwdTrees);
   const activeCwd = useSplitStore((s) => s.activeCwd);
   const cwdOrder = useSplitStore((s) => s.cwdOrder);
@@ -193,6 +195,7 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
             registerCloseGuard={registerCloseGuard}
             addedDirs={addedDirs}
             onSplitPane={onSplitPane}
+            onDeleteSession={onDeleteSession}
           />
         ))}
       </div>

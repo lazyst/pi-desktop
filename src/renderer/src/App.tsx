@@ -456,6 +456,7 @@ export default function App() {
         onNewTerminalWithProfile={handleNewTerminalWithProfile}
         terminalProfiles={terminalProfiles}
         onSplitPane={handleSplitPane}
+        onDeleteSession={handleDeleteDirect}
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}

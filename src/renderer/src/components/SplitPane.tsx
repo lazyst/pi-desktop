@@ -60,6 +60,8 @@ interface Props {
   addedDirs?: string[];
   // 分屏回调
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
+  // 删除会话文件（直接删除，不弹确认框）
+  onDeleteSession?: (key: string, name: string) => void;
 }
 
 // ── DragContext（跨 leaf 拖拽状态传递） ──
@@ -465,6 +467,7 @@ function SplitPaneLeaf({
   registerCloseGuard,
   addedDirs,
   onSplitPane,
+  onDeleteSession,
 }: Props & { leaf: SplitLeaf }) {
   const selectTab = useSplitStore((s) => s.selectTab);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
@@ -567,6 +570,28 @@ function SplitPaneLeaf({
               <div key={t.id} className={cls}>
                 <div className="session-content-tab-header">
                   <span className="session-content-tab-title">💬 {sc.sessionName}</span>
+                  <div className="session-content-tab-actions">
+                    <button
+                      className="session-content-tab-btn"
+                      title="启动会话"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpen?.({ key: sc.sessionKey, cwd, name: sc.sessionName });
+                      }}
+                    >
+                      启动
+                    </button>
+                    <button
+                      className="session-content-tab-btn session-content-tab-btn--danger"
+                      title="删除会话文件"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteSession?.(sc.sessionKey, sc.sessionName);
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
                 </div>
                 <SessionContentView sessionKey={sc.sessionKey} sessionName={sc.sessionName} />
               </div>

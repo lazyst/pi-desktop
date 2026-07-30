@@ -3698,6 +3698,36 @@ html, body, #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.session-content-tab-actions {
+  display: flex;
+  gap: var(--sp-1);
+  flex: none;
+  margin-left: auto;
+}
+.session-content-tab-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: 22px;
+  border-radius: 3px;
+  white-space: nowrap;
+  transition: background var(--transition), color var(--transition);
+}
+.session-content-tab-btn:hover {
+  background: var(--bg-hover);
+}
+.session-content-tab-btn--danger {
+  color: var(--danger);
+}
+.session-content-tab-btn--danger:hover {
+  background: var(--bg-danger-hover);
+  color: var(--danger-hover);
 }
 .session-content-view {
   flex: 1;
