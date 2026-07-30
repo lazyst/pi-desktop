@@ -43,12 +43,12 @@ import { detectTerminalProfiles } from './shellProfiles';
 const isDevInstance = !!process.env.PI_DESKTOP_DEV;
 
 function getDefaultAppWorkDir(): string {
-  return path.join(os.homedir(), 'pi-desktop', 'defaultWorkSpace');
+  return path.join(os.homedir(), '.pi', 'pi-workbench', 'defaultWorkbench');
 }import type { AppConfig, TerminalProfile } from '../renderer/src/types';
 
 const configPath = () => {
   const suffix = isDevInstance ? '-dev' : '';
-  return path.join(os.homedir(), 'pi-desktop', `config${suffix}.json`);
+  return path.join(os.homedir(), '.pi', 'pi-workbench', `config${suffix}.json`);
 };
 let configState: AppConfig | undefined;
 let configTimer: ReturnType<typeof setTimeout> | undefined;
@@ -143,7 +143,7 @@ function setConfig(partial: Partial<AppConfig>): void {
   if (partial.appWorkDir) {
     // 确保传入的路径是绝对路径（renderer 可能只传了相对路径）
     const dir = partial.appWorkDir;
-    const absDir = path.isAbsolute(dir) ? dir : path.join(os.homedir(), 'pi-desktop', dir);
+    const absDir = path.isAbsolute(dir) ? dir : path.join(os.homedir(), '.pi', 'pi-workbench', dir);
     if (absDir !== dir) {
       configState = mergeConfig(configState!, { appWorkDir: absDir });
     }
