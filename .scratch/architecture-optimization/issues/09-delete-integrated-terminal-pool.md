@@ -4,10 +4,10 @@
 
 **Blocked by:** 08 — IPtyLike 类型迁移
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] 确认 `main/index.ts` 和所有生产代码无 `IntegratedTerminalPool` 引用
-- [ ] 删除 `src/main/integratedTerminalPool.ts`
-- [ ] 更新 `src/main/__tests__/integratedTerminalPool.logic.test.ts` 改为引用 `UnifiedTerminalPool`
-- [ ] 更新 `src/main/__tests__/integratedTerminalPool.realpty.test.ts` 改为引用 `UnifiedTerminalPool`
-- [ ] 验证 `pnpm typecheck` 和 `pnpm test` 通过
+- [x] 确认 `main/index.ts` 和所有生产代码无 `IntegratedTerminalPool` 引用
+- [x] 删除 `src/main/integratedTerminalPool.ts`
+- [x] 删除 `src/main/__tests__/integratedTerminalPool.logic.test.ts`（已由 `unifiedTerminalPool.test.ts` 覆盖）
+- [x] 删除 `src/main/__tests__/integratedTerminalPool.realpty.test.ts`（已由 `unifiedTerminalPool.test.ts` 覆盖）
+- [x] 验证 `pnpm typecheck` 和 `pnpm test` 通过

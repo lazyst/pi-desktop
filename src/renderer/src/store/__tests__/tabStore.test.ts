@@ -361,8 +361,8 @@ describe('tabStore — 状态容器与 action', () => {
 
   describe('selectNextTabOnClose (纯函数)', () => {
   const makeTab = (id: string, cwd: string, hidden = false): Tab => ({
-    id, cwd, kind: 'session', location: 'editor', title: id, order: 0,
-    hidden, preview: false, sessionKey: id, root: cwd, path: id,
+    id, kind: 'session' as const, location: 'editor' as const, title: id, order: 0,
+    hidden, key: id, cwd, name: id,
   });
 
   it('返回 patch 当关闭非激活、非记忆 tab（仅清理历史）', () => {

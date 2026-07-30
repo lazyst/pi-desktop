@@ -4,12 +4,11 @@
 
 **Blocked by:** 01 — ReferenceCountedWatcher
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] 创建 `src/main/handlers/piToolHandlers.ts`，导出 `registerPiToolHandlers(ipcMain, win, piAgentDir)`
-- [ ] 迁移 `pi:settings:get/set`、`pi:models:get/set`、`pi:mcp:configs`、`pi:mcp:configs:save`、`pi:mcp:status`
-- [ ] 迁移 `pi:skills:list`、`pi:skills:disable/enable/delete`、`pi:skills:refreshCache`、`pi:skills:batchDisable`、`pi:skills:batchDelete`
-- [ ] 迁移 `pi:extensions:list`、`pi:extensions:disable/enable/delete`
-- [ ] 迁移 `app:openExternal`、`fs:openWithSystem`、`fs:showInFolder`
-- [ ] 在 `main/index.ts` 中调用 `registerPiToolHandlers`
-- [ ] 验证 `pnpm typecheck` 和 `pnpm test` 通过
+- [x] 创建 `src/main/handlers/piToolHandlers.ts`，导出 `registerPiToolHandlers(ipcMain, win, piAgentDir)`
+- [x] 迁移 `pi:settings:get/set`、`pi:models:get/set`、`pi:mcp:configs`、`pi:mcp:configs:save`、`pi:mcp:status`
+- [x] 迁移 `pi:skills:list`、`pi:skills:disable/enable/delete`、`pi:skills:refreshCache`、`pi:skills:batchDisable`、`pi:skills:batchDelete`
+- [x] 迁移 `pi:extensions:list`、`pi:extensions:disable/enable/delete`
+- [x] 在 `main/index.ts` 中调用 `registerPiToolHandlers`
+- [x] 验证 `pnpm typecheck` 和 `pnpm test` 通过

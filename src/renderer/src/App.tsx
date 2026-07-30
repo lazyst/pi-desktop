@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { TitleBar } from './components/TitleBar';
@@ -12,20 +12,10 @@ import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { usePanelLayout } from './hooks/usePanelLayout';
 import { useSessionStatus, _virtualToPty } from './hooks/useSessionStatus';
+import { useSidebarState } from './hooks/useSidebarState';
 import { defaultConfig } from '../../main/config';
-import type { SessionStatus, AppConfig, TerminalProfile } from './types';
+import type { TerminalProfile } from './types';
 import type { SessionTab } from './store/tabStore';
-
-interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
-
-function readPinned(cfg: AppConfig): string[] {
-  const arr = cfg.pinnedDirs;
-  return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
-}
-
-function toDisk(groups: { cwd: string; sessions: Array<{ key: string; name: string; time: string }> }[]): DiskSession[] {
-  return groups.flatMap((g) => g.sessions.map((s) => ({ key: s.key, cwd: g.cwd, name: s.name, time: s.time })));
-}
 
 export default function App() {
   // 中间区通用 Tab 模型（重构阶段 3E）：单一状态源已收编进 useTabStore（见 issue 03）。
@@ -38,21 +28,17 @@ export default function App() {
     virtualSessions, setVirtualSessions,
   } = useSessionStatus();
   const [error, setError] = useState<string | null>(null);
-  const [disk, setDisk] = useState<DiskSession[]>([]);
-  const [pinned, setPinned] = useState<string[]>([]);
-  const [addedDirs, setAddedDirs] = useState<string[]>([]);
-  // 应用工作目录分组的根目录（config.appWorkDir，默认 ~/piDesktop）。
-  // 该分组下的集成终端不挂靠任何项目 cwd，统一收容闲聊/临时终端。
-  const [appWorkDir, setAppWorkDir] = useState<string>('');
-  // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
+  const {
+    disk, pinned, addedDirs, appWorkDir, collapsedGroups,
+    liveUnsaved, visibleDirs, sessions,
+    handlePickDirectory, handleRemoveDir, handleTogglePin, handleCollapseGroup,
+  } = useSidebarState(liveToDisk, virtualSessions, setStatusMap);
   const {
     sidebarWidth, rightPanelWidth, sidebarCollapsed, rightPanelCollapsed,
     initFromConfig,
     handleSidebarResize, handleRightPanelResize,
     handleToggleSidebar, handleToggleRightPanel,
   } = usePanelLayout();
-  // 侧边栏已折叠的分组 cwd 列表（持久化于 config.collapsedGroups）。
-  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(defaultConfig().collapsedGroups);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 集成终端实例列表 / 激活状态已收编进 useTabStore（see issue 03）。
   // App 仅保留「终端新建 / 销毁」所需的主进程 IPC 协调逻辑（见下方 handler）。
@@ -83,33 +69,10 @@ export default function App() {
     : activeSessionKey;
 
   useEffect(() => {
-    // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); initFromConfig(cfg); const dirs = Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []; const workDir = cfg.appWorkDir || ''; if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); // 首次启动：addedDirs 为空时自动添加 appWorkDir，确保用户首次打开就能看到
-      // 应用工作目录及其文件树/Git 状态。
-      if (dirs.length === 0 && workDir) {
-        dirs.push(workDir);
-        pi.setConfig({ addedDirs: dirs }).catch(() => {});
-      }
-      setAddedDirs(dirs); // 恢复上一次选择的目录（lastActiveDir），用于右栏默认根目录
-      if (cfg.lastActiveDir) {
-        setLastSessionCwd(cfg.lastActiveDir);
-        useTabStore.getState().setActiveCwd(cfg.lastActiveDir);
-      } else if (dirs.length > 0) {
-        // 首次启动 & 无上次记录 → 默认选择第一个已添加目录（即 appWorkDir）
-        setLastSessionCwd(dirs[0]);
-        useTabStore.getState().setActiveCwd(dirs[0]);
-      }
-      if (Array.isArray(cfg.collapsedGroups)) setCollapsedGroups(cfg.collapsedGroups.filter((x) => typeof x === 'string')); }).catch(() => setPinned([]));
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
-    pi.listSessions().then(toDisk).then((diskList) => {
-      setDisk(diskList);
-      // 初次加载磁盘会话时同样补 'dead' 默认值（同 onIndex 逻辑），避免历史会话
-      // 因 statusMap 中无记录（undefined）而在左侧栏误显「终止进程」按钮。
-      const init: Record<string, SessionStatus> = {};
-      for (const d of diskList) init[d.key] = 'dead';
-      setStatusMap((m) => ({ ...init, ...m }));
-    }).catch(() => setDisk([]));
+    // 初始化面板布局配置（sidebarWidth、rightPanelWidth 等）
+    pi.getConfig().then((cfg) => { initFromConfig(cfg); }).catch(() => {});
     // 启动动画：首屏（App 挂载）即视为就绪（见 docs/adr/0003 决策⑤a）。
     // 下一帧给 #splash 加 .splash--hidden 触发 CSS 淡出，并通知主进程 show() 窗口。
     // 用 rAF 确保过渡生效（避免同帧加 class 被合并为无过渡）；reduced-motion 下 CSS
@@ -162,27 +125,6 @@ export default function App() {
   // 已有会话时返回的 .jsonl 路径）虽会进入 open，但不是 live key，也永远
   // 不会出现在 liveToDisk 映射里——若只用 !promoted[key] 判定，会把已存在
   // 的磁盘会话误当成“未保存”的 live 会话重复显示并打上“未保存”徽标（见修复）。
-  const isLiveKey = (k: string) => k.startsWith('live-') || k.startsWith('pi-');
-  const liveUnsaved: DiskSession[] = tabs
-    .filter((t): t is SessionTab => t.kind === 'session' && isLiveKey(t.key) && !promoted[t.key])
-    .map((t) => ({ key: t.key, cwd: t.cwd, name: t.name, unsaved: true }));
-  // 左侧栏只展示用户“添加目录”显式注册的目录下的会话（含未升级的 live 会话）。
-  // 「应用工作目录」(appWorkDir) 也作为隐式允许的目录纳入——它虽不写在 addedDirs 里，
-  // 但其下同样会产生会话（如在该分组新建会话），必须能显示在左栏（见 issue：在
-  // 应用工作目录新建会话后左侧栏看不到）。其余磁盘会话不出现，仅在设置面板“会话管理”。
-  // 注：appWorkDir 可能为空串（配置未就绪），空串不会匹配任何会话 cwd，安全跳过。
-  const visibleDirs = useMemo(() => {
-    const set = new Set(addedDirs);
-    if (appWorkDir) set.add(appWorkDir);
-    return set;
-  }, [addedDirs, appWorkDir]);
-  const addedSet = visibleDirs;
-  const sessions: DiskSession[] = [
-    ...disk.filter((d) => addedSet.has(d.cwd)),
-    ...liveUnsaved.filter((s) => addedSet.has(s.cwd)),
-    ...virtualSessions.filter((s) => addedSet.has(s.cwd)),
-  ];
-
 
   const handleOpen = async (req: { key?: string; cwd?: string; name?: string }) => {
     setError(null);
@@ -233,41 +175,6 @@ export default function App() {
     }
   };
 
-  const handlePickDirectory = async () => {
-    setError(null);
-    try {
-      const dir = await pi.pickDirectory();
-      if (!dir) return;
-      // “添加目录”：仅把目录注册进 addedDirs（持久化），左侧栏随即展示该目录下的会话；
-      // 不自动新建会话——若目录为空，左侧栏只显示该分组（无会话），由用户按需新建。
-      setAddedDirs((prev) => {
-        const next = prev.includes(dir) ? prev : [...prev, dir];
-        pi.setConfig({ addedDirs: next }).catch(() => {});
-        return next;
-      });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  // 从侧边栏移除一个已添加目录：仅从 addedDirs 注销，不删除任何磁盘会话文件。
-  const handleRemoveDir = (cwd: string) => {
-    setAddedDirs((prev) => {
-      const next = prev.filter((c) => c !== cwd);
-      pi.setConfig({ addedDirs: next }).catch(() => {});
-      return next;
-    });
-  };
-
-  const handleTogglePin = (cwd: string) => {
-    setPinned((prev) => {
-      const next = prev.includes(cwd) ? prev.filter((c) => c !== cwd) : [...prev, cwd];
-      // config 经异步 IPC 持久化；用 .catch 吸收拒绝（try/catch 抓不到 Promise 拒绝）。
-      pi.setConfig({ pinnedDirs: next }).catch(() => {});
-      return next;
-    });
-  };
-
   // 点击文件树中的文件 → 中间区新增/激活预览 tab（单文件）。
   const handleOpenFile = (relPath: string, fileName: string, root: string) => {
     // 统一收编进 store（openPreview action 封装「已存在则激活、不存在则新增」）。
@@ -283,16 +190,6 @@ export default function App() {
   const openCommitDiff = useCallback((cwd: string, hash: string) => {
     useTabStore.getState().openDiff(cwd, hash);
   }, []);
-
-  const handleCollapseGroup = (cwd: string, collapsed: boolean) => {
-    setCollapsedGroups((prev) => {
-      const next = collapsed
-        ? [...prev, cwd]
-        : prev.filter((d) => d !== cwd);
-      pi.setConfig({ collapsedGroups: next }).catch(() => {});
-      return next;
-    });
-  };
 
   // 待确认的危险操作：单条删除 / 清空目录 / 批量删除，统一用一份确认弹窗。
   type PendingDelete =

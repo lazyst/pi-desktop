@@ -69,7 +69,6 @@ vi.mock('fs', () => ({
   default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] },
   readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [],
 }));
-vi.mock('../sessionPool', () => ({ SessionPool: class { constructor() {} } }));
 
 // 用可控的 mock 替换统一终端池，捕获构造回调 + 记录方法调用。
 vi.mock('../unifiedTerminalPool', () => ({

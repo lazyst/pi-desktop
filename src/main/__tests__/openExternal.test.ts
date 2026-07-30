@@ -40,7 +40,6 @@ vi.mock('electron', () => ({
 
 vi.mock('node-pty', () => ({ default: { spawn: vi.fn() } }));
 vi.mock('fs', () => ({ default: { readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] }, readFileSync: vi.fn(), writeFileSync: vi.fn(), existsSync: () => false, watch: vi.fn(), readdirSync: () => [] }));
-vi.mock('./sessionPool', () => ({ SessionPool: class { constructor() {} } }));
 
 describe('app:openExternal whitelist', () => {
   beforeAll(async () => {

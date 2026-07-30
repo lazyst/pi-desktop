@@ -4,10 +4,10 @@
 
 **Blocked by:** 12 — usePanelLayout, 13 — useSessionStatus
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] 创建 `src/renderer/src/hooks/useSidebarState.ts`
-- [ ] hook 内部管理侧边栏数据源和 IPC 订阅（`pi.onIndex`、`pi.onRelink`、`pi.onNewFromPi`、`pi.getConfig`）
-- [ ] 封装侧边栏数据的派生逻辑（`disk` + `liveUnsaved` + `virtualSessions` + `addedDirs` + `appWorkDir` 的合并）
-- [ ] 在 App.tsx 中替换对应的状态和 handler
-- [ ] 验证 `pnpm typecheck` 和 `pnpm test` 通过
+- [x] 创建 `src/renderer/src/hooks/useSidebarState.ts`
+- [x] hook 内部管理侧边栏数据源和 IPC 订阅（`pi.onIndex`、`pi.getConfig`）
+- [x] 封装侧边栏数据的派生逻辑（`disk` + `liveUnsaved` + `virtualSessions` + `addedDirs` + `appWorkDir` 的合并）
+- [x] 在 App.tsx 中替换对应的状态和 handler
+- [x] 验证 `pnpm typecheck` 和 `pnpm test` 通过

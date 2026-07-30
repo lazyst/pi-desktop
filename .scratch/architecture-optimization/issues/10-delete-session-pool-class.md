@@ -4,11 +4,10 @@
 
 **Blocked by:** 08 — IPtyLike 类型迁移
 
-**Status:** ready-for-agent
+**Status:** completed
 
-- [ ] 确认 `main/index.ts` 和所有生产代码无 `SessionPool` 类引用
-- [ ] 删除 `sessionPool.ts` 中的 `SessionPool` 类（保留 `SessionStatus`/`SessionInfo`/`SessionGroup` 如果被引用，否则一并删除）
-- [ ] 迁移 `sessionPool.test.ts` 中与 `SessionPool` 类相关的测试 → `unifiedTerminalPool.test.ts`
-- [ ] 迁移 `sessionPool.test.ts` 中与工具函数相关的测试 → `sessionUtils.test.ts`
-- [ ] 迁移 `sessionPool.realpty.test.ts` 中与 `SessionPool` 类相关的测试 → `unifiedTerminalPool.realpty.test.ts`
-- [ ] 验证 `pnpm typecheck` 和 `pnpm test` 通过
+- [x] 确认 `main/index.ts` 和所有生产代码无 `SessionPool` 类引用
+- [x] 删除 `sessionPool.ts` 整个文件（`SessionPool` 类以及 `SessionStatus`/`SessionInfo`/`SessionGroup` 类型均不再使用）
+- [x] 删除 `sessionPool.test.ts` 和 `sessionPool.realpty.test.ts`（已由 `unifiedTerminalPool.test.ts` 覆盖）
+- [x] 移除 `splash.test.ts`、`openExternal.test.ts`、`integratedTerminalIpc.test.ts` 中的 `vi.mock('./sessionPool')`
+- [x] 验证 `pnpm typecheck` 和 `pnpm test` 通过
