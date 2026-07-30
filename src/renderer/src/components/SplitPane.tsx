@@ -132,11 +132,8 @@ function SplitPaneDragProvider({
     activeDragItemRef.current = { tabId, sourceLeafId };
     setActiveDragTab(found.tab);
 
-    // 从 source leaf 的 items 中移除该 tab id
-    setLeafItems((prev) => {
-      const sourceLeafItems = (prev[sourceLeafId] ?? []).filter((id) => id !== tabId);
-      return { ...prev, [sourceLeafId]: sourceLeafItems };
-    });
+    // 注意：不移除 items！@dnd-kit 的 useSortable 通过 isDragging
+    // 自动处理占位符（透明度 + transform），留给原生多容器管理。
   }, [cwdTrees]);
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
@@ -186,42 +183,46 @@ function SplitPaneDragProvider({
     setCanDrop(canDropResult);
 
     // 动态更新 SortableContext items
-    setLeafItems((prev) => {
-      const next = { ...prev };
+    // 同 leaf 拖拽不动 items（@dnd-kit 原生处理占位 + 位移）
+    // 跨 leaf 时才需从 source 移除、加入 target
+    if (!isSameLeaf) {
+      setLeafItems((prev) => {
+        const next = { ...prev };
 
-      // 如果目标 leaf 中已存在该 tab id，不再重复添加
-      if (next[targetLeafId]?.includes(activeId)) return prev;
+        // 如果目标 leaf 中已存在该 tab id，不再重复添加
+        if (next[targetLeafId]?.includes(activeId)) return prev;
 
-      if (canDropResult) {
-        // 从所有 leaf 的 items 中移除
-        for (const key of Object.keys(next)) {
-          next[key] = next[key].filter((id) => id !== activeId);
-        }
-        // 加入目标 leaf
-        // 确定插入位置：如果 overId 是 tab id，放在该 tab 前面；否则追加到末尾
-        if (overId.startsWith('leaf-')) {
-          // 拖到空白区域 → 追加到末尾
-          next[targetLeafId] = [...(next[targetLeafId] ?? []), activeId];
-        } else {
-          // 拖到某个 tab 上 → 插入到该 tab 前面
-          const items = next[targetLeafId] ?? [];
-          const overIdx = items.indexOf(overId);
-          if (overIdx >= 0) {
-            items.splice(overIdx, 0, activeId);
-            next[targetLeafId] = items;
+        if (canDropResult) {
+          // 从所有 leaf 的 items 中移除（主要从 source leaf 移除）
+          for (const key of Object.keys(next)) {
+            next[key] = next[key].filter((id) => id !== activeId);
+          }
+          // 加入目标 leaf
+          // 确定插入位置：如果 overId 是 tab id，放在该 tab 前面；否则追加到末尾
+          if (overId.startsWith('leaf-')) {
+            // 拖到空白区域 → 追加到末尾
+            next[targetLeafId] = [...(next[targetLeafId] ?? []), activeId];
           } else {
-            next[targetLeafId] = [...items, activeId];
+            // 拖到某个 tab 上 → 插入到该 tab 前面
+            const items = next[targetLeafId] ?? [];
+            const overIdx = items.indexOf(overId);
+            if (overIdx >= 0) {
+              items.splice(overIdx, 0, activeId);
+              next[targetLeafId] = items;
+            } else {
+              next[targetLeafId] = [...items, activeId];
+            }
+          }
+        } else {
+          // canDrop 为 false → 确保目标 leaf 的 items 中没有该 tab id
+          if (next[targetLeafId]) {
+            next[targetLeafId] = next[targetLeafId].filter((id) => id !== activeId);
           }
         }
-      } else {
-        // canDrop 为 false → 确保目标 leaf 的 items 中没有该 tab id
-        if (next[targetLeafId]) {
-          next[targetLeafId] = next[targetLeafId].filter((id) => id !== activeId);
-        }
-      }
 
-      return next;
-    });
+        return next;
+      });
+    }
   }, [cwdTrees]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {

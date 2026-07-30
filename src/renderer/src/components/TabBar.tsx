@@ -91,9 +91,11 @@ function SortableTab({
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    // 拖拽中的 tab 提到最上层并略降透明度，避免被非 active 样式盖住。
     zIndex: isDragging ? 1 : undefined,
-    opacity: isDragging ? 0.85 : undefined,
+    // 拖拽中的 tab 原位留占位符：更低透明度 + 虚线边框表示可释放
+    opacity: isDragging ? 0.3 : undefined,
+    outline: isDragging ? '1px dashed var(--border-strong)' : undefined,
+    outlineOffset: isDragging ? -1 : undefined,
   };
 
   const closable = item.closable ?? true;
