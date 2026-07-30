@@ -286,28 +286,33 @@ function SplitPaneNode({
       ref={splitRef}
       className={`split-pane-node split-pane-node--${node.direction}`}
     >
-      {node.children.map((child, idx) => (
-        <div
-          key={child.id}
-          className="split-pane-child"
-          style={{ flex: `${fixedRatios[idx]}` }}
-        >
-          <SplitPaneChild
-            child={child}
-            cwd={cwd}
-            isActive={isActive}
-            {...rest}
-          />
-        </div>
-      ))}
-      {/* 分割线：在每对相邻子节点之间 */}
-      {node.children.slice(0, -1).map((_, idx) => (
-        <SplitDivider
-          key={`divider-${idx}`}
-          direction={node.direction}
-          onMouseDown={(e) => handleMouseDown(idx, e)}
-        />
-      ))}
+      {node.children.flatMap((child, idx) => {
+        const elements: React.ReactNode[] = [
+          <div
+            key={child.id}
+            className="split-pane-child"
+            style={{ flex: `${fixedRatios[idx]}` }}
+          >
+            <SplitPaneChild
+              child={child}
+              cwd={cwd}
+              isActive={isActive}
+              {...rest}
+            />
+          </div>,
+        ];
+        // 在每对相邻子节点之间插入分割线
+        if (idx < node.children.length - 1) {
+          elements.push(
+            <SplitDivider
+              key={`divider-${idx}`}
+              direction={node.direction}
+              onMouseDown={(e) => handleMouseDown(idx, e)}
+            />,
+          );
+        }
+        return elements;
+      })}
     </div>
   );
 }
