@@ -223,6 +223,68 @@ function cleanTabHistory(
 }
 
 /**
+ * 提取的纯函数：关闭/隐藏 tab 后，计算下一个激活 tab 和相关状态更新。
+ * 返回需要 patch 的字段（activeTabId, cwdActiveTab, cwdTabHistory），
+ * 调用方负责合并到自己的 patch 中。
+ *
+ * @param remaining 移除或隐藏后的剩余 tabs
+ * @param removedId 被移除或隐藏的 tab id
+ * @param removedCwd 被移除 tab 所属的 cwd
+ * @param activeTabId 当前的 activeTabId
+ * @param activeCwd 当前的 activeCwd
+ * @param cwdActiveTab 当前的 cwdActiveTab
+ * @param cwdTabHistory 当前的 cwdTabHistory
+ */
+/** 关闭 tab 后，从剩余 tab 中选出下一个激活的 tab。
+ *  纯函数，无副作用，不依赖 store。
+ *  @returns 若无需更新则返回 null */
+export function selectNextTabOnClose(
+  remaining: Tab[],
+  removedId: string,
+  removedCwd: string,
+  activeTabId: string | null,
+  activeCwd: string | null,
+  cwdActiveTab: Record<string, string | null>,
+  cwdTabHistory: Record<string, string[]>,
+): { activeTabId: string | null; cwdActiveTab: Record<string, string | null>; cwdTabHistory: Record<string, string[]> } | null {
+  if (remaining.length === 0) {
+    return { activeTabId: null, cwdActiveTab: {}, cwdTabHistory: {} };
+  }
+
+  if (activeTabId === removedId) {
+    // 关闭的是当前激活 tab → 从历史中找上一个访问的 tab
+    const cwd = activeCwd ?? removedCwd;
+    const nextId =
+      previousTabInHistory(cwdTabHistory, remaining, cwd, removedId) ??
+      firstVisibleInCwd(remaining, cwd);
+    return {
+      activeTabId: nextId,
+      cwdActiveTab: updateCwdActiveTab(cwdActiveTab, remaining, cwd, nextId),
+      cwdTabHistory: nextId
+        ? pushTabHistory(cwdTabHistory, cwd, nextId)
+        : cleanTabHistory(cwdTabHistory, remaining),
+    };
+  }
+
+  if (cwdActiveTab[removedCwd] === removedId) {
+    // 关闭的是某目录记忆的激活 tab（非当前）→ 更新该目录的记忆
+    const nextId = firstVisibleInCwd(remaining, removedCwd);
+    return {
+      activeTabId,
+      cwdActiveTab: updateCwdActiveTab(cwdActiveTab, remaining, removedCwd, nextId),
+      cwdTabHistory: cleanTabHistory(cwdTabHistory, remaining),
+    };
+  }
+
+  // 关闭的是非激活、非记忆 tab → 仅清理历史
+  return {
+    activeTabId,
+    cwdActiveTab,
+    cwdTabHistory: cleanTabHistory(cwdTabHistory, remaining),
+  };
+}
+
+/**
  * 保存当前 activeCwd 下所有终端 pane 的滚动位置（对齐 Orca captureScrollState）。
  * 在所有改变 activeCwd 的 action 中调用，确保在 DOM 更新前完成。
  */
@@ -478,30 +540,12 @@ export const useTabStore = create<TabStore>((set) => ({
       const remaining = state.tabs.filter((t) => t.id !== id);
       const patch: Partial<TabStore> = { tabs: remaining };
 
-      if (state.activeTabId === id) {
-        // 关闭的是当前激活 tab → 从历史中找上一个访问的 tab
-        const cwd = state.activeCwd ?? tabCwd;
-        const nextId =
-          previousTabInHistory(state.cwdTabHistory, remaining, cwd, id) ??
-          firstVisibleInCwd(remaining, cwd);
-        patch.activeTabId = nextId;
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-        patch.cwdTabHistory = nextId
-          ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-          : cleanTabHistory(state.cwdTabHistory, remaining);
-      } else if (state.cwdActiveTab[tabCwd] === id) {
-        // 关闭的是某目录记忆的激活 tab（非当前）→ 更新该目录的记忆
-        const nextId = firstVisibleInCwd(remaining, tabCwd);
-        patch.cwdActiveTab = updateCwdActiveTab(
-          state.cwdActiveTab,
-          remaining,
-          tabCwd,
-          nextId,
-        );
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      } else {
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      }
+      const next = selectNextTabOnClose(
+        remaining, id, tabCwd,
+        state.activeTabId, state.activeCwd,
+        state.cwdActiveTab, state.cwdTabHistory,
+      );
+      if (next) Object.assign(patch, next);
       return patch;
     }),
 
@@ -513,15 +557,12 @@ export const useTabStore = create<TabStore>((set) => ({
       const tabs = state.tabs.map((t) => (t.id === id ? { ...t, hidden: true } : t));
       const patch: Partial<TabStore> = { tabs };
       if (state.activeTabId === id) {
-        const cwd = state.activeCwd ?? tabCwd;
-        const nextId =
-          previousTabInHistory(state.cwdTabHistory, tabs, cwd, id) ??
-          firstVisibleInCwd(tabs, cwd);
-        patch.activeTabId = nextId;
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, tabs, cwd, nextId);
-        patch.cwdTabHistory = nextId
-          ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-          : state.cwdTabHistory;
+        const next = selectNextTabOnClose(
+          tabs, id, tabCwd,
+          state.activeTabId, state.activeCwd,
+          state.cwdActiveTab, state.cwdTabHistory,
+        );
+        if (next) Object.assign(patch, next);
       }
       return patch;
     }),
@@ -546,15 +587,13 @@ export const useTabStore = create<TabStore>((set) => ({
         }
       } else if (hidden && state.activeTabId === id) {
         // 隐藏当前激活 tab → 从历史中找上一个访问的 tab
-        const cwd = state.activeCwd ?? getTabCwd(tab);
-        const nextId =
-          previousTabInHistory(state.cwdTabHistory, tabs, cwd, id) ??
-          firstVisibleInCwd(tabs, cwd);
-        patch.activeTabId = nextId;
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, tabs, cwd, nextId);
-        patch.cwdTabHistory = nextId
-          ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-          : state.cwdTabHistory;
+        const tabCwd = getTabCwd(tab);
+        const next = selectNextTabOnClose(
+          tabs, id, tabCwd,
+          state.activeTabId, state.activeCwd,
+          state.cwdActiveTab, state.cwdTabHistory,
+        );
+        if (next) Object.assign(patch, next);
       }
       return patch;
     }),
@@ -582,23 +621,15 @@ export const useTabStore = create<TabStore>((set) => ({
       );
       if (remaining.length === state.tabs.length) return {};
       const patch: Partial<TabStore> = { tabs: remaining };
-      if (state.activeTabId && !remaining.some((t) => t.id === state.activeTabId)) {
-        const cwd = state.activeCwd ?? '';
-        const nextId =
-          previousTabInHistory(state.cwdTabHistory, remaining, cwd, state.activeTabId) ??
-          firstVisibleInCwd(remaining, cwd);
-        patch.activeTabId = nextId;
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-        patch.cwdTabHistory = nextId
-          ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-          : cleanTabHistory(state.cwdTabHistory, remaining);
-      } else if (removed && state.cwdActiveTab[getTabCwd(removed)] === removed.id) {
-        const cwd = getTabCwd(removed);
-        const nextId = firstVisibleInCwd(remaining, cwd);
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      } else {
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
+      const removedId = removed?.id;
+      if (removedId) {
+        const tabCwd = getTabCwd(removed);
+        const next = selectNextTabOnClose(
+          remaining, removedId, tabCwd,
+          state.activeTabId, state.activeCwd,
+          state.cwdActiveTab, state.cwdTabHistory,
+        );
+        if (next) Object.assign(patch, next);
       }
       return patch;
     }),
@@ -613,24 +644,13 @@ export const useTabStore = create<TabStore>((set) => ({
       );
       if (remaining.length === state.tabs.length) return {};
       const patch: Partial<TabStore> = { tabs: remaining };
-      if (state.activeTabId === id) {
-        const cwd = state.activeCwd ?? '';
-        const nextId =
-          previousTabInHistory(state.cwdTabHistory, remaining, cwd, id) ??
-          firstVisibleInCwd(remaining, cwd);
-        patch.activeTabId = nextId;
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-        patch.cwdTabHistory = nextId
-          ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-          : cleanTabHistory(state.cwdTabHistory, remaining);
-      } else if (removed && state.cwdActiveTab[getTabCwd(removed)] === removed.id) {
-        const cwd = getTabCwd(removed);
-        const nextId = firstVisibleInCwd(remaining, cwd);
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      } else {
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      }
+      const tabCwd = removed ? getTabCwd(removed) : '';
+      const next = selectNextTabOnClose(
+        remaining, id, tabCwd,
+        state.activeTabId, state.activeCwd,
+        state.cwdActiveTab, state.cwdTabHistory,
+      );
+      if (next) Object.assign(patch, next);
       return patch;
     }),
 
@@ -645,45 +665,23 @@ export const useTabStore = create<TabStore>((set) => ({
       if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
         const remaining = state.tabs.filter((t) => t.id !== id);
         const patch: Partial<TabStore> = { tabs: remaining };
-        if (state.activeTabId === id) {
-          const cwd = state.activeCwd ?? tabCwd;
-          const nextId =
-            previousTabInHistory(state.cwdTabHistory, remaining, cwd, id) ??
-            firstVisibleInCwd(remaining, cwd);
-          patch.activeTabId = nextId;
-          patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-          patch.cwdTabHistory = nextId
-            ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-            : cleanTabHistory(state.cwdTabHistory, remaining);
-        } else if (state.cwdActiveTab[tabCwd] === id) {
-          const nextId = firstVisibleInCwd(remaining, tabCwd);
-          patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, tabCwd, nextId);
-          patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-        } else {
-          patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-        }
+        const next = selectNextTabOnClose(
+          remaining, id, tabCwd,
+          state.activeTabId, state.activeCwd,
+          state.cwdActiveTab, state.cwdTabHistory,
+        );
+        if (next) Object.assign(patch, next);
         return patch;
       }
       // preview / diff：真移除。
       const remaining = state.tabs.filter((t) => t.id !== id);
       const patch: Partial<TabStore> = { tabs: remaining };
-      if (state.activeTabId === id) {
-        const cwd = state.activeCwd ?? tabCwd;
-        const nextId =
-          previousTabInHistory(state.cwdTabHistory, remaining, cwd, id) ??
-          firstVisibleInCwd(remaining, cwd);
-        patch.activeTabId = nextId;
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, cwd, nextId);
-        patch.cwdTabHistory = nextId
-          ? pushTabHistory(state.cwdTabHistory, cwd, nextId)
-          : cleanTabHistory(state.cwdTabHistory, remaining);
-      } else if (state.cwdActiveTab[tabCwd] === id) {
-        const nextId = firstVisibleInCwd(remaining, tabCwd);
-        patch.cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, remaining, tabCwd, nextId);
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      } else {
-        patch.cwdTabHistory = cleanTabHistory(state.cwdTabHistory, remaining);
-      }
+      const next = selectNextTabOnClose(
+        remaining, id, tabCwd,
+        state.activeTabId, state.activeCwd,
+        state.cwdActiveTab, state.cwdTabHistory,
+      );
+      if (next) Object.assign(patch, next);
       return patch;
     }),
 

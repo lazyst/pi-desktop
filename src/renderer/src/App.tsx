@@ -10,15 +10,13 @@ import { pi } from './ipc';
 import { useTabStore } from './store/tabStore';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
+import { usePanelLayout } from './hooks/usePanelLayout';
+import { useSessionStatus, _virtualToPty } from './hooks/useSessionStatus';
 import { defaultConfig } from '../../main/config';
 import type { SessionStatus, AppConfig, TerminalProfile } from './types';
 import type { SessionTab } from './store/tabStore';
 
 interface DiskSession { key: string; cwd: string; name: string; time?: string; unsaved?: boolean; }
-
-// 模块级映射表：pi-<uuid> → ptyId（live-<uuid>），供 handleOpen 查找
-// 用模块级变量而非 React state/ref，避免闭包/渲染时序问题
-const _virtualToPty = new Map<string, string>();
 
 function readPinned(cfg: AppConfig): string[] {
   const arr = cfg.pinnedDirs;
@@ -33,7 +31,12 @@ export default function App() {
   // 中间区通用 Tab 模型（重构阶段 3E）：单一状态源已收编进 useTabStore（见 issue 03）。
   // App 不再持有 tabs / activeTabId / closedTabIds，仅把主进程 IPC 事件写回 store，
   // 并派生侧边栏 / 集成终端 cwd 所需的本地视图状态（statusMap / disk / liveToDisk 等）。
-  const [statusMap, setStatusMap] = useState<Record<string, SessionStatus>>({});
+  const {
+    statusMap, setStatusMap,
+    liveToDisk, setLiveToDisk,
+    liveToDiskRef, ptyOwnersRef,
+    virtualSessions, setVirtualSessions,
+  } = useSessionStatus();
   const [error, setError] = useState<string | null>(null);
   const [disk, setDisk] = useState<DiskSession[]>([]);
   const [pinned, setPinned] = useState<string[]>([]);
@@ -42,17 +45,14 @@ export default function App() {
   // 该分组下的集成终端不挂靠任何项目 cwd，统一收容闲聊/临时终端。
   const [appWorkDir, setAppWorkDir] = useState<string>('');
   // 侧边栏宽度（持久化于主进程 config.sidebarWidth，见 docs/adr/0001 决策④）。
-  const [sidebarWidth, setSidebarWidth] = useState<number>(defaultConfig().sidebarWidth);
+  const {
+    sidebarWidth, rightPanelWidth, sidebarCollapsed, rightPanelCollapsed,
+    initFromConfig,
+    handleSidebarResize, handleRightPanelResize,
+    handleToggleSidebar, handleToggleRightPanel,
+  } = usePanelLayout();
   // 侧边栏已折叠的分组 cwd 列表（持久化于 config.collapsedGroups）。
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>(defaultConfig().collapsedGroups);
-  // 右栏（文件树 / Git）宽度（持久化于 config.rightPanelWidth）。
-  const [rightPanelWidth, setRightPanelWidth] = useState<number>(defaultConfig().rightPanelWidth);
-  // 左侧栏和右栏的折叠状态
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(defaultConfig().sidebarCollapsed);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState<boolean>(defaultConfig().rightPanelCollapsed);
-  // live `live-<uuid>` key → on-disk `.jsonl` path, set when a new session's file
-  // is written. Lets the sidebar highlight the promoted entry as the active one.
-  const [liveToDisk, setLiveToDisk] = useState<Record<string, string>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 集成终端实例列表 / 激活状态已收编进 useTabStore（see issue 03）。
   // App 仅保留「终端新建 / 销毁」所需的主进程 IPC 协调逻辑（见下方 handler）。
@@ -73,12 +73,8 @@ export default function App() {
   useEffect(() => { if (activeCwd) { setLastSessionCwd(activeCwd); pi.setConfig({ lastActiveDir: activeCwd }).catch(() => {}); } }, [activeCwd]);
   const activeStatus = activeSession ? statusMap[activeSession.key] : undefined;
   // 文件预览：打开的文件（root + 相对路径 + 可选本地绝对路径用于 webview）。
-  // Same mapping held in a ref so the `onRelink` handler (which fires right after
-  const liveToDiskRef = useRef<Record<string, string>>({});
-  // PTY → 当前活跃 session key 映射，保证一个 PTY 最多只有一个 session 有绿点
-  const ptyOwnersRef = useRef<Map<string, string>>(new Map());
-  // 虚拟 sidebar 条目（由 /new 创建，不创建新 tab，只显示在侧边栏）
-  const [virtualSessions, setVirtualSessions] = useState<DiskSession[]>([]);
+  // liveToDisk, liveToDiskRef, ptyOwnersRef, virtualSessions
+  // 已提取到 useSessionStatus hook
   // 如果当前 PTY owner 是虚拟 session（/new 创建），侧边栏高亮应指向虚拟条目而非原始 PTY tab
   const activeSessionKey = activeSession?.key ?? null;
   const activeOwner = activeSessionKey ? ptyOwnersRef.current.get(activeSessionKey) : undefined;
@@ -87,63 +83,8 @@ export default function App() {
     : activeSessionKey;
 
   useEffect(() => {
-    const offStatus = pi.onStatus((key, status) => setStatusMap((m) => ({ ...m, [key]: status })));
-    const offExit = pi.onExit((key) => {
-      setStatusMap((m) => ({ ...m, [key]: 'dead' }));
-      // 会话进程退出：从中间区 tab 移除对应 session tab（不杀其他 tab）。
-      useTabStore.getState().removeSessionTab(key);
-      // 查出该 PTY 的 owner sub-session（由 /new 创建），一并清理
-      const ownerKey = ptyOwnersRef.current.get(key);
-      if (ownerKey && ownerKey !== key) {
-        setStatusMap((m) => ({ ...m, [ownerKey]: 'dead' }));
-        // 清理虚拟 sidebar 条目和模块级映射
-        setVirtualSessions((prev) => prev.filter((s) => s.key !== ownerKey));
-        _virtualToPty.delete(ownerKey);
-      }
-      ptyOwnersRef.current = new Map([...ptyOwnersRef.current].filter(([k]) => k !== key));
-    });
-    // 会话写盘后主进程推送最新索引 → 晋升进侧边栏（需求 1 & 2）。
-    // 同时把已晋升的 live 会话在 `open` 中的名称同步为磁盘会话的真实名称
-    // （即首条用户消息），这样终端标题从 “new-session” 更新为实际会话名。
-    const offIndex = pi.onIndex((groups) => {
-      const diskList = toDisk(groups);
-      setDisk(diskList);
-      // 磁盘会话默认标记为 'dead'（历史/未启动会话没有存活进程），只有主进程
-      // 经 onStatus（reconcile 把 live 进程关联到磁盘 key 时推送 'running'）覆盖为
-      // running。这样左侧栏的「终止进程」按钮只对真正运行中的会话显示，而不是
-      // 对从未启动/已退出的 .jsonl 历史会话误显（见 issue：未启动会话 hover 也显示
-      // 「终止进程」）。仅填充 undefined 项，保留已有的 'running' / 'dead' 状态。
-      const diskKeys = diskList.map((d) => d.key);
-      setStatusMap((m) => {
-        let changed = false;
-        const next = { ...m };
-        for (const k of diskKeys) {
-          if (next[k] === undefined) { next[k] = 'dead'; changed = true; }
-        }
-        return changed ? next : m;
-      });
-      const map = liveToDiskRef.current;
-      // Promote the display name of a live session once pi writes its `.jsonl`:
-      // the header should show the real session name (first user message) instead of
-      // the placeholder “new-session”. 名称同步收编进 store（promoteTabNames action）。
-      useTabStore.getState().promoteTabNames(diskList);
-    });
-    const offRelink = pi.onRelink((from, to) => {
-      liveToDiskRef.current = { ...liveToDiskRef.current, [from]: to };
-      // 虚拟 session（pi-<uuid>）晋升为磁盘 session：移除虚拟条目，
-      // 同时把 liveToDisk 映射也写入虚拟 key，让 sidebar 焦点从虚拟条目切换到磁盘条目。
-      for (const [virtualKey, ptyId] of _virtualToPty) {
-        if (ptyId === from) {
-          liveToDiskRef.current[virtualKey] = to;
-          setVirtualSessions((prev) => prev.filter((s) => s.key !== virtualKey));
-          _virtualToPty.delete(virtualKey);
-          break;
-        }
-      }
-      setLiveToDisk(liveToDiskRef.current);
-    });
     // 初始化持久化偏好（配置在主进程，需经异步 IPC 读取）：
-    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); setSidebarWidth(cfg.sidebarWidth); setRightPanelWidth(cfg.rightPanelWidth ?? defaultConfig().rightPanelWidth); const dirs = Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []; const workDir = cfg.appWorkDir || ''; if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); // 首次启动：addedDirs 为空时自动添加 appWorkDir，确保用户首次打开就能看到
+    pi.getConfig().then((cfg) => { setPinned(readPinned(cfg)); initFromConfig(cfg); const dirs = Array.isArray(cfg.addedDirs) ? cfg.addedDirs.filter((x) => typeof x === 'string') : []; const workDir = cfg.appWorkDir || ''; if (cfg.appWorkDir) setAppWorkDir(cfg.appWorkDir); // 首次启动：addedDirs 为空时自动添加 appWorkDir，确保用户首次打开就能看到
       // 应用工作目录及其文件树/Git 状态。
       if (dirs.length === 0 && workDir) {
         dirs.push(workDir);
@@ -194,31 +135,8 @@ export default function App() {
         setTerminalProfiles(profiles);
       })
       .catch(() => {});
-    // 订阅 pi 进程内部执行 /new 时主进程的推送
-    const offNewFromPi = pi.onNewFromPi?.(({ ptyId, uuid, cwd, name }) => {
-      const newKey = `pi-${uuid}`;
-      // 查出该 PTY 当前的活跃 session
-      const currentOwner = ptyOwnersRef.current.get(ptyId);
-      if (currentOwner) {
-        // 旧 session 绿点灭
-        setStatusMap((m) => ({ ...m, [currentOwner]: 'dead' }));
-        // 如果旧 owner 已晋升到 disk key，也灭 disk key 的绿点
-        const diskKey = liveToDiskRef.current[currentOwner];
-        if (diskKey) setStatusMap((m) => ({ ...m, [diskKey]: 'dead' }));
-      }
-      // 不创建新 tab，只添加虚拟 sidebar 条目
-      const entry: DiskSession = { key: newKey, cwd, name, unsaved: true };
-      setVirtualSessions((prev) => [...prev.filter((s) => s.key !== currentOwner), entry]);
-      // 新 session 绿点亮
-      setStatusMap((m) => ({ ...m, [newKey]: 'running' }));
-      // 更新 PTY owner
-      ptyOwnersRef.current = new Map(ptyOwnersRef.current).set(ptyId, newKey);
-      // 更新模块级映射供 handleOpen 查找
-      _virtualToPty.set(newKey, ptyId);
-      // 更新 tab 名称为新 session 名
-      useTabStore.getState().renameSessionTab(ptyId, name);
-    });
-    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offTermExit?.(); offTermList?.(); offNewFromPi?.(); };
+    // 订阅 pi 进程内部执行 /new 时主进程的推送已在 useSessionStatus 中处理
+    return () => { offTermExit?.(); offTermList?.(); };
   }, []);
   // passive wheel 监听器执行，调用 preventDefault 阻止浏览器原生页面缩放。
   // 滚轮向上（deltaY<0）放大、向下缩小，步长 ±1px，夹在 [FONT_SIZE_MIN, FONT_SIZE_MAX]。
@@ -366,39 +284,12 @@ export default function App() {
     useTabStore.getState().openDiff(cwd, hash);
   }, []);
 
-  const handleSidebarResize = (w: number) => {
-    setSidebarWidth(w);
-    pi.setConfig({ sidebarWidth: w }).catch(() => {});
-  };
-
   const handleCollapseGroup = (cwd: string, collapsed: boolean) => {
     setCollapsedGroups((prev) => {
       const next = collapsed
         ? [...prev, cwd]
         : prev.filter((d) => d !== cwd);
       pi.setConfig({ collapsedGroups: next }).catch(() => {});
-      return next;
-    });
-  };
-
-  // 右栏（文件树 / Git）拖拽右缘实时改宽后回写 config 并同步本地 state。
-  const handleRightPanelResize = (w: number) => {
-    setRightPanelWidth(w);
-    pi.setConfig({ rightPanelWidth: w }).catch(() => {});
-  };
-
-  const handleToggleSidebar = () => {
-    setSidebarCollapsed((prev) => {
-      const next = !prev;
-      pi.setConfig({ sidebarCollapsed: next }).catch(() => {});
-      return next;
-    });
-  };
-
-  const handleToggleRightPanel = () => {
-    setRightPanelCollapsed((prev) => {
-      const next = !prev;
-      pi.setConfig({ rightPanelCollapsed: next }).catch(() => {});
       return next;
     });
   };

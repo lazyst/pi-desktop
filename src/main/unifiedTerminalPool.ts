@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import type { TerminalProfile } from '../renderer/src/types';
 import { getShellIntegrationInjection } from './shell-integration/inject';
 import { BackpressureController } from './backpressure';
-import { readSessionName, decodeCwd, readGroupCwd } from './sessionFileManager';
+import { readSessionName, decodeCwd, readGroupCwd } from './sessionUtils';
 import { getDefaultShellProfile } from './shellProfiles';
 import {
   createShellReadyScanState,

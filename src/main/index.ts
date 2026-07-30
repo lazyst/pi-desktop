@@ -6,10 +6,16 @@ import * as crypto from 'node:crypto';
 import { exec, execSync } from 'node:child_process';
 import { UnifiedTerminalPool } from './unifiedTerminalPool';
 import { SessionFileManager } from './sessionFileManager';
-import type { IPtyLike } from './sessionPool';
+import type { IPtyLike } from './types';
 import { listDir, readFile, writeFile, statFile, mkdir, createFile, rename, remove, copy, listNames, uniqueName, watchDir, watchFile } from './fsBridge';
 import { gitStatus, gitLog, gitDiff, gitFileStatusMap, gitIgnoredPaths } from './gitBridge';
 import { checkForUpdate, getUpdateStatus, getCurrentVersion, downloadUpdate, installUpdate, cancelDownload } from './updateChecker';
+import { ReferenceCountedWatcher } from './shared/ReferenceCountedWatcher';
+import { registerTerminalHandlers } from './handlers/terminalHandlers';
+import { registerSessionHandlers } from './handlers/sessionHandlers';
+import { registerConfigHandlers } from './handlers/configHandlers';
+import { registerFsHandlers } from './handlers/fsHandlers';
+import { registerGitHandlers } from './handlers/gitHandlers';
 import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desktop-sync-source';
 
 // 终端渲染：xterm 的 WebGL(GPU) 渲染器能彻底消除流式高频重绘的闪烁（学习 VS Code 的
@@ -436,95 +442,13 @@ function unescapeField(s: string): string {
   }
 
   // ===== 统一终端 IPC =====
-  // terminal:spawn — 创建终端（pi 会话或 shell 终端，由 SpawnOptions.command 区分）
-  ipcMain.handle('terminal:spawn', async (_e, req: { command?: string; cwd: string; profile?: TerminalProfile; sessionFile?: string; name?: string; key?: string }) => {
-    try {
-      const info = unifiedPool.create(req);
-      pushTerminalList();
-      return info;
-    } catch (err) {
-      console.error('[terminal:spawn] failed:', err);
-      throw new Error('无法启动终端，请确认 pi 或 shell 可用');
-    }
-  });
-  // PTY owner 注册：渲染进程告知主进程某个 PTY 的初始 owner key
-  // 用于主进程在 PTY 退出时清理所有关联的 sub-session
-  const ptyOwners = new Map<string, string>();
-  ipcMain.on('session:register-pty-owner', (_e, { ptyId, ownerKey }: { ptyId: string; ownerKey: string }) => {
-    ptyOwners.set(ptyId, ownerKey);
-  });
-  // terminal:listProfiles — 列出可用 shell profile
-  ipcMain.handle('terminal:listProfiles', () => detectTerminalProfiles());
-  // terminal:list — 旧版列出所有终端（保留向后兼容）
-  ipcMain.handle('terminal:list', () => unifiedPool.list());
-  // terminal:create — 旧版集成终端创建入口（先保留，App.tsx 仍在使用）
-  ipcMain.handle('terminal:create', (_e, req: { profile: TerminalProfile; cwd: string }) => {
-    try {
-      const info = unifiedPool.create({ command: undefined, cwd: req.cwd, profile: req.profile });
-      pushTerminalList();
-      return info;
-    } catch (err) {
-      console.error('[terminal:create] failed:', err);
-      throw new Error('无法启动集成终端');
-    }
-  });
-  // terminal:createInAppWorkDir — 旧版，在工作目录创建
-  ipcMain.handle('terminal:createInAppWorkDir', (_e, req: { profile: TerminalProfile }) => {
-    try {
-      const cwd = ensureAppWorkDir();
-      const info = unifiedPool.create({ command: undefined, cwd, profile: req.profile });
-      pushTerminalList();
-      return info;
-    } catch (err) {
-      console.error('[terminal:createInAppWorkDir] failed:', err);
-      throw new Error('无法在应用工作目录启动集成终端');
-    }
-  });
-  // terminal:input — 键盘输入
-  ipcMain.on('terminal:input', (_e, m: { id: string; data: string }) => unifiedPool.write(m.id, m.data));
-  // terminal:resize — 调整尺寸
-  ipcMain.on('terminal:resize', (_e, m: { id: string; cols: number; rows: number }) => unifiedPool.resize(m.id, m.cols, m.rows));
-  // terminal:ack — 背压回传
-  ipcMain.on('terminal:ack', (_e, m: { id: string; bytes: number }) => unifiedPool.acknowledgeDataEvent(m.id, m.bytes));
-  // terminal:destroy — 销毁终端（用于 shell 终端，直接按 id 杀）
-  ipcMain.handle('terminal:destroy', (_e, id: string) => { unifiedPool.destroy(id); pushTerminalList(); });
-  // session:terminate — 终止 pi 会话（保留别名，含 live key 反查，侧边栏传入 .jsonl 路径）
-  ipcMain.handle('session:terminate', (_e, key: string) => { unifiedPool.terminate(key); pushTerminalList(); });
-
-  // 滚动缓冲区持久化（内存暂存）
-  const terminalBuffers = new Map<string, string>();
-  ipcMain.on('terminal:saveBuffer', (_e, m: { id: string; data: string }) => {
-    if (m?.id && typeof m.data === 'string') terminalBuffers.set(m.id, m.data);
-  });
-  ipcMain.handle('terminal:loadBuffer', (_e, id: string): string | undefined => terminalBuffers.get(id));
-  // terminal:updateCwd — shell integration cwd 更新（仅 shell 类型有效）
-  ipcMain.on('terminal:updateCwd', (_e, m: { id: string; cwd: string }) => {
-    unifiedPool.updateCwd(m.id, m.cwd);
-    pushTerminalList();
-  });
+  registerTerminalHandlers(ipcMain, win, unifiedPool, pushTerminalList, ensureAppWorkDir);
 
   // 受控外部链接通道：渲染层经此桥请求打开外部程序（系统浏览器/mail 客户端）。
   // 使用 child_process.exec 绕过 Electron 30+ 的 shell.openExternal 安全确认对话框。
-  ipcMain.handle('app:openExternal', (_e, url: string): boolean => {
-    if (typeof url !== 'string' || !url) return false;
-    let u: URL;
-    try { u = new URL(url); } catch { return false; }
-    if (u.protocol !== 'http:' && u.protocol !== 'https:' && u.protocol !== 'mailto:') {
-      return false;
-    }
-    openUrlInExternal(url);
-    return true;
-  });
-
-  // 用系统默认程序打开本地文件（二进制/无内置预览器的文件，如 pdf/exe/zip/docx 等）。
-  // 走 shell.openPath（等同于在系统文件管理器双击文件），不走 app:openExternal
-  // 的协议白名单（那里 file:// 被拒）。路径由渲染层以绝对路径传入，已受 fsBridge
-  // 的 root bounds-check 约束（fsReadFile 同根），不存在越界风险。
-  ipcMain.handle('fs:openWithSystem', async (_e, absPath: string): Promise<boolean> => {
-    if (typeof absPath !== 'string' || !absPath) return false;
-    try { await shell.openPath(absPath); return true; }
-    catch { return false; }
-  });
+  // 文件系统 + Git IPC
+  registerFsHandlers(ipcMain, win);
+  registerGitHandlers(ipcMain, win);
 
   // ╌╌ pi-tool 集成：模型配置、MCP、Skills、扩展、Pi 配置 ╌╌
 
@@ -1159,13 +1083,7 @@ function unescapeField(s: string): string {
     return { success: false, error: 'Unsupported extension type' };
   });
 
-  // 在系统文件管理器中打开文件/目录所在位置并选中（等同资源管理器"打开所在文件夹"）。
-  // 文件：打开父目录并高亮该文件；目录：直接打开该
-  ipcMain.handle('fs:showInFolder', async (_e, absPath: string): Promise<boolean> => {
-    if (typeof absPath !== 'string' || !absPath) return false;
-    try { shell.showItemInFolder(absPath); return true; }
-    catch { return false; }
-  });
+  // 文件系统 IPC 已在 registerFsHandlers 中注册
 
   // 记住窗口几何与最大化状态（见 docs/adr/0001 决策②）：maximize / unmaximize /
   // resize / move 实时（防抖 200ms）回写 config.window。用 getNormalBounds() 取非
@@ -1185,197 +1103,13 @@ function unescapeField(s: string): string {
   win.on('move', persistWindowState);
 
   // 配置存储：渲染进程经 IPC 读写主进程 config.json（唯一真源，见 docs/adr/0001）。
-  ipcMain.handle('config:get', () => getConfig());
-  ipcMain.handle('config:set', (_e, partial: Partial<AppConfig>) => {
-    setConfig(partial);
-    // 主题切换时同步窗口合成背景色，使最小化/托盘恢复（hide→show）不再闪亮
-    // （backgroundColor 与 --bg-app / theme.ts 静态色同源）。
-    if (partial.theme && (partial.theme === 'light' || partial.theme === 'dark')) {
-      if (!win.isDestroyed()) win.setBackgroundColor(partial.theme === 'light' ? '#ffffff' : '#0d1117');
-    }
-    if (!win.isDestroyed()) win.webContents.send('config:change', getConfig());
-  });
+  // 配置存储 + 窗口控制 IPC
+  registerConfigHandlers(ipcMain, win, getConfig, setConfig);
 
   // ===== 会话文件管理 IPC（session:*） =====
-  // 会话写盘（用户发首条消息后 pi 写出 .jsonl）即视为"晋升"，推送最新索引给渲染进程。
-  // 300ms debounce 合并突发写入。recursive watch 在 Windows/macOS 原生支持。
-  let indexTimer: ReturnType<typeof setTimeout> | undefined;
-  const pushIndex = () => {
-    if (indexTimer) clearTimeout(indexTimer);
-    indexTimer = setTimeout(() => {
-      if (win.isDestroyed()) return;
-      const groups = sessionFileManager.listFiles();
-      // Link freshly-written disk sessions to the live processes that created them
-      // so clicking a promoted sidebar entry reuses the same process.
-      unifiedPool.reconcile(groups);
-      win.webContents.send('session:index', groups);
-    }, 300);
-  };
-  try {
-    fs.watch(sessionsDir, { recursive: true }, pushIndex);
-  } catch (err) {
-    console.error('[session:index] fs.watch failed:', err);
-  }
+  registerSessionHandlers(ipcMain, win, sessionFileManager, unifiedPool, sessionsDir);
 
-  ipcMain.handle('session:list', () => sessionFileManager.listFiles());
-  ipcMain.handle('session:readContent', (_e, key: string) => sessionFileManager.readContent(key));
-  ipcMain.handle('session:delete', (_e, key: string) => {
-    sessionFileManager.deleteSession(key);
-    unifiedPool.terminate(key); // 同时杀掉运行中的进程（如有）
-    pushIndex();
-  });
-  ipcMain.handle('session:deleteMany', (_e, keys: string[]) => {
-    sessionFileManager.deleteMany(keys);
-    for (const k of keys) unifiedPool.terminate(k);
-    pushIndex();
-  });
-  ipcMain.handle('session:clearDirectory', (_e, cwd: string) => {
-    // 先杀掉该 cwd 下所有运行中的 pi 会话
-    for (const t of unifiedPool.list()) {
-      if (t.cwd === cwd && t.type === 'pi') unifiedPool.terminate(t.id);
-    }
-    sessionFileManager.clearDirectory(cwd);
-    pushIndex();
-  });
-  ipcMain.handle('session:debug', () => sessionFileManager.debugInfo(unifiedPool['entries'] as any));
-  ipcMain.handle('session:pickDirectory', async () => {
-    const result = await dialog.showOpenDialog(win, {
-      title: '选择目录',
-      properties: ['openDirectory'],
-    });
-    if (result.canceled || result.filePaths.length === 0) return null;
-    return result.filePaths[0];
-  });
-  // session:saveImage — 图片粘贴落盘（保持不变）
-  ipcMain.handle('session:saveImage', (_e, payload: { data: string; ext: string }) => {
-    try {
-      if (!payload || typeof payload.data !== 'string' || !payload.data) return null;
-      const ext = (payload.ext || 'png').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'png';
-      const tmpDir = app.getPath('temp');
-      const name = `pi-paste-${crypto.randomUUID()}.${ext}`;
-      const filePath = path.join(tmpDir, name);
-      const buf = Buffer.from(payload.data, 'base64');
-      fs.writeFileSync(filePath, buf);
-      return filePath;
-    } catch (err) {
-      console.error('[session:saveImage] failed:', err);
-      return null;
-    }
-  });
-
-  // ── 文件管理器（A + B 预览）只读/写 IPC ──
-  // 注意：路径越权校验（allowedRoots / resolveSafe）已按产品决策整体移除，
-  // 文件操作直接信任渲染端传入的 root + relPath。
-  ipcMain.handle('fs:listDir', (_e, req: { root: string; dir: string }) =>
-    listDir(req.root, req.dir));
-  // ╌╌ 目录监听（外部变更自动刷新，对齐 VS Code FileWatcher）╌╌
-  // 渲染端请求监控某个目录（root + dir），主进程起 fs.watch；该目录的直接子项
-  // 发生增删时，经 'fs:change' 通道推送 { dir } 给渲染端，由其刷新对应目录。
-  // 同一目录可能被渲染端多次订阅（多个 TreeNode 共享父目录）；用计数实现引用计数，
-  // 最后一处取消时才真正关闭底层 watcher，避免重复句柄。
-  const dirWatchers = new Map<string, { stop: () => void; refs: number }>();
-  const watchKey = (root: string, dir: string) => `${root} ${dir}`;
-  ipcMain.on('fs:watch', (_e, req: { root: string; dir: string }) => {
-    const key = watchKey(req.root, req.dir);
-    const existing = dirWatchers.get(key);
-    if (existing) {
-      existing.refs += 1;
-      return;
-    }
-    const stop = watchDir(req.root, req.dir, (filename) => {
-      // fs.watch 在 Windows 上也会捕捉到 .git/ 目录的元数据变更（如修改时间），
-      // 跳过 .git 目录变更，避免 git status → .git/index 变化 → 触发 fsWatch → 循环
-      if (filename === '.git') return;
-      if (!win.isDestroyed()) win.webContents.send('fs:change', { dir: req.dir });
-    });
-    dirWatchers.set(key, { stop, refs: 1 });
-  });
-  ipcMain.on('fs:unwatch', (_e, req: { root: string; dir: string }) => {
-    const key = watchKey(req.root, req.dir);
-    const entry = dirWatchers.get(key);
-    if (!entry) return;
-    entry.refs -= 1;
-    if (entry.refs <= 0) {
-      entry.stop();
-      dirWatchers.delete(key);
-    }
-  });
-
-  // ╌╌ 文件监听（外部修改自动刷新编辑器）╌╌
-  // 渲染端请求监控某个文件（root + path），主进程起 fs.watch 监听其所在目录，
-  // 当匹配到该文件变更时，经 'fs:fileChange' 通道推送 { root, path } 给渲染端。
-  // 使用引用计数，最后一处取消时才真正关闭底层 watcher。
-  const fileWatchers = new Map<string, { stop: () => void; refs: number }>();
-  const fileWatchKey = (root: string, path: string) => `${root} ${path}`;
-  ipcMain.on('fs:watchFile', (_e, req: { root: string; path: string }) => {
-    const key = fileWatchKey(req.root, req.path);
-    const existing = fileWatchers.get(key);
-    if (existing) {
-      existing.refs += 1;
-      return;
-    }
-    const stop = watchFile(req.root, req.path, () => {
-      if (!win.isDestroyed()) win.webContents.send('fs:fileChange', { root: req.root, path: req.path });
-    });
-    fileWatchers.set(key, { stop, refs: 1 });
-  });
-  ipcMain.on('fs:unwatchFile', (_e, req: { root: string; path: string }) => {
-    const key = fileWatchKey(req.root, req.path);
-    const entry = fileWatchers.get(key);
-    if (!entry) return;
-    entry.refs -= 1;
-    if (entry.refs <= 0) {
-      entry.stop();
-      fileWatchers.delete(key);
-    }
-  });
-  ipcMain.handle('fs:readFile', (_e, req: { root: string; path: string; maxBytes?: number }) =>
-    readFile(req.root, req.path, req.maxBytes));
-  ipcMain.handle('fs:writeFile', (_e, req: { root: string; path: string; content: string }) =>
-    writeFile(req.root, req.path, req.content));
-  ipcMain.handle('fs:stat', (_e, req: { root: string; path: string }) =>
-    statFile(req.root, req.path));
-
-  // ── 文件管理写操作（新建 / 重命名 / 删除 / 复制 / 移动）──
-  ipcMain.handle('fs:mkdir', (_e, req: { root: string; dir: string }) =>
-    mkdir(req.root, req.dir));
-  ipcMain.handle('fs:createFile', (_e, req: { root: string; path: string; content?: string }) =>
-    createFile(req.root, req.path, req.content ?? ''));
-  ipcMain.handle('fs:rename', (_e, req: { root: string; from: string; to: string }) =>
-    rename(req.root, req.from, req.to));
-  ipcMain.handle('fs:remove', (_e, req: { root: string; path: string }) =>
-    remove(req.root, req.path));
-  ipcMain.handle('fs:copy', (_e, req: { root: string; from: string; to: string }) =>
-    copy(req.root, req.from, req.to));
-  ipcMain.handle('fs:listNames', (_e, req: { root: string; dir: string }) =>
-    listNames(req.root, req.dir));
-  // 计算不重名的名字（重名时自动加 (1) 后缀），纯计算、无需落盘。
-  ipcMain.handle('fs:uniqueName', (_e, req: { base: string; existing: string[] }) =>
-    uniqueName(req.base, new Set(req.existing)));
-
-  // ── Git 只读查看（D）── 非 git 目录优雅降级（见 gitBridge，永不抛错）。
-  ipcMain.handle('git:status', async (_e, req: { cwd: string }) => {
-    gitCooldownUntil.set(req.cwd, Date.now() + 2000);
-    try {
-      return await gitStatus(req.cwd);
-    } finally {
-      // 命令完成后保持冷却，避免 Windows fs.watch 延迟事件触发循环
-    }
-  });
-  ipcMain.handle('git:log', (_e, req: { cwd: string; limit?: number }) => gitLog(req.cwd, req.limit));
-  ipcMain.handle('git:diff', (_e, req: { cwd: string; ref?: string }) => gitDiff(req.cwd, req.ref));
-  ipcMain.handle('git:fileStatusMap', async (_e, req: { cwd: string }) => {
-    gitCooldownUntil.set(req.cwd, Date.now() + 2000);
-    try {
-      return await gitFileStatusMap(req.cwd);
-    } finally {
-      // 命令完成后保持冷却
-    }
-  });
-  // 获取被 .gitignore 忽略的顶层路径集合（仅在文件树变化时调用，不绑定 git:change）
-  ipcMain.handle('git:ignoredPaths', async (_e, req: { cwd: string }) => {
-    return await gitIgnoredPaths(req.cwd);
-  });
+  // 文件系统 + Git IPC 已在 registerFsHandlers / registerGitHandlers 中注册
   // ╌╌ 版本更新检查 ╌╌
   ipcMain.handle('update:check', async () => {
     try {
@@ -1419,78 +1153,9 @@ function unescapeField(s: string): string {
     }
   });
 
-  // ── Git 工作区实时监听（事件驱动刷新，对齐 VS Code FileWatcher）──
-  // 渲染端订阅某仓库 cwd，主进程以 recursive 监听整个仓库目录（含子目录改动与
-  // .git/ 内 index/ref 变更），任意变更即经 'git:change' 推送 { cwd } 让渲染端刷新。
-  // 同一 cwd 可能被多处订阅（GitView + 打开中的 GitDiffDrawer），用引用计数管理，
-  // 最后一处取消才真正关闭底层 watcher，避免重复句柄。
-  //
-  // ⚠️ 无限循环防护：用时间戳冷却代替简单的 Set，避免 Windows fs.watch 延迟事件造成的循环。
-  //    git 命令执行后 2000ms 内的 fs.watch 事件均视为自触发，不发送 git:change。
-  const gitCooldownUntil = new Map<string, number>();
-  const gitWatchers = new Map<string, { stop: () => void; refs: number }>();
-  ipcMain.on('git:watch', (_e, req: { cwd: string }) => {
-    const cwd = req.cwd;
-    const existing = gitWatchers.get(cwd);
-    if (existing) {
-      existing.refs += 1;
-      return;
-    }
-    let watcher: fs.FSWatcher | undefined;
-    let closed = false;
-    const stop = () => {
-      if (closed) return;
-      closed = true;
-      try { watcher?.close(); } catch { /* 已关闭，忽略 */ }
-    };
-    try {
-      watcher = fs.watch(cwd, { recursive: true }, () => {
-        // 跳过 git 命令自身触发的 .git/ 变更，避免无限循环
-        if (Date.now() < (gitCooldownUntil.get(cwd) ?? 0)) return;
-        if (!win.isDestroyed()) win.webContents.send('git:change', { cwd });
-      });
-      watcher.on('error', () => stop());
-    } catch {
-      // 目录不存在/无权限：降级为 no-op（仓库可能尚未就绪）。
-      return;
-    }
-    gitWatchers.set(cwd, { stop, refs: 1 });
-  });
-  ipcMain.on('git:unwatch', (_e, req: { cwd: string }) => {
-    const entry = gitWatchers.get(req.cwd);
-    if (!entry) return;
-    entry.refs -= 1;
-    if (entry.refs <= 0) {
-      entry.stop();
-      gitWatchers.delete(req.cwd);
-    }
-  });
+  // Git 工作区实时监听已在 registerGitHandlers 中注册
 
-  // 无边框窗口的窗口控制（自建标题条调用）
-  ipcMain.on('window:minimize', () => { if (!win.isDestroyed()) win.minimize(); });
-  ipcMain.on('window:toggle-maximize', () => {
-    if (win.isDestroyed()) return;
-    if (win.isMaximized()) win.unmaximize(); else win.maximize();
-  });
-  ipcMain.on('window:close', () => { if (!win.isDestroyed()) win.close(); });
-  ipcMain.handle('window:get-bounds', () => win.getBounds());
-  ipcMain.on('window:set-bounds', (_e, b: { x: number; y: number; width: number; height: number }) => {
-    if (!win.isDestroyed()) win.setBounds(b);
-  });
-  win.on('maximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', true); });
-  win.on('unmaximize', () => { if (!win.isDestroyed()) win.webContents.send('window:maximize-change', false); });
-  // 任务栏最小化→点任务栏图标恢复（OS 原生 restore，绕过 showWindow 的透明桥接）
-  // 同样会触发 DWM 白首帧，故在 restore 瞬间用 opacity 0→1 桥接吃掉白闪。
-  // 仅当窗口确实刚从隐藏恢复时才桥接（isVisible 在 restore 事件触发时已为 true，
-  // 故用 'restore' 事件本身即代表发生了隐藏→显示，直接桥接一次即可）。
-  win.on('restore', () => {
-    if (win.isDestroyed()) return;
-    win.setOpacity(0);
-    setTimeout(() => {
-      if (win.isDestroyed()) return;
-      win.setOpacity(1);
-    }, 20);
-  });
+  // 无边框窗口的窗口控制（自建标题条调用）已在 registerConfigHandlers 中注册
 
   // 关闭语义（见 issue 03 / docs/adr/0001 决策③）：
   //  - minimize-to-tray（默认）：拦截关闭、隐藏窗口、进程继续跑（托盘可恢复）。

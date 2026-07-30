@@ -5,7 +5,7 @@ vi.mock('../../components/paneManager', () => ({
   capturePaneScrollState: vi.fn(),
 }));
 
-import { useTabStore, type Tab, type TabLocation } from '../tabStore';
+import { useTabStore, selectNextTabOnClose, type Tab, type TabLocation } from '../tabStore';
 
 /** 重置 store 到初始空状态，保证用例间隔离。 */
 function resetStore() {
@@ -359,7 +359,65 @@ describe('tabStore — 状态容器与 action', () => {
     });
   });
 
-  describe('reorderTabs', () => {
+  describe('selectNextTabOnClose (纯函数)', () => {
+  const makeTab = (id: string, cwd: string, hidden = false): Tab => ({
+    id, cwd, kind: 'session', location: 'editor', title: id, order: 0,
+    hidden, preview: false, sessionKey: id, root: cwd, path: id,
+  });
+
+  it('返回 patch 当关闭非激活、非记忆 tab（仅清理历史）', () => {
+    const tabs = [makeTab('a', '/x'), makeTab('b', '/x'), makeTab('c', '/x')];
+    const result = selectNextTabOnClose(tabs, 'c', '/x', 'a', '/x', { '/x': 'a' }, { '/x': ['a', 'b'] });
+    expect(result).not.toBeNull();
+    expect(result!.activeTabId).toBe('a');
+    expect(result!.cwdTabHistory['/x']).toEqual(['a', 'b']);
+  });
+
+  it('关闭激活 tab → 清空激活（无剩余 tab）', () => {
+    const result = selectNextTabOnClose([], 'a', '/x', 'a', '/x', { '/x': 'a' }, { '/x': ['a'] });
+    expect(result).toEqual({ activeTabId: null, cwdActiveTab: {}, cwdTabHistory: {} });
+  });
+
+  it('关闭激活 tab → 选同 cwd 下一个可见 tab', () => {
+    const tabs = [makeTab('a', '/x'), makeTab('b', '/x'), makeTab('c', '/x')];
+    const result = selectNextTabOnClose([tabs[1], tabs[2]], 'a', '/x', 'a', '/x', { '/x': 'a' }, { '/x': ['a', 'b', 'c'] });
+    expect(result).not.toBeNull();
+    // previousTabInHistory 从历史末尾向前找，'c' 是最后一个
+    expect(result!.activeTabId).toBe('c');
+  });
+
+  it('关闭激活 tab，同 cwd 无其他 tab → activeTabId 置 null', () => {
+    const tabs = [makeTab('a', '/x'), makeTab('b', '/y')];
+    const result = selectNextTabOnClose([tabs[1]], 'a', '/x', 'a', '/x', { '/x': 'a', '/y': 'b' }, { '/x': ['a'], '/y': ['b'] });
+    expect(result).not.toBeNull();
+    expect(result!.activeTabId).toBeNull();
+  });
+
+  it('关闭的记忆 tab（非当前激活）→ 更新该 cwd 记忆', () => {
+    const tabs = [makeTab('a', '/x'), makeTab('b', '/x'), makeTab('c', '/y')];
+    const result = selectNextTabOnClose(tabs, 'b', '/x', 'c', '/y', { '/x': 'b', '/y': 'c' }, { '/x': ['a', 'b'], '/y': ['c'] });
+    expect(result).not.toBeNull();
+    expect(result!.activeTabId).toBe('c');
+    expect(result!.cwdActiveTab['/x']).toBe('a');
+  });
+
+  it('关闭隐藏 tab → 清理历史', () => {
+    const tabs = [makeTab('a', '/x'), makeTab('b', '/x', true)];
+    const result = selectNextTabOnClose([tabs[0]], 'b', '/x', 'a', '/x', { '/x': 'a' }, { '/x': ['a', 'b'] });
+    expect(result).not.toBeNull();
+    expect(result!.activeTabId).toBe('a');
+    expect(result!.cwdTabHistory['/x']).toEqual(['a']);
+  });
+
+  it('清理历史中已移除的 tab', () => {
+    const tabs = [makeTab('a', '/x'), makeTab('b', '/x')];
+    const result = selectNextTabOnClose([tabs[0]], 'b', '/x', 'a', '/x', { '/x': 'a' }, { '/x': ['a', 'b', 'c'] });
+    expect(result).not.toBeNull();
+    expect(result!.cwdTabHistory['/x']).toEqual(['a']);
+  });
+});
+
+describe('reorderTabs', () => {
     it('按传入顺序重排 order', () => {
       getState().openSession({ key: 's1' });
       getState().openSession({ key: 's2' });

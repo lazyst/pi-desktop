@@ -2,7 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { SessionPool, decodeCwd, formatTimestamp } from '../sessionPool';
+import { SessionPool } from '../sessionPool';
+import { decodeCwd, formatTimestamp } from '../sessionUtils';
 
 function mockPty() {
   const cbs: Record<string, (d?: any) => void> = {};
