@@ -60,6 +60,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
   collapsedGroups, onCollapseGroup, collapsed }: Props) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [menu, setMenu] = useState<{ key: string; name: string; x: number; y: number } | null>(null);
+  const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
 
   // 侧边栏宽度由 state 控制（初始取 config.sidebarWidth，默认 280）；拖拽实时改、松手经
   // onSidebarResize 回写 config（见 docs/adr/0001 决策④）。
@@ -304,6 +305,9 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                       e.preventDefault();
                       setMenu({ key: s.key, name: s.name, x: e.clientX, y: e.clientY });
                     }}
+                    onMouseLeave={() => {
+                      if (confirmingKey === s.key) setConfirmingKey(null);
+                    }}
                   >
                     <span className={`dot ${running ? 'running' : ''}`} />
                     <span className="session-name">
@@ -312,6 +316,32 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                     </span>
                     {canTerminate && (
                       <button className="terminate" title="终止进程" onClick={(e) => { e.stopPropagation(); onTerminate(s.key); }}>终止进程</button>
+                    )}
+                    {!isUnsaved && !canTerminate && (
+                      <>
+                        <button
+                          className="session-action-btn"
+                          title="查看会话内容"
+                          onClick={(e) => { e.stopPropagation(); onViewContent?.(s.key, s.name); }}
+                        >
+                          查看
+                        </button>
+                        <button
+                          className={`session-action-btn${confirmingKey === s.key ? ' confirming' : ''}`}
+                          title={confirmingKey === s.key ? '确认删除' : '删除会话'}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirmingKey === s.key) {
+                              onDeleteSession(s.key, s.name);
+                              setConfirmingKey(null);
+                            } else {
+                              setConfirmingKey(s.key);
+                            }
+                          }}
+                        >
+                          {confirmingKey === s.key ? '确认删除' : '删除'}
+                        </button>
+                      </>
                     )}
                   </div>
                 );

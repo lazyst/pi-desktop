@@ -973,6 +973,33 @@ html, body, #root {
 .session-item:hover .terminate,
 .session-item:focus-within .terminate { display: inline-flex; }
 
+/* Session action buttons (view/delete, shown on hover/focus for saved non-running sessions) */
+.session-action-btn {
+  display: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  padding: 0 var(--sp-1);
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  transition: color var(--transition), background-color var(--transition);
+}
+.session-action-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.session-action-btn.confirming {
+  color: var(--danger);
+}
+.session-action-btn.confirming:hover {
+  color: var(--danger-hover);
+  background: var(--bg-danger-hover);
+}
+.session-item:hover .session-action-btn,
+.session-item:focus-within .session-action-btn { display: inline-flex; }
+
 /* Unsaved (live, not yet promoted) session */
 .session-item.unsaved {
   opacity: 0.82;
