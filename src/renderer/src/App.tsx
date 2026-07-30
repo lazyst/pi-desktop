@@ -235,6 +235,13 @@ export default function App() {
   };
 
   const handleDeleteRequest = (key: string, name: string) => setConfirm({ kind: 'session', key, name });
+  const handleDeleteDirect = async (key: string, _name: string) => {
+    try {
+      await pi.deleteSession(key);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const handleClearDirectory = (cwd: string) => {
     const count = disk.filter((d) => d.cwd === cwd).length;
@@ -419,6 +426,7 @@ export default function App() {
         addedDirs={addedDirs}
         onTogglePin={handleTogglePin}
         onDeleteSession={handleDeleteRequest}
+        onDeleteSessionDirect={handleDeleteDirect}
         relink={liveToDisk}
         selectionMode={selectionMode}
         selectedKeys={selectedKeys}

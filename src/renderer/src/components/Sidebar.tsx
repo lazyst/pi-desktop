@@ -17,6 +17,8 @@ interface Props {
   onRemoveDir: (cwd: string) => void;
   onTogglePin: (cwd: string) => void;
   onDeleteSession: (key: string, name: string) => void;
+  /** 直接删除（跳过确认弹窗），供 hover 内联确认使用 */
+  onDeleteSessionDirect?: (key: string, name: string) => void;
   /** 右键「查看会话」：在中间区以 tab 形式展示会话内容。 */
   onViewContent?: (key: string, name: string) => void;
   // 多选模式：整条侧边栏进入选择态，每条会话显示 checkbox，点击切换勾选。
@@ -54,7 +56,7 @@ interface Props {
   collapsed?: boolean;
 }
 
-export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, onViewContent, relink,
+export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerminate, onPickDirectory, onRemoveDir, onTogglePin, onDeleteSession, onDeleteSessionDirect, onViewContent, relink,
   selectionMode, selectedKeys, onToggleSelect, onClearDirectory, onEnterSelect, onExitSelect, onBatchDelete,
   sidebarWidth, onSidebarResize, addedDirs, appWorkDir, onNewTerminalInAppWorkDir, onNewTerminalInCwd, onSelectCwd,
   collapsedGroups, onCollapseGroup, collapsed }: Props) {
@@ -332,7 +334,7 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                           onClick={(e) => {
                             e.stopPropagation();
                             if (confirmingKey === s.key) {
-                              onDeleteSession(s.key, s.name);
+                              (onDeleteSessionDirect ?? onDeleteSession)(s.key, s.name);
                               setConfirmingKey(null);
                             } else {
                               setConfirmingKey(s.key);
