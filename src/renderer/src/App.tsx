@@ -89,8 +89,13 @@ export default function App() {
   useEffect(() => {
     initTheme().catch(() => {});
     initFontSize().catch(() => {});
-    // 初始化面板布局配置（sidebarWidth、rightPanelWidth 等）
-    pi.getConfig().then((cfg) => { initFromConfig(cfg); }).catch(() => {});
+    // 初始化面板布局配置 + 恢复上次打开的工作目录
+    pi.getConfig().then((cfg) => {
+      initFromConfig(cfg);
+      if (cfg.lastActiveDir) {
+        useTabStore.getState().setActiveCwd(cfg.lastActiveDir);
+      }
+    }).catch(() => {});
     // 启动动画：首屏（App 挂载）即视为就绪（见 docs/adr/0003 决策⑤a）。
     // 下一帧给 #splash 加 .splash--hidden 触发 CSS 淡出，并通知主进程 show() 窗口。
     // 用 rAF 确保过渡生效（避免同帧加 class 被合并为无过渡）；reduced-motion 下 CSS
