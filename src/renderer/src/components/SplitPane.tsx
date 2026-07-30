@@ -24,6 +24,7 @@ import {
   type DragStartEvent,
   type DragEndEvent,
   type DragOverEvent,
+  type DragMoveEvent,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -69,12 +70,15 @@ interface DragContextValue {
   /** 设置为 true 时表示某 leaf 正在被拖拽悬停。 */
   hoveredLeafId: string | null;
   canDrop: boolean;
+  /** 注册 leaf 的 TabBar 滚动容器，供拖拽自动滚动使用。 */
+  registerScrollContainer: (leafId: string, el: HTMLElement | null) => void;
 }
 
 const DragContext = createContext<DragContextValue>({
   leafItems: {},
   hoveredLeafId: null,
   canDrop: true,
+  registerScrollContainer: () => {},
 });
 
 export function useDragContext() {
@@ -109,6 +113,19 @@ function SplitPaneDragProvider({
   const activeDragItemRef = useRef<{ tabId: string; sourceLeafId: string } | null>(null);
   /** state 仅用于驱动 DragOverlay 渲染。 */
   const [activeDragTab, setActiveDragTab] = useState<Tab | null>(null);
+
+  // TabBar 滚动容器注册表，用于拖拽自动滚动
+  const scrollContainerRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const registerScrollContainer = useCallback((leafId: string, el: HTMLElement | null) => {
+    if (el) {
+      scrollContainerRefs.current.set(leafId, el);
+    } else {
+      scrollContainerRefs.current.delete(leafId);
+    }
+  }, []);
+  // hoveredLeafId 的 ref 版本，避免 useCallback 闭包陈旧
+  const hoveredLeafIdRef = useRef<string | null>(null);
+  hoveredLeafIdRef.current = hoveredLeafId;
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -252,6 +269,31 @@ function SplitPaneDragProvider({
     }
   }, [cwdTrees, defaultLeafItems]);
 
+  /** 拖拽移动时自动滚动 TabBar（拖到边缘时触发）。 */
+  const handleDragMove = useCallback((event: DragMoveEvent) => {
+    const pointerEvent = event.activatorEvent as PointerEvent;
+    const x = pointerEvent.clientX;
+
+    const targetId = hoveredLeafIdRef.current;
+    if (!targetId) return;
+
+    const container = scrollContainerRefs.current.get(targetId);
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const threshold = 40; // 边缘触发距离（px）
+
+    if (x < rect.left + threshold) {
+      // 鼠标靠近左边缘 → 向左滚动
+      const factor = 1 - (x - rect.left) / threshold;
+      container.scrollLeft -= Math.max(1, factor * 12);
+    } else if (x > rect.right - threshold) {
+      // 鼠标靠近右边缘 → 向右滚动
+      const factor = 1 - (rect.right - x) / threshold;
+      container.scrollLeft += Math.max(1, factor * 12);
+    }
+  }, []);
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
     const activeId = String(active.id);
@@ -359,7 +401,8 @@ function SplitPaneDragProvider({
     leafItems: mergedLeafItems,
     hoveredLeafId,
     canDrop,
-  }), [mergedLeafItems, hoveredLeafId, canDrop]);
+    registerScrollContainer,
+  }), [mergedLeafItems, hoveredLeafId, canDrop, registerScrollContainer]);
 
   // 被拖拽的 tab 信息（用于 DragOverlay），直接使用 activeDragTab state
   const activeTab = activeDragTab;
@@ -371,6 +414,7 @@ function SplitPaneDragProvider({
         collisionDetection={closestCorners}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
+        onDragMove={handleDragMove}
         onDragEnd={handleDragEnd}
       >
         {children}

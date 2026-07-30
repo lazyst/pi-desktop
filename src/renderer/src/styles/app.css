@@ -150,6 +150,112 @@ html, body, #root {
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
+
+/* ── TabBar 滚动区域（VS Code 风格） ── */
+
+/* 滚动区容器：包裹箭头按钮 + 滚动容器 */
+.tabbar-scroll-area {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 实际可滚动的 tab 容器 */
+.tabbar-scroll-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex: 1;
+  /* 隐藏滚动条（保留功能） */
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.15s;
+}
+.tabbar-scroll-container:hover {
+  scrollbar-color: var(--text-muted) transparent;
+}
+.tabbar-scroll-container::-webkit-scrollbar {
+  height: 3px;
+}
+.tabbar-scroll-container::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tabbar-scroll-container::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 2px;
+  transition: background 0.15s;
+}
+.tabbar-scroll-container:hover::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+}
+.tabbar-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: var(--text);
+}
+
+/* 内部 tab 行：inline-flex 让宽度随内容撑开 */
+.tabbar-scroll-inner {
+  display: inline-flex;
+  align-items: stretch;
+  white-space: nowrap;
+  height: 100%;
+}
+
+/* 左右箭头按钮 */
+.tabbar-scroll-arrow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  padding: 0;
+  border: none;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0.9;
+  transition: opacity 0.15s, color 0.15s;
+}
+.tabbar-scroll-arrow:hover {
+  color: var(--text);
+  opacity: 1;
+}
+.tabbar-scroll-arrow--left {
+  left: 0;
+}
+.tabbar-scroll-arrow--right {
+  right: 0;
+}
+
+/* 渐变阴影：指示边缘有更多内容 */
+.tabbar-scroll-gradient {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  z-index: 5;
+  pointer-events: none;
+}
+.tabbar-scroll-gradient--left {
+  left: 0;
+  background: linear-gradient(to right, var(--bg-panel), transparent);
+}
+.tabbar-scroll-gradient--right {
+  right: 0;
+  background: linear-gradient(to left, var(--bg-panel), transparent);
+}
+
+/* 固定按钮组（不参与滚动） */
+.tabbar-actions {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+}
+
 .terminal-tab {
   display: inline-flex;
   align-items: center;
@@ -281,7 +387,6 @@ html, body, #root {
   align-items: stretch;
   flex: none;
   position: relative;
-  margin-left: auto;
 }
 .terminal-new-btn-main {
   display: inline-flex;

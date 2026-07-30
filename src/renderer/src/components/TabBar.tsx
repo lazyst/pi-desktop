@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -8,6 +8,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal, IconArrowDown, IconSplitHorizontal, IconSplitVertical } from './icons';
 import { buildGroupedRows } from './tabGrouping';
+import { useDragContext } from './SplitPane';
 export type { RenderedRow } from './tabGrouping';
 
 export type TabKind = 'session' | 'preview' | 'diff' | 'integrated-terminal' | 'session-content';
@@ -202,6 +203,166 @@ function NewTerminalButton({
   );
 }
 
+// ── TabBar 滚动逻辑 ──
+
+/** 单个箭头按钮，点击时滚动一个 tab 宽度的距离。 */
+function ScrollArrow({ direction, onClick }: { direction: 'left' | 'right'; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className={`tabbar-scroll-arrow tabbar-scroll-arrow--${direction}`}
+      onClick={onClick}
+      aria-label={direction === 'left' ? '向左滚动' : '向右滚动'}
+      tabIndex={-1}
+    >
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+        <path
+          d={direction === 'left' ? 'M9 3L5 7l4 4' : 'M5 3l4 4-4 4'}
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  );
+}
+
+/**
+ * 可滚动的 TabBar 容器。
+ * 将 tabs 包裹在 overflow-x: auto 的容器中，左右边缘显示箭头按钮 + 渐变阴影。
+ * 按钮组（新建终端、分屏）固定在右侧，不参与滚动。
+ */
+function ScrollableTabBar({ children, leafId }: {
+  children: React.ReactNode;
+  leafId?: string;
+}) {
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollState, setScrollState] = useState({ left: 0, right: 0 });
+
+  // 更新滚动状态（左右是否可滚动）
+  const updateScrollState = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    setScrollState({
+      left: el.scrollLeft,
+      right: el.scrollWidth - el.clientWidth - el.scrollLeft,
+    });
+  }, []);
+
+  // 监听滚动事件
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', updateScrollState, { passive: true });
+    // 初始计算
+    updateScrollState();
+    // 用 ResizeObserver 监听容器尺寸变化（tab 增删时）
+    const ro = new ResizeObserver(updateScrollState);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener('scroll', updateScrollState);
+      ro.disconnect();
+    };
+  }, [updateScrollState]);
+
+  // 注册 scroll container 到 DragContext（供拖拽自动滚动使用）
+  const { registerScrollContainer } = useDragContext();
+  const scrollContainerCallbackRef = useCallback((el: HTMLDivElement | null) => {
+    scrollContainerRef.current = el;
+    registerScrollContainer(leafId ?? '', el);
+  }, [leafId, registerScrollContainer]);
+
+  const canScrollLeft = scrollState.left > 0;
+  const canScrollRight = scrollState.right > 1; // 1px 容差
+
+  // 点击箭头滚动一个 tab 宽度（160px）
+  const scrollBy = useCallback((dir: 'left' | 'right') => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const amount = 160;
+    el.scrollBy({ left: dir === 'left' ? -amount : amount, behavior: 'smooth' });
+  }, []);
+
+  return (
+    <div className="tabbar-scroll-area">
+      {canScrollLeft && <ScrollArrow direction="left" onClick={() => scrollBy('left')} />}
+      <div
+        className="tabbar-scroll-container"
+        ref={scrollContainerCallbackRef}
+        onScroll={updateScrollState}
+      >
+        <div className="tabbar-scroll-inner">
+          {children}
+        </div>
+      </div>
+      {canScrollRight && <ScrollArrow direction="right" onClick={() => scrollBy('right')} />}
+      {canScrollLeft && <div className="tabbar-scroll-gradient tabbar-scroll-gradient--left" />}
+      {canScrollRight && <div className="tabbar-scroll-gradient tabbar-scroll-gradient--right" />}
+    </div>
+  );
+}
+
+// 固定按钮组（新建终端、分屏等）
+function TabBarActions({
+  newVisible, onNew, onNewTerminal, onNewTerminalWithProfile, terminalProfiles,
+  onSplitPane, leafId,
+}: {
+  newVisible: boolean;
+  onNew?: () => void;
+  onNewTerminal?: () => void;
+  onNewTerminalWithProfile?: (profileId: string) => void;
+  terminalProfiles?: Array<{ id: string; label: string }>;
+  onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
+  leafId?: string;
+}) {
+  return (
+    <div className="tabbar-actions">
+      {newVisible && onNew && (
+        <button
+          type="button"
+          className="tab-new terminal-new-btn"
+          aria-label="新建"
+          title="新建"
+          onClick={onNew}
+        >
+          <IconNewSession size={14} />
+        </button>
+      )}
+      {onNewTerminal && (
+        <NewTerminalButton
+          onNewTerminal={onNewTerminal}
+          onNewTerminalWithProfile={onNewTerminalWithProfile}
+          terminalProfiles={terminalProfiles}
+        />
+      )}
+      {onSplitPane && leafId && (
+        <>
+          <div className="split-pane-btn-sep" />
+          <button
+            type="button"
+            className="split-pane-btn"
+            aria-label="水平分屏"
+            title="水平分屏（左右）"
+            onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
+          >
+            <IconSplitHorizontal size={14} />
+          </button>
+          <button
+            type="button"
+            className="split-pane-btn"
+            aria-label="垂直分屏"
+            title="垂直分屏（上下）"
+            onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
+          >
+            <IconSplitVertical size={14} />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 // 通用 Tab 条：支持三种 tab kind（session/preview/diff）显示不同前缀图标，
 // 每个 tab 右侧 × 关单个 tab，最右可选「+」新建按钮。复用 TerminalTabBar 的
 // 视觉类名体系（terminal-tabbar / terminal-tab / tab-close / tab-new），CSS 无需大改。
@@ -223,83 +384,72 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
   // leaf 级 droppable（拖到 TabBar 空白区域时定位到 leaf 容器）
   const { setNodeRef: setDroppableRef } = useDroppable({ id: leafId ? `leaf-${leafId}` : 'unknown' });
 
-  // 无可重排（无 onReorder）时退化为纯展示，保持与原行为完全一致。
+  // 渲染 tab 列表（共享逻辑，用于两个分支）
+  const renderTabs = () => rows.map((row, i) =>
+    row.type === 'sep' ? (
+      <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
+    ) : (
+      <div
+        key={row.item.id}
+        role="tab"
+        aria-selected={row.item.id === activeId}
+        className={row.item.id === activeId ? 'terminal-tab active' : 'terminal-tab'}
+        onClick={() => onSelect(row.item.id)}
+        title={row.item.title}
+      >
+        <span className="terminal-tab-icon">{renderKindIcon(row.item.kind)}</span>
+        <span className="terminal-tab-title">{row.item.title}</span>
+        {tabDirty?.[row.item.id] && <span className="tab-dirty-dot" />}
+        {(row.item.closable ?? true) && (
+          <button
+            type="button"
+            className="tab-close"
+            aria-label="关闭"
+            title="关闭"
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose(row.item.id);
+            }}
+          >
+            <IconClose size={12} />
+          </button>
+        )}
+      </div>
+    ),
+  );
+
+  // 渲染 SortableTab 列表
+  const renderSortableTabs = () => rows.map((row, i) =>
+    row.type === 'sep' ? (
+      <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
+    ) : (
+      <SortableTab
+        key={row.item.id}
+        item={row.item}
+        activeId={activeId}
+        onSelect={onSelect}
+        onClose={onClose}
+        dirty={tabDirty?.[row.item.id]}
+      />
+    ),
+  );
+
+  // 无可重排（无 onReorder）时退化为纯展示
   if (!onReorder) {
     return (
       <div className="terminal-tabbar" role="tablist" ref={setDroppableRef}>
-        {rows.map((row, i) =>
-          row.type === 'sep' ? (
-            <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
-          ) : (
-            <div
-              key={row.item.id}
-              role="tab"
-              aria-selected={row.item.id === activeId}
-              className={row.item.id === activeId ? 'terminal-tab active' : 'terminal-tab'}
-              onClick={() => onSelect(row.item.id)}
-              title={row.item.title}
-            >
-              <span className="terminal-tab-icon">{renderKindIcon(row.item.kind)}</span>
-              <span className="terminal-tab-title">{row.item.title}</span>
-              {tabDirty?.[row.item.id] && <span className="tab-dirty-dot" />}
-              {(row.item.closable ?? true) && (
-                <button
-                  type="button"
-                  className="tab-close"
-                  aria-label="关闭"
-                  title="关闭"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onClose(row.item.id);
-                  }}
-                >
-                  <IconClose size={12} />
-                </button>
-              )}
-            </div>
-          ),
-        )}
-        {newVisible && onNew && (
-          <button
-            type="button"
-            className="tab-new terminal-new-btn"
-            aria-label="新建"
-            title="新建"
-            onClick={onNew}
-          >
-            <IconNewSession size={14} />
-          </button>
-        )}
-        {onNewTerminal && (
-          <NewTerminalButton
-            onNewTerminal={onNewTerminal}
-            onNewTerminalWithProfile={onNewTerminalWithProfile}
-            terminalProfiles={terminalProfiles}
-          />
-        )}
-        {onSplitPane && leafId && (
-          <>
-            <div className="split-pane-btn-sep" />
-            <button
-              type="button"
-              className="split-pane-btn"
-              aria-label="水平分屏"
-              title="水平分屏（左右）"
-              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
-            >
-              <IconSplitHorizontal size={14} />
-            </button>
-            <button
-              type="button"
-              className="split-pane-btn"
-              aria-label="垂直分屏"
-              title="垂直分屏（上下）"
-              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
-            >
-              <IconSplitVertical size={14} />
-            </button>
-          </>
-        )}
+        <ScrollableTabBar leafId={leafId}>
+          {renderTabs()}
+        </ScrollableTabBar>
+        <TabBarActions
+          newVisible={newVisible}
+          onNew={onNew}
+          onNewTerminal={onNewTerminal}
+          onNewTerminalWithProfile={onNewTerminalWithProfile}
+          terminalProfiles={terminalProfiles}
+          onSplitPane={onSplitPane}
+          leafId={leafId}
+        />
       </div>
     );
   }
@@ -310,63 +460,18 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
   return (
     <SortableContext items={items} strategy={horizontalListSortingStrategy}>
       <div className="terminal-tabbar" role="tablist" ref={setDroppableRef}>
-        {rows.map((row, i) =>
-          row.type === 'sep' ? (
-            // 分组分隔符：非 sortable 静态元素，不参与拖拽排序计算；
-            // 仍需渲染在 SortableContext 内以共享 flex 行布局，但不进 items 数组。
-            <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
-          ) : (
-            <SortableTab
-              key={row.item.id}
-              item={row.item}
-              activeId={activeId}
-              onSelect={onSelect}
-              onClose={onClose}
-              dirty={tabDirty?.[row.item.id]}
-            />
-          ),
-        )}
-        {newVisible && onNew && (
-          <button
-            type="button"
-            className="tab-new terminal-new-btn"
-            aria-label="新建"
-            title="新建"
-            onClick={onNew}
-          >
-            <IconNewSession size={14} />
-          </button>
-        )}
-        {onNewTerminal && (
-          <NewTerminalButton
-            onNewTerminal={onNewTerminal}
-            onNewTerminalWithProfile={onNewTerminalWithProfile}
-            terminalProfiles={terminalProfiles}
-          />
-        )}
-        {onSplitPane && leafId && (
-          <>
-            <div className="split-pane-btn-sep" />
-            <button
-              type="button"
-              className="split-pane-btn"
-              aria-label="水平分屏"
-              title="水平分屏（左右）"
-              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
-            >
-              <IconSplitHorizontal size={14} />
-            </button>
-            <button
-              type="button"
-              className="split-pane-btn"
-              aria-label="垂直分屏"
-              title="垂直分屏（上下）"
-              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
-            >
-              <IconSplitVertical size={14} />
-            </button>
-          </>
-        )}
+        <ScrollableTabBar leafId={leafId}>
+          {renderSortableTabs()}
+        </ScrollableTabBar>
+        <TabBarActions
+          newVisible={newVisible}
+          onNew={onNew}
+          onNewTerminal={onNewTerminal}
+          onNewTerminalWithProfile={onNewTerminalWithProfile}
+          terminalProfiles={terminalProfiles}
+          onSplitPane={onSplitPane}
+          leafId={leafId}
+        />
       </div>
     </SortableContext>
   );
