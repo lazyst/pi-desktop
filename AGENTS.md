@@ -1,4 +1,4 @@
-当前项目为pi-desktop
+当前项目为pi-workbench
 
 可供参考项目的项目源码：
 

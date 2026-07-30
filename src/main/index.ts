@@ -198,14 +198,14 @@ function showWindow(win: BrowserWindow): void {
 }
 
 // 创建常驻系统托盘：右键「显示 / 退出」，双击显示并聚焦（见 issue 01）。
-// 开发版使用 'pi-desktop [DEV]' 标识，与安装版区分。
+// 开发版使用 'pi-workbench [DEV]' 标识，与安装版区分。
 function createTray(win: BrowserWindow): void {
   try {
     const iconPath = resolveTrayIcon();
     const icon = nativeImage.createFromPath(iconPath);
     if (icon.isEmpty()) console.warn('[tray] icon missing at', iconPath);
     tray = new Tray(icon);
-    tray.setToolTip(isDevInstance ? 'pi-desktop [DEV]' : 'pi-desktop');
+    tray.setToolTip(isDevInstance ? 'pi-workbench [DEV]' : 'pi-workbench');
     tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: '显示', click: () => showWindow(win) },
@@ -287,7 +287,7 @@ function createWindow() {
   });
   if (cfg.window.maximized) win.maximize();
   // 开发版窗口标题加 [DEV] 后缀，用于任务栏和系统识别。
-  if (isDevInstance) win.setTitle('pi-desktop [DEV]');
+  if (isDevInstance) win.setTitle('pi-workbench [DEV]');
   // 开发调试：Ctrl+Shift+I / F12 切换 DevTools，便于查看渲染进程 console / 网络。
   // （本应用无内置 DevTools 入口，故在此补一个快捷键。）
   win.webContents.on('before-input-event', (_e, input) => {
@@ -1540,7 +1540,7 @@ function unescapeField(s: string): string {
 
 // 开发版使用不同的 app.name，使单实例锁与安装版隔离，两者可同时运行。
 if (isDevInstance) {
-  app.name = 'pi-desktop-dev';
+  app.name = 'pi-workbench-dev';
 }
 
 const gotTheLock = app.requestSingleInstanceLock();

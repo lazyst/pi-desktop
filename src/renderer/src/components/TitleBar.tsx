@@ -27,7 +27,7 @@ export function TitleBar({ onOpenSettings, sidebarCollapsed, onToggleSidebar, ri
   return (
     <div className="titlebar">
       <div className="titlebar-left">
-        <span className="titlebar-title">Pi Desktop</span>
+        <span className="titlebar-title">Pi Workbench</span>
         <button
           className="titlebar-btn titlebar-panel-toggle"
           type="button"
