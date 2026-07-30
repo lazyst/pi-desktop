@@ -101,6 +101,20 @@ function SplitPaneDragProvider({
   cwd: string;
   isActive: boolean;
 }) {
+  // 非活跃 cwd 不响应拖拽：先于所有 hooks 返回，避免 hooks 数量变化导致 React 报错
+  if (!isActive) {
+    return <>{children}</>;
+  }
+  return <SplitPaneDragProviderInner cwd={cwd}>{children}</SplitPaneDragProviderInner>;
+}
+
+function SplitPaneDragProviderInner({
+  children,
+  cwd,
+}: {
+  children: React.ReactNode;
+  cwd: string;
+}) {
   const moveTabAcrossLeafs = useSplitStore((s) => s.moveTabAcrossLeafs);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
   const cwdTrees = useSplitStore((s) => s.cwdTrees);
@@ -151,11 +165,6 @@ function SplitPaneDragProvider({
     traverse(tree);
     return items;
   }, [cwdTrees, cwd]);
-
-  // 非活跃 cwd 不响应拖拽
-  if (!isActive) {
-    return <>{children}</>;
-  }
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const { active } = event;

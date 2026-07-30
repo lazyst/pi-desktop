@@ -308,7 +308,6 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                       setMenu({ key: s.key, name: s.name, x: e.clientX, y: e.clientY });
                     }}
                     onMouseLeave={() => {
-                      console.log('[mouseleave] confirmingKey:', confirmingKey, 's.key:', s.key, 'match:', confirmingKey === s.key);
                       if (confirmingKey === s.key) setConfirmingKey(null);
                     }}
                   >
@@ -334,13 +333,10 @@ export function Sidebar({ sessions, statusMap, activeKey, pinned, onOpen, onTerm
                           title={confirmingKey === s.key ? '确认删除' : '删除会话'}
                           onClick={(e) => {
                             e.stopPropagation();
-                            console.log('[delete-btn] clicked, confirmingKey:', confirmingKey, 's.key:', s.key, 'match:', confirmingKey === s.key);
                             if (confirmingKey === s.key) {
-                              console.log('[delete-btn] calling onDeleteSessionDirect');
                               (onDeleteSessionDirect ?? onDeleteSession)(s.key, s.name);
                               setConfirmingKey(null);
                             } else {
-                              console.log('[delete-btn] setting confirmingKey to:', s.key);
                               setConfirmingKey(s.key);
                             }
                           }}

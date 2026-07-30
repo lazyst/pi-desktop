@@ -236,12 +236,9 @@ export default function App() {
 
   const handleDeleteRequest = (key: string, name: string) => setConfirm({ kind: 'session', key, name });
   const handleDeleteDirect = async (key: string, _name: string) => {
-    console.log('[handleDeleteDirect] called with key:', key);
     try {
       await pi.deleteSession(key);
-      console.log('[handleDeleteDirect] deleteSession completed');
     } catch (err) {
-      console.error('[handleDeleteDirect] error:', err);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
