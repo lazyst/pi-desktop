@@ -240,6 +240,7 @@ function ScrollableTabBar({ children, leafId }: {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
   const [scrollState, setScrollState] = useState({ left: 0, right: 0 });
+  const [hasOverflow, setHasOverflow] = useState(false);
 
   // 更新滚动状态 + 自定义滚动条缩略图位置
   const updateScrollState = useCallback(() => {
@@ -252,6 +253,7 @@ function ScrollableTabBar({ children, leafId }: {
       left: scrollLeft,
       right: maxScroll - scrollLeft,
     });
+    setHasOverflow(maxScroll > 0);
     // 同步缩略图位置和宽度
     if (thumb && maxScroll > 0) {
       const thumbWidth = Math.max(20, el.clientWidth * (el.clientWidth / el.scrollWidth));
@@ -323,9 +325,11 @@ function ScrollableTabBar({ children, leafId }: {
       {canScrollRight && <ScrollArrow direction="right" onClick={() => scrollBy('right')} />}
       {canScrollLeft && <div className="tabbar-scroll-gradient tabbar-scroll-gradient--left" />}
       {canScrollRight && <div className="tabbar-scroll-gradient tabbar-scroll-gradient--right" />}
-      <div className="tabbar-scrollbar" aria-hidden="true">
-        <div className="tabbar-scrollbar-thumb" ref={scrollbarThumbRef} />
-      </div>
+      {hasOverflow && (
+        <div className="tabbar-scrollbar" aria-hidden="true">
+          <div className="tabbar-scrollbar-thumb" ref={scrollbarThumbRef} />
+        </div>
+      )}
     </div>
   );
 }
