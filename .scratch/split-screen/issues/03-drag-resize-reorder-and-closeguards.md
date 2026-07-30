@@ -4,7 +4,16 @@
 
 **Blocked by:** 01 — splitStore 数据模型 + SplitPane 渲染
 
-**Status:** ready-for-agent
+**Status:** completed
+
+**Completed at:** 2025-01-14
+
+**Summary:**
+- SplitDivider drag-to-resize: already implemented in SplitPaneNode (mousedown → mousemove → mouseup, min 6% ratio constraint, body cursor lock)
+- `reorderTabsInLeaf(leafId, orderedIds)`: already implemented in splitStore
+- closeGuards: already wired through CenterPane → SplitPane chain
+- Tests: 4 new tests (reorderTabsInLeaf: 2, setRatios: 2)
+- 43 total tests passing, production code compiles with zero errors
 
 - [ ] SplitDivider 鼠标拖拽：
   - `mousedown` 记录起始位置，`mousemove` 实时计算 delta → 更新 `setRatios`

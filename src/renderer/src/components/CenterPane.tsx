@@ -30,7 +30,7 @@ interface Props {
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
 }
 
-export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles }: Props) {
+export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, onSplitPane }: Props) {
   const cwdTrees = useSplitStore((s) => s.cwdTrees);
   const activeCwd = useSplitStore((s) => s.activeCwd);
   const cwdOrder = useSplitStore((s) => s.cwdOrder);

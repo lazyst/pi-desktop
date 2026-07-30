@@ -598,4 +598,65 @@ describe('splitStore — 数据模型与基础操作', () => {
       }
     });
   });
+
+  describe('cwd 切换 — 状态一致性', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+    });
+
+    it('切换 cwd 后 state 不含 null/undefined 关键字段', () => {
+      // 先记住 /a 的 leaf
+      const leafA = getState().activeLeafId;
+      // 打开 /b
+      getState().openSession({ key: '/b/s1', cwd: '/b', name: 'sess-b' });
+      // 此时 activeCwd 是 /b
+      getState().setActiveCwd('/a');
+      const s = getState();
+      expect(s.activeCwd).toBe('/a');
+      expect(s.activeLeafId).toBeTruthy();
+      expect(s.cwdTrees['/a']).toBeTruthy();
+      expect(s.cwdTrees['/b']).toBeTruthy();
+      expect(typeof s.activeTabId).not.toBe('undefined');
+    });
+
+    it('切换到已有 cwd 后 activeLeafId 恢复之前保存的 leaf', () => {
+      // 先打开 /a 获取 leafId
+      const leafA = getState().activeLeafId;
+      // 打开 /b（此时 activeCwd 切换到 /b）
+      getState().openSession({ key: '/b/s1', cwd: '/b', name: 'sess-b' });
+      // 切回 /a
+      getState().setActiveCwd('/a');
+      const s = getState();
+      expect(s.activeCwd).toBe('/a');
+      expect(s.activeLeafId).toBe(leafA);
+    });
+
+    it('切换 cwd 后 cwdActiveLeafId 记录正确', () => {
+      const leafA = getState().activeLeafId;
+      getState().openSession({ key: '/b/s1', cwd: '/b', name: 'sess-b' });
+      const s1 = getState();
+      const leafB = s1.activeLeafId;
+      expect(s1.cwdActiveLeafId['/a']).toBe(leafA);
+      expect(s1.cwdActiveLeafId['/b']).toBe(leafB);
+
+      getState().setActiveCwd('/a');
+      const s2 = getState();
+      expect(s2.cwdActiveLeafId['/a']).toBe(s2.activeLeafId);
+      expect(s2.cwdActiveLeafId['/b']).toBe(leafB);
+    });
+
+    it('空 cwd 切换不崩溃', () => {
+      resetStore();
+      const store = getState();
+      store.setActiveCwd('/empty1');
+      let s = getState();
+      expect(s.activeCwd).toBe('/empty1');
+      expect(s.activeLeafId).toBeTruthy();
+
+      s.setActiveCwd('/empty2');
+      s = getState();
+      expect(s.activeCwd).toBe('/empty2');
+      expect(s.activeLeafId).toBeTruthy();
+    });
+  });
 });
