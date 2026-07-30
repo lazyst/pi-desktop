@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { pi } from '../ipc';
 import { useTabStore } from '../store/tabStore';
 import { getAllTabs } from '../store/splitStore';
@@ -116,7 +116,27 @@ export function useSidebarState(
       });
     });
 
-    return () => { offIndex?.(); };
+    // 订阅会话晋升：立即将磁盘会话加入 disk，避免 onRelink 更新 liveToDisk 后
+    // liveUnsaved 移除会话但 disk 尚未更新（onIndex 未到）导致会话在侧边栏消失。
+    const offRelink = pi.onRelink((from, to) => {
+      setDisk((prev) => {
+        if (prev.some((d) => d.key === to)) return prev; // 已存在，跳过
+        // 从 store 中查找 live tab 的 cwd 和 name
+        const state = useTabStore.getState();
+        const allTabs = getAllTabs(state);
+        const liveTab = allTabs.find(
+          (t): t is import('../store/tabStore').SessionTab => t.kind === 'session' && t.key === from,
+        );
+        return [...prev, {
+          key: to,
+          cwd: liveTab?.cwd ?? '',
+          name: liveTab?.name ?? '',
+          time: new Date().toISOString().slice(0, 16).replace('T', ' '),
+        }];
+      });
+    });
+
+    return () => { offIndex?.(); offRelink?.(); };
   }, [initialized, setStatusMap]);
 
   // ── Handlers ──
