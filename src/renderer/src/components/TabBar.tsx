@@ -238,16 +238,27 @@ function ScrollableTabBar({ children, leafId }: {
   leafId?: string;
 }) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollbarThumbRef = useRef<HTMLDivElement | null>(null);
   const [scrollState, setScrollState] = useState({ left: 0, right: 0 });
 
-  // 更新滚动状态（左右是否可滚动）
+  // 更新滚动状态 + 自定义滚动条缩略图位置
   const updateScrollState = useCallback(() => {
     const el = scrollContainerRef.current;
+    const thumb = scrollbarThumbRef.current;
     if (!el) return;
+    const maxScroll = el.scrollWidth - el.clientWidth;
+    const scrollLeft = el.scrollLeft;
     setScrollState({
-      left: el.scrollLeft,
-      right: el.scrollWidth - el.clientWidth - el.scrollLeft,
+      left: scrollLeft,
+      right: maxScroll - scrollLeft,
     });
+    // 同步缩略图位置和宽度
+    if (thumb && maxScroll > 0) {
+      const thumbWidth = Math.max(20, el.clientWidth * (el.clientWidth / el.scrollWidth));
+      const thumbLeft = (scrollLeft / maxScroll) * (el.clientWidth - thumbWidth);
+      thumb.style.width = `${thumbWidth}px`;
+      thumb.style.transform = `translateX(${thumbLeft}px)`;
+    }
   }, []);
 
   // 监听滚动事件 + 鼠标滚轮水平滚动
@@ -312,6 +323,9 @@ function ScrollableTabBar({ children, leafId }: {
       {canScrollRight && <ScrollArrow direction="right" onClick={() => scrollBy('right')} />}
       {canScrollLeft && <div className="tabbar-scroll-gradient tabbar-scroll-gradient--left" />}
       {canScrollRight && <div className="tabbar-scroll-gradient tabbar-scroll-gradient--right" />}
+      <div className="tabbar-scrollbar" aria-hidden="true">
+        <div className="tabbar-scrollbar-thumb" ref={scrollbarThumbRef} />
+      </div>
     </div>
   );
 }

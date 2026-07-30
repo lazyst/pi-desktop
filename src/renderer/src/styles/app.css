@@ -168,34 +168,39 @@ html, body, #root {
   overflow-x: auto;
   overflow-y: hidden;
   flex: 1;
-  /* 覆盖全局 * { scrollbar-width: thin }，让 ::-webkit-scrollbar 生效 */
-  scrollbar-width: auto;
-  scrollbar-color: transparent transparent;
-  transition: scrollbar-color 0.15s;
-}
-.tabbar-scroll-container:hover {
-  scrollbar-color: var(--text-muted) transparent;
+  /* 隐藏原生滚动条（不占空间），scrollLeft 仍有效 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 .tabbar-scroll-container::-webkit-scrollbar {
-  height: 2px;
-}
-.tabbar-scroll-container::-webkit-scrollbar-button {
   display: none;
   width: 0;
   height: 0;
 }
-.tabbar-scroll-container::-webkit-scrollbar-track {
-  background: transparent;
+
+/* 自定义滚动条指示器（绝对定位，不占布局空间） */
+.tabbar-scrollbar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
-.tabbar-scroll-container::-webkit-scrollbar-thumb {
-  background: transparent;
+.tabbar-scroll-area:hover .tabbar-scrollbar {
+  opacity: 1;
+}
+.tabbar-scrollbar-thumb {
+  height: 100%;
+  background: var(--text-muted);
   border-radius: 1px;
+  min-width: 20px;
   transition: background 0.15s;
 }
-.tabbar-scroll-container:hover::-webkit-scrollbar-thumb {
-  background: var(--text-muted);
-}
-.tabbar-scroll-container::-webkit-scrollbar-thumb:hover {
+.tabbar-scroll-area:hover .tabbar-scrollbar-thumb {
   background: var(--text);
 }
 
