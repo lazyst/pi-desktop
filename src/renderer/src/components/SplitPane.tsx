@@ -215,6 +215,12 @@ function SplitPaneDragProvider({
     setLeafItems((prev) => {
       const next = { ...prev };
 
+      // 如果目标 leaf 不在 prev 中（尚未被修改过），从 defaultLeafItems 初始化
+      // 否则会丢失目标 leaf 的其他 tab
+      if (!(targetLeafId in prev)) {
+        next[targetLeafId] = [...(defaultLeafItems[targetLeafId] ?? [])];
+      }
+
       // 如果目标 leaf 中已存在该 tab id，不再重复添加
       if (next[targetLeafId]?.includes(activeId)) return prev;
 
@@ -248,7 +254,7 @@ function SplitPaneDragProvider({
 
       return next;
     });
-  }, [cwdTrees]);
+  }, [cwdTrees, defaultLeafItems]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event;
