@@ -8,6 +8,7 @@ import { CenterPane } from './components/CenterPane';
 import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
 import { useTabStore } from './store/tabStore';
+import { getAllTabs } from './store/splitStore';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { usePanelLayout } from './hooks/usePanelLayout';
@@ -48,9 +49,26 @@ export default function App() {
   const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([]);
   // 当前激活会话（从 store tabs 派生）：供集成终端 cwd 默认取值、Sidebar 高亮、绿点状态。
   // 中间区 tab / 激活指针直接订阅 store。
-  const tabs = useTabStore((s) => s.tabs);
-  const activeTabId = useTabStore((s) => s.activeTabId);
+  const tabs = useTabStore((s) => getAllTabs(s));
   const activeCwd = useTabStore((s) => s.activeCwd);
+  const activeLeafId = useTabStore((s) => s.activeLeafId);
+  const cwdTrees = useTabStore((s) => s.cwdTrees);
+  // 从 active leaf 中获取 activeTabId
+  const activeTabId = (() => {
+    if (!activeLeafId || !activeCwd) return null;
+    const tree = cwdTrees[activeCwd];
+    if (!tree) return null;
+    const findLeaf = (node: any): any => {
+      if (node.type === 'leaf') return node.id === activeLeafId ? node : null;
+      for (const child of node.children) {
+        const found = findLeaf(child);
+        if (found) return found;
+      }
+      return null;
+    };
+    const leaf = findLeaf(tree);
+    return leaf?.activeTabId ?? null;
+  })();
   const activeSession = tabs.find((t) => t.id === activeTabId && t.kind === 'session') as SessionTab | undefined;
   // 最后活跃会话目录：即使当前激活 tab 是预览/diff，也保留上一次的 cwd，
   // 供右栏文件树/Git 自动模式稳定跟随。
@@ -134,8 +152,9 @@ export default function App() {
         const result = await pi.queryPtyOwner?.(req.key);
         const ptyId = result?.virtual ?? result?.ptyId;
         if (ptyId) {
-          const tabs = useTabStore.getState().tabs;
-          const existing = tabs.find(
+          const storeState = useTabStore.getState();
+          const allTabs = getAllTabs(storeState);
+          const existing = allTabs.find(
             (t): t is SessionTab => t.kind === 'session' && t.key === ptyId,
           );
           useTabStore.getState().openSession({
@@ -319,8 +338,9 @@ export default function App() {
   // 对齐用户预期：关闭终端 tab ≡ 终止终端进程。
   const handleDestroySession = useCallback(async (id: string) => {
     try {
-      const tabs = useTabStore.getState().tabs;
-      const tab = tabs.find((t) => t.id === id) as SessionTab | undefined;
+      const storeState = useTabStore.getState();
+      const allTabs = getAllTabs(storeState);
+      const tab = allTabs.find((t) => t.id === id) as SessionTab | undefined;
       if (tab) {
         await pi.terminate(tab.key);
       }

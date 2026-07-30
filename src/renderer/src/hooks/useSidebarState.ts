@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { pi } from '../ipc';
 import { useTabStore } from '../store/tabStore';
+import { getAllTabs } from '../store/splitStore';
 import { defaultConfig } from '../../../main/config';
 import type { AppConfig } from '../types';
 
@@ -44,7 +45,7 @@ export function useSidebarState(
   // 但用户希望"未晋升"的 live 会话也立刻显示在左侧栏（按 cwd 混进对应分组，
   // 标 unsaved）。因此此处把尚未晋升的 live 会话也并入侧边栏数据源，
   // 并排除已晋升（已在 liveToDisk 映射中）的 live，避免重复出现两条。
-  const tabs = useTabStore((s) => s.tabs);
+  const tabs = useTabStore((s) => getAllTabs(s));
   const isLiveKey = (k: string) => k.startsWith('live-') || k.startsWith('pi-');
 
   const liveUnsaved = useMemo<DiskSession[]>(() => {

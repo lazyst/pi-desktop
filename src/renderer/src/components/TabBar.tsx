@@ -55,6 +55,8 @@ interface Props {
   onNewTerminal?: () => void;
   onNewTerminalWithProfile?: (profileId: string) => void;
   terminalProfiles?: Array<{ id: string; label: string }>;
+  // 所属 SplitLeaf 的 id（分屏模式下使用），用于 closeTab/selectTab/reorderTabsInLeaf 等操作
+  leafId?: string;
 }
 
 const renderKindIcon = (kind: TabKind) => {

@@ -1,28 +1,18 @@
-// 中间区容器（按工作目录分组）
+// 中间区容器（按工作目录分组 + 分屏支持）
 //
-// 根据 store.activeCwd 只显示当前工作目录的 tab 条和内容。
-// 每个目录拥有独立的 tab 条和激活状态，切换目录时保留各自的 tab。
-//
-// 渲染结构：
-//   .center-pane （纵向 flex）
-//     ├─ .center-pane-cwd-label（当前目录标签）
-//     ├─ TabBar（当前目录的 tab 条）
-//     └─ .center-pane-body（flex:1，当前目录的所有 tab 内容，非 active 的 display:none）
+// 根据 store.activeCwd 只显示当前工作目录的分屏树。
+// 所有 cwd 的分屏树同时存在于 DOM 中（keep-alive），
+// 非活跃 cwd 用 opacity:0 隐藏。
+
 import { useRef, useMemo, useEffect, useCallback, useState } from 'react';
-import { TabBar } from './TabBar';
-import type { TabKind } from './TabBar';
-import { SessionPane } from './SessionPane';
-import { IntegratedPane } from './IntegratedPane';
-import { PreviewTab } from './PreviewTab';
-import { DiffTab } from './DiffTab';
-import { SessionContentView } from './SessionContentView';
-import { useTabStore, getTabCwd, cwdVisibleTabs } from '../store/tabStore';
-import type { Tab, SessionContentTab } from '../store/tabStore';
+import { SplitPane } from './SplitPane';
+import { useSplitStore, getTabCwd, cwdVisibleTabs } from '../store/splitStore';
+import type { Tab, SessionContentTab } from '../store/splitStore';
 import { restorePaneScrollState } from './paneManager';
 
 interface Props {
   onOpenFile?: (relPath: string, fileName: string, root: string) => void;
-  /** 集成终端 × 关闭：先在主进程杀 PTY，再移除 tab。传 undefined 时走 keep-alive 隐藏。 */
+  /** 集成终端 × 关闭：先在主进程杀 PTY，再移除 tab。 */
   onDestroyTerminal?: (id: string) => void;
   /** session tab × 关闭：终止进程后再移除 tab。 */
   onDestroySession?: (id: string) => void;
@@ -39,86 +29,70 @@ interface Props {
 }
 
 export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles }: Props) {
-  const tabs = useTabStore((s) => s.tabs) as Tab[];
-  const activeTabId = useTabStore((s) => s.activeTabId);
-  const activeCwd = useTabStore((s) => s.activeCwd);
-  const closeCenterTab = useTabStore((s) => s.closeCenterTab);
-  const reorderTabs = useTabStore((s) => s.reorderTabs);
-  const selectTab = useTabStore((s) => s.selectTab);
-  const setActiveCwd = useTabStore((s) => s.setActiveCwd);
+  const cwdTrees = useSplitStore((s) => s.cwdTrees);
+  const activeCwd = useSplitStore((s) => s.activeCwd);
+  const cwdOrder = useSplitStore((s) => s.cwdOrder);
+  const setActiveCwd = useSplitStore((s) => s.setActiveCwd);
+  const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
   const [cwdDropdownOpen, setCwdDropdownOpen] = useState(false);
   const cwdDropdownRef = useRef<HTMLDivElement>(null);
-
-  // 当前目录的可见 tab（给 TabBar 用）
-  const orderedVisibleTabs = useMemo(
-    () => (activeCwd ? cwdVisibleTabs(tabs, activeCwd) : []),
-    [tabs, activeCwd],
-  );
-  // 当前目录的全部 tab（含 hidden，keep-alive 需要全部渲染在 DOM 中）
-  const cwdAllTabs = useMemo(
-    () => (activeCwd ? tabs.filter((t) => getTabCwd(t) === activeCwd) : []),
-    [tabs, activeCwd],
-  );
-
-  /** activeCwd 变化 → 恢复新目录中所有终端 pane 的滚动位置（DOM 已更新，pane 重新 visible）。
-   *  保存由 store.setActiveCwd 在 DOM 更新前完成。 */
-  useEffect(() => {
-    if (!activeCwd) return;
-    const state = useTabStore.getState();
-    for (const t of state.tabs) {
-      if (getTabCwd(t) !== activeCwd) continue;
-      if (t.kind !== 'session' && t.kind !== 'integrated-terminal' && t.kind !== 'session-content') continue;
-      restorePaneScrollState(t.id);
-    }
-  }, [activeCwd]);
-
-  /** 包装 setActiveCwd：restore 由 useEffect 处理。 */
-  const handleSetActiveCwd = useCallback((cwd: string) => {
-    setActiveCwd(cwd);
-  }, [setActiveCwd]);
-
-  /** 包装 selectTab：save 由 store.selectTab 内部完成，restore 由 useEffect 处理。 */
-  const handleSelectTab = useCallback((id: string) => {
-    selectTab(id);
-  }, [selectTab]);
-
 
   // 各 tab 关闭请求拦截器（如 PreviewTab 的 dirty 确认）。
   const closeGuards = useRef<Map<string, () => void>>(new Map());
 
-  const requestCloseTab = (id: string) => {
+  const requestCloseTab = useCallback((id: string) => {
     const guard = closeGuards.current.get(id);
     if (guard) guard();
     else if (onDestroyTerminal) {
-      const tabs = useTabStore.getState().tabs;
-      const tab = tabs.find((t) => t.id === id);
+      // 在所有 cwd 树的 leaf 中查找 tab
+      let tab: Tab | undefined;
+      for (const [, tree] of Object.entries(cwdTrees)) {
+        const findTab = (node: any): void => {
+          if (node.type === 'leaf') {
+            tab = node.tabs.find((t: Tab) => t.id === id);
+          } else {
+            for (const child of node.children) findTab(child);
+          }
+        };
+        findTab(tree);
+        if (tab) break;
+      }
       if (tab?.kind === 'integrated-terminal') {
-        onDestroyTerminal(id);   // 杀 PTY + 移除 tab
+        onDestroyTerminal(id);
       } else if (tab?.kind === 'session' && onDestroySession) {
-        onDestroySession(id);    // 终止进程 + 移除 tab
+        onDestroySession(id);
       } else {
-        closeCenterTab(id);     // preview/diff 走原逻辑
+        closeCenterTab(id);
       }
     } else {
       closeCenterTab(id);
     }
-  };
+  }, [closeCenterTab, closeGuards, onDestroyTerminal, onDestroySession, cwdTrees]);
 
-  const registerCloseGuard = (id: string, guard: (() => void) | null) => {
+  const registerCloseGuard = useCallback((id: string, guard: (() => void) | null) => {
     if (guard) closeGuards.current.set(id, guard);
     else closeGuards.current.delete(id);
-  };
-
-  // 保留空变量以兼容未来扩展
+  }, []);
 
   // 目录 → 可见 tab 数量映射（供 cwd-select 下拉显示）
   const cwdTabCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const c of addedDirs ?? []) {
-      counts.set(c, cwdVisibleTabs(tabs, c).length);
+      const tree = cwdTrees[c];
+      if (!tree) { counts.set(c, 0); continue; }
+      let count = 0;
+      const traverse = (node: any): void => {
+        if (node.type === 'leaf') {
+          count += node.tabs.filter((t: Tab) => !t.hidden).length;
+        } else {
+          for (const child of node.children) traverse(child);
+        }
+      };
+      traverse(tree);
+      counts.set(c, count);
     }
     return counts;
-  }, [tabs, addedDirs]);
+  }, [cwdTrees, addedDirs]);
 
   // 点击外部关闭下拉框
   useEffect(() => {
@@ -132,7 +106,28 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
     return () => document.removeEventListener('mousedown', handleClick);
   }, [cwdDropdownOpen]);
 
-  const hasContent = orderedVisibleTabs.length > 0;
+  // 恢复 pane 滚动位置（activeCwd 变化时）
+  useEffect(() => {
+    if (!activeCwd) return;
+    const tree = cwdTrees[activeCwd];
+    if (!tree) return;
+    const traverse = (node: any): void => {
+      if (node.type === 'leaf') {
+        for (const t of node.tabs) {
+          if (t.kind !== 'session' && t.kind !== 'integrated-terminal' && t.kind !== 'session-content') continue;
+          restorePaneScrollState(t.id);
+        }
+      } else {
+        for (const child of node.children) traverse(child);
+      }
+    };
+    traverse(tree);
+  }, [activeCwd, cwdTrees]);
+
+  /** 包装 setActiveCwd。 */
+  const handleSetActiveCwd = useCallback((cwd: string) => {
+    setActiveCwd(cwd);
+  }, [setActiveCwd]);
 
   return (
     <div className="center-pane">
@@ -175,90 +170,28 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
           )}
         </div>
       </div>
-      <TabBar
-        tabs={orderedVisibleTabs.map((t) => ({
-          id: t.id,
-          title: t.title,
-          kind: t.kind as TabKind,
-        }))}
-        activeId={activeTabId}
-        onSelect={handleSelectTab}
-        onClose={requestCloseTab}
-        onReorder={(orderedIds) => reorderTabs(orderedIds)}
-        showNew={false}
-        onNewTerminal={onNewTerminal}
-        onNewTerminalWithProfile={onNewTerminalWithProfile}
-        terminalProfiles={terminalProfiles}
-      />
-      <div className="center-pane-body">
-        {/* 跨目录 keep-alive：所有 tab 内容永久挂载在 DOM 中。
-            非 active 的用 opacity:0 + position:absolute 隐藏（canvas 保持有效尺寸，
-            xterm 的滚动位置自然保留）；active 的用 opacity:1 显示。
-            对齐 Orca 做法：隐藏时不卸载 DOM，滚动位置在切回目录时用 marker 恢复。 */}
-        {tabs.map((t) => {
-          const isActive = t.id === activeTabId;
-          const cls = isActive ? 'tab-content active' : 'tab-content';
-          if (t.kind === 'session') {
-            return <div key={t.id} className={cls}><SessionPane sessionKey={t.key} active={isActive} /></div>;
-          }
-          if (t.kind === 'integrated-terminal') {
-            return <div key={t.id} className={cls}><IntegratedPane terminalId={t.id} active={isActive} /></div>;
-          }
-          if (t.kind === 'preview') {
-            return (
-              <div key={t.id} className={cls}>
-                <PreviewTab
-                  tabId={t.id}
-                  root={t.root}
-                  path={t.path}
-                  active={isActive}
-                  onOpenFile={onOpenFile}
-                  onClose={() => closeCenterTab(t.id)}
-                  onRegisterCloseGuard={registerCloseGuard}
-                />
-              </div>
-            );
-          }
-          if (t.kind === 'session-content') {
-            const sc = t as SessionContentTab;
-            return (
-              <div key={t.id} className={cls}>
-                <div className="session-content-tab-header">
-                  <span className="session-content-tab-title">💬 {sc.sessionName}</span>
-                </div>
-                <SessionContentView sessionKey={sc.sessionKey} sessionName={sc.sessionName} />
-              </div>
-            );
-          }
-          return <div key={t.id} className={cls}><DiffTab cwd={t.cwd} commitHash={t.commitHash} active={isActive} onBack={() => closeCenterTab(t.id)} /></div>;
-        })}
-        {/* 无可见 tab 且无 keep-alive 内容时显示空状态 */}
-        {cwdAllTabs.length === 0 && (
-          <div className="empty-state">
-            {activeCwd ? (
-              <div className="empty-state-buttons">
-                <button
-                  className="empty-state-new-session-btn"
-                  onClick={() => onOpen?.({ cwd: activeCwd })}
-                >
-                  <span className="empty-state-plus">+</span>
-                  <span>新建会话</span>
-                </button>
-                {onNewTerminal && (
-                  <button
-                    className="empty-state-new-session-btn"
-                    onClick={onNewTerminal}
-                  >
-                    <span className="empty-state-plus">+</span>
-                    <span>新建终端</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              '请先在左侧添加工作目录，然后选择会话。'
-            )}
-          </div>
-        )}
+
+      {/* 分屏树渲染：所有 cwd 同时存在于 DOM 中，非活跃的用 opacity:0 隐藏 */}
+      <div className="center-pane-split-container" style={{ flex: 1, position: 'relative', minHeight: 0, overflow: 'hidden' }}>
+        {Object.entries(cwdTrees).map(([cwd, tree]) => (
+          <SplitPane
+            key={cwd}
+            tree={tree}
+            cwd={cwd}
+            isActive={cwd === activeCwd}
+            onOpenFile={onOpenFile}
+            onDestroyTerminal={onDestroyTerminal}
+            onDestroySession={onDestroySession}
+            onOpen={onOpen}
+            onNewTerminal={onNewTerminal}
+            onNewTerminalWithProfile={onNewTerminalWithProfile}
+            terminalProfiles={terminalProfiles}
+            closeGuards={closeGuards}
+            requestCloseTab={requestCloseTab}
+            registerCloseGuard={registerCloseGuard}
+            addedDirs={addedDirs}
+          />
+        ))}
       </div>
     </div>
   );
