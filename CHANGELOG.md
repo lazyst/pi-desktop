@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.9.8] — 2026-07
+
+### 新增
+
+- **会话内容查看页面增强**：
+  - 标题行右侧添加「启动」和「删除」按钮
+  - 「删除」按钮弹出确认弹窗，确认后删除会话文件并自动关闭该 tab
+- **侧边栏 hover 操作按钮**：非运行中的已保存会话鼠标悬停时显示「查看」和「删除」按钮；
+  「删除」使用内联确认（按钮文字变为「确认删除」），无需弹窗，右键菜单保留
+
+### 修复
+
+- **onIndex/onRelink 订阅在初始化后丢失**：
+  `onIndex`/`onRelink` 注册在 `[initialized, setStatusMap]` 依赖的 `useEffect` 中，
+  `setInitialized(true)` 导致 `initialized` 变化触发了 cleanup 注销订阅，
+  重新运行时因 `if (initialized) return;` 跳过注册。这导致：
+  - 删除会话后侧边栏不更新（`onIndex` 不触发）
+  - 晋升后会话消失（`onRelink` 不触发）
+- **会话晋升后侧边栏消失**：晋升流程中主进程先发 `onRelink`（更新 `liveToDisk`）后发 `onIndex`（更新 `disk`），
+  `onIndex` 到达前会话同时在 `liveUnsaved` 和 `disk` 中缺失
+- **SplitPaneDragProvider hook 数量不匹配导致黑屏**：`SplitPaneDragProvider` 在 `isActive` 变化时
+  条件返回 `{children}` 早于全部 hooks，React 检测到「渲染的 hooks 比预期少」→ 黑屏。
+  拆分为薄包装器 + 内层组件，条件返回在 hooks 前完成
+- **侧边栏 appWorkDir 分组重复**：`appWorkDir` 同时出现在 `addedDirs` 和独立渲染路径中
+- **hover inline 删除绕过确认弹窗**：`onDeleteSessionDirect` 直接调用 `pi.deleteSession` 跳过 `setConfirm` 弹窗
+
+### 样式
+
+- session-content 消息块之间添加视觉间距（`margin: var(--sp-5)`）
+
 ## [0.9.7] — 2026-07
 
 ### 新增
