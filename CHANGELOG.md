@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.8.7] — 2026-07
+
+### 新增
+
+- **MCP 配置面板全面增强**：
+  - 新增所有可配置项：socket 传输、requestTimeoutMs、includeTools、trace、disabled、bearerTokenEnv、OAuth 高级配置
+  - 新增文件级全局设置（toolPrefix、idleTimeout、showStatusIcon、hostConfigDiscovery、autoAuth、sampling 等）
+  - 新增兼容性导入配置（cursor/claude-code/opencode 等）
+  - 自动保存（防抖 500ms），移除手动保存按钮
+  - 修复折叠区域双击问题（!== false → === true），默认收起
+  - 服务器卡片可折叠/展开
+  - 禁用/启用开关移到服务器标题栏
+  - Pi 全局覆盖配置文件排到第一个
+  - 设置面板记住上次打开的面板（localStorage）
+
+### 变更
+
+- 主题文字：暗色→深色、亮色→浅色，浅色模式 accent 改为浅蓝，切换开关滑块改为白色
+- 边框/分割线统一使用 `var(--border-strong)` 提升清晰度
+- 移除 `.pi-mcp-file-header` / `.pi-provider-header` 背景色
+
+### 样式
+
+- 调整 cwd-bar 高度为 27px、去除多余 padding
+- 全局 button 重置 padding/margin，统一按钮基础样式
+- cwd-select 无边框模式增加 hover 背景色
+
 ## [0.8.6] — 2026-07
 
 ### 新增
