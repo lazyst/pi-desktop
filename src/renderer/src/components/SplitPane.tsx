@@ -6,11 +6,33 @@
 //
 // 所有 cwd 的分屏树同时存在于 DOM 中（keep-alive），
 // 非活跃 cwd 用 opacity:0 + pointer-events:none + position:absolute 隐藏。
+//
+// 跨 leaf Tab 拖拽（ADR-0002）：
+// - SplitPaneDragProvider 包装每个 cwd 的分屏树，持有 DndContext
+// - 每个 leaf 的 TabBar 共享同一 DndContext，各自持有独立的 SortableContext
+// - 通过 DragContext 将 leaf items 动态传递给 TabBar
 
-import { useRef, useMemo, useEffect, useCallback, useState } from 'react';
+import { useRef, useMemo, useEffect, useCallback, useState, createContext, useContext } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCorners,
+  type DragStartEvent,
+  type DragEndEvent,
+  type DragOverEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  horizontalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { TabBar } from './TabBar';
 import { SplitDivider } from './SplitDivider';
-import { useSplitStore, getTabCwd, cwdVisibleTabs } from '../store/splitStore';
+import { useSplitStore, findTabById, findLeaf, canMoveTabToLeaf } from '../store/splitStore';
 import type { SplitTree, SplitLeaf, SplitNode, Tab, SessionContentTab } from '../store/splitStore';
 import type { TabKind } from './TabBar';
 import { SessionPane } from './SessionPane';
@@ -39,18 +61,325 @@ interface Props {
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
 }
 
-/** 比较两个数组是否浅相等。 */
-function shallowEqual(a: unknown[], b: unknown[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
+// ── DragContext（跨 leaf 拖拽状态传递） ──
+
+interface DragContextValue {
+  /** 每个 leaf 的 SortableContext items（动态管理，含拖拽中的临时变更）。 */
+  leafItems: Record<string, string[]>;
+  /** 设置为 true 时表示某 leaf 正在被拖拽悬停。 */
+  hoveredLeafId: string | null;
+  canDrop: boolean;
 }
 
-/** 获取 leaf 中所有 visible tab 的 id 列表（用于 memo）。 */
-function leafVisibleTabIds(leaf: SplitLeaf): string[] {
-  return leaf.tabs.filter((t) => !t.hidden).sort((a, b) => a.order - b.order).map((t) => t.id);
+const DragContext = createContext<DragContextValue>({
+  leafItems: {},
+  hoveredLeafId: null,
+  canDrop: true,
+});
+
+export function useDragContext() {
+  return useContext(DragContext);
+}
+
+// ── SplitPaneDragProvider ──
+
+/**
+ * 跨 leaf Tab 拖拽的 DndContext 提供者。
+ * 包装单个 cwd 的分屏树，所有 leaf 的 TabBar 共享此 DndContext。
+ * 每个 cwd 使用独立的 SplitPaneDragProvider 实例。
+ */
+function SplitPaneDragProvider({
+  children,
+  cwd,
+  isActive,
+}: {
+  children: React.ReactNode;
+  cwd: string;
+  isActive: boolean;
+}) {
+  const moveTabAcrossLeafs = useSplitStore((s) => s.moveTabAcrossLeafs);
+  const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
+  const cwdTrees = useSplitStore((s) => s.cwdTrees);
+
+  // 拖拽状态
+  const [leafItems, setLeafItems] = useState<Record<string, string[]>>({});
+  const [hoveredLeafId, setHoveredLeafId] = useState<string | null>(null);
+  const [canDrop, setCanDrop] = useState(true);
+  const [activeDragItem, setActiveDragItem] = useState<{ tabId: string; sourceLeafId: string } | null>(null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  // 非活跃 cwd 不响应拖拽
+  if (!isActive) {
+    return <>{children}</>;
+  }
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const { active } = event;
+    const tabId = String(active.id);
+
+    // 在所有 cwd 的 leaf 中查找 tab
+    const found = findTabById(cwdTrees, tabId);
+    if (!found) return;
+
+    const sourceLeafId = found.leaf.id;
+    setActiveDragItem({ tabId, sourceLeafId });
+
+    // 从 source leaf 的 items 中移除该 tab id
+    setLeafItems((prev) => {
+      const sourceLeafItems = (prev[sourceLeafId] ?? []).filter((id) => id !== tabId);
+      return { ...prev, [sourceLeafId]: sourceLeafItems };
+    });
+  }, [cwdTrees]);
+
+  const handleDragOver = useCallback((event: DragOverEvent) => {
+    const { active, over } = event;
+    if (!over || !active) return;
+
+    const activeId = String(active.id);
+    const overId = String(over.id);
+
+    // 忽略 SplitDivider 区域
+    if (overId.startsWith('split-divider-')) return;
+
+    // 确定目标 leafId
+    // over.id 可能是 tab id 或 leaf 级 droppable id
+    let targetLeafId: string | null = null;
+    if (overId.startsWith('leaf-')) {
+      targetLeafId = overId.slice(5); // 'leaf-{leafId}'
+    } else {
+      // 是 tab id → 查找所属 leaf
+      const found = findTabById(cwdTrees, overId);
+      if (found) targetLeafId = found.leaf.id;
+    }
+
+    if (!targetLeafId) return;
+
+    // 更新 hovered leaf 高亮
+    setHoveredLeafId(targetLeafId);
+
+    // 查找 active tab 信息
+    const activeFound = findTabById(cwdTrees, activeId);
+    if (!activeFound) return;
+
+    const targetFound = findLeaf(cwdTrees, targetLeafId);
+    if (!targetFound) return;
+
+    // 检查是否可以移动到目标 leaf
+    const canDropResult = canMoveTabToLeaf(
+      activeFound.tab,
+      targetFound.leaf,
+      targetFound.cwd,
+      cwdTrees,
+    );
+    setCanDrop(canDropResult);
+
+    // 动态更新 SortableContext items
+    setLeafItems((prev) => {
+      const next = { ...prev };
+
+      // 如果目标 leaf 中已存在该 tab id，不再重复添加
+      if (next[targetLeafId]?.includes(activeId)) return prev;
+
+      if (canDropResult) {
+        // 从所有 leaf 的 items 中移除
+        for (const key of Object.keys(next)) {
+          next[key] = next[key].filter((id) => id !== activeId);
+        }
+        // 加入目标 leaf
+        // 确定插入位置：如果 overId 是 tab id，放在该 tab 前面；否则追加到末尾
+        if (overId.startsWith('leaf-')) {
+          // 拖到空白区域 → 追加到末尾
+          next[targetLeafId] = [...(next[targetLeafId] ?? []), activeId];
+        } else {
+          // 拖到某个 tab 上 → 插入到该 tab 前面
+          const items = next[targetLeafId] ?? [];
+          const overIdx = items.indexOf(overId);
+          if (overIdx >= 0) {
+            items.splice(overIdx, 0, activeId);
+            next[targetLeafId] = items;
+          } else {
+            next[targetLeafId] = [...items, activeId];
+          }
+        }
+      } else {
+        // canDrop 为 false → 确保目标 leaf 的 items 中没有该 tab id
+        if (next[targetLeafId]) {
+          next[targetLeafId] = next[targetLeafId].filter((id) => id !== activeId);
+        }
+      }
+
+      return next;
+    });
+  }, [cwdTrees]);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    const activeId = String(active.id);
+
+    // 清理临时状态
+    setHoveredLeafId(null);
+    setCanDrop(true);
+    const dragItem = activeDragItem;
+    setActiveDragItem(null);
+
+    // 恢复所有 leaf items 为空（TabBar 将使用默认的 tabs 顺序）
+    setLeafItems({});
+
+    // 拖拽被取消
+    if (!over) return;
+
+    const overId = String(over.id);
+
+    // 忽略 SplitDivider
+    if (overId.startsWith('split-divider-')) return;
+
+    if (!dragItem) return;
+    const { sourceLeafId } = dragItem;
+
+    // 确定目标 leafId
+    let targetLeafId: string | null = null;
+    if (overId.startsWith('leaf-')) {
+      targetLeafId = overId.slice(5);
+    } else {
+      const found = findTabById(cwdTrees, overId);
+      if (found) targetLeafId = found.leaf.id;
+    }
+
+    if (!targetLeafId) return;
+
+    // 同 leaf → reorder
+    if (sourceLeafId === targetLeafId) {
+      // 获取当前 leaf 的可见 tab 顺序
+      const foundLeaf = findLeaf(cwdTrees, sourceLeafId);
+      if (!foundLeaf) return;
+      const visibleTabs = foundLeaf.leaf.tabs
+        .filter((t) => !t.hidden)
+        .sort((a, b) => a.order - b.order);
+      const visibleIds = visibleTabs.map((t) => t.id);
+
+      // 如果 activeId 还在列表中（说明拖拽结束时被放回原 leaf）
+      if (visibleIds.includes(activeId)) {
+        // 计算新的顺序
+        const oldIdx = visibleIds.indexOf(activeId);
+        let newIdx: number;
+        if (overId.startsWith('leaf-')) {
+          newIdx = visibleIds.length - 1; // 追加到末尾
+        } else {
+          newIdx = visibleIds.indexOf(overId);
+        }
+        if (newIdx < 0) newIdx = visibleIds.length - 1;
+
+        const reordered = [...visibleIds];
+        reordered.splice(oldIdx, 1);
+        reordered.splice(newIdx, 0, activeId);
+        reorderTabsInLeaf(sourceLeafId, reordered);
+      }
+      return;
+    }
+
+    // 跨 leaf → 检查去重
+    const activeFound = findTabById(cwdTrees, activeId);
+    const targetFound = findLeaf(cwdTrees, targetLeafId);
+    if (!activeFound || !targetFound) return;
+
+    const canDropResult = canMoveTabToLeaf(
+      activeFound.tab,
+      targetFound.leaf,
+      targetFound.cwd,
+      cwdTrees,
+    );
+    if (!canDropResult) return; // 去重冲突，跳过
+
+    // 计算 targetIndex
+    let targetIndex: number;
+    if (overId.startsWith('leaf-')) {
+      targetIndex = targetFound.leaf.tabs.length; // 追加到末尾
+    } else {
+      // 找到 over tab 在完整 tabs[] 中的索引
+      const overIdx = targetFound.leaf.tabs.findIndex((t) => t.id === overId);
+      targetIndex = overIdx >= 0 ? overIdx : targetFound.leaf.tabs.length;
+    }
+
+    moveTabAcrossLeafs(activeId, sourceLeafId, targetLeafId, targetIndex);
+  }, [cwdTrees, activeDragItem, reorderTabsInLeaf, moveTabAcrossLeafs]);
+
+  // 构建每个 leaf 的默认 items（按 visible tab 顺序）
+  // 仅在 leafItems 为空时使用
+  const defaultLeafItems = useMemo(() => {
+    const items: Record<string, string[]> = {};
+    const tree = cwdTrees[cwd];
+    if (!tree) return items;
+    const traverse = (node: SplitTree) => {
+      if (node.type === 'leaf') {
+        items[node.id] = node.tabs
+          .filter((t) => !t.hidden)
+          .sort((a, b) => a.order - b.order)
+          .map((t) => t.id);
+      } else {
+        for (const child of node.children) traverse(child);
+      }
+    };
+    traverse(tree);
+    return items;
+  }, [cwdTrees, cwd]);
+
+  // 合并默认 items 和动态 items：动态 items 优先
+  const mergedLeafItems = useMemo(() => {
+    if (Object.keys(leafItems).length === 0) return defaultLeafItems;
+    // 合并：用动态 items 覆盖默认 items
+    const merged = { ...defaultLeafItems };
+    for (const [leafId, items] of Object.entries(leafItems)) {
+      merged[leafId] = items;
+    }
+    return merged;
+  }, [defaultLeafItems, leafItems]);
+
+  const contextValue = useMemo<DragContextValue>(() => ({
+    leafItems: mergedLeafItems,
+    hoveredLeafId,
+    canDrop,
+  }), [mergedLeafItems, hoveredLeafId, canDrop]);
+
+  // 查找被拖拽的 tab 信息（用于 DragOverlay）
+  const activeTab = useMemo(() => {
+    if (!activeDragItem) return null;
+    const { tabId } = activeDragItem;
+    const found = findTabById(cwdTrees, tabId);
+    return found?.tab ?? null;
+  }, [activeDragItem, cwdTrees]);
+
+  return (
+    <DragContext.Provider value={contextValue}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
+        onDragEnd={handleDragEnd}
+      >
+        {children}
+        <DragOverlay dropAnimation={null}>
+          {activeTab && (
+            <div className={`drag-overlay${!canDrop ? ' drag-overlay--invalid' : ''}`}>
+              <span className="drag-overlay-icon">
+                {activeTab.kind === 'session' && '💬'}
+                {activeTab.kind === 'integrated-terminal' && '⬛'}
+                {activeTab.kind === 'preview' && '📄'}
+                {activeTab.kind === 'diff' && '📝'}
+                {activeTab.kind === 'session-content' && '💬'}
+              </span>
+              <span className="drag-overlay-title">{activeTab.title}</span>
+              {!canDrop && <span className="drag-overlay-invalid-icon">🚫</span>}
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
+    </DragContext.Provider>
+  );
 }
 
 // ── Leaf 渲染 ──
@@ -76,6 +405,10 @@ function SplitPaneLeaf({
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
   const setActiveLeaf = useSplitStore((s) => s.setActiveLeaf);
   const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
+
+  // 从 DragContext 获取 leaf 的动态 items
+  const { leafItems, hoveredLeafId, canDrop } = useDragContext();
+  const isDragOver = hoveredLeafId === leaf.id;
 
   // 该 leaf 的可见 tab（按 order 排序）
   const orderedVisibleTabs = useMemo(
@@ -112,8 +445,17 @@ function SplitPaneLeaf({
     kind: t.kind as TabKind,
   }));
 
+  // 构建 leaf 的 SortableContext items
+  const sortableItems = leafItems[leaf.id] ?? orderedVisibleTabs.map((t) => t.id);
+
+  // 构建 leaf 高亮 class
+  const leafClass = [
+    'split-pane-leaf',
+    isDragOver ? (canDrop ? 'split-pane-leaf--drag-over' : 'split-pane-leaf--drag-over--invalid') : '',
+  ].filter(Boolean).join(' ');
+
   return (
-    <div className="split-pane-leaf" onClick={handleLeafClick}>
+    <div className={leafClass} onClick={handleLeafClick}>
       <TabBar
         leafId={leaf.id}
         tabs={tabBarItems}
@@ -126,6 +468,7 @@ function SplitPaneLeaf({
         onNewTerminalWithProfile={onNewTerminalWithProfile}
         terminalProfiles={terminalProfiles}
         onSplitPane={onSplitPane}
+        sortableItems={sortableItems}
       />
       <div className="center-pane-body">
         {/* keep-alive：所有 tab 内容永久挂载，非 active 用 opacity:0 隐藏 */}
@@ -334,22 +677,11 @@ function SplitPaneChild({
 export function SplitPane(props: Props) {
   const { tree, isActive, cwd } = props;
 
-  if (tree.type === 'leaf') {
-    return (
-      <div
-        className="split-pane"
-        style={{
-          opacity: isActive ? 1 : 0,
-          pointerEvents: isActive ? 'auto' : 'none',
-          position: 'absolute',
-          inset: 0,
-          zIndex: isActive ? 1 : 0,
-        }}
-      >
-        <SplitPaneLeaf leaf={tree} {...props} />
-      </div>
-    );
-  }
+  const content = tree.type === 'leaf' ? (
+    <SplitPaneLeaf leaf={tree} {...props} />
+  ) : (
+    <SplitPaneNode node={tree} {...props} />
+  );
 
   return (
     <div
@@ -362,7 +694,9 @@ export function SplitPane(props: Props) {
         zIndex: isActive ? 1 : 0,
       }}
     >
-      <SplitPaneNode node={tree} {...props} />
+      <SplitPaneDragProvider cwd={cwd} isActive={isActive}>
+        {content}
+      </SplitPaneDragProvider>
     </div>
   );
 }

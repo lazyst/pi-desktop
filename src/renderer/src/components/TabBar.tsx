@@ -1,19 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
-import {
-  DndContext,
-  PointerSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-  closestCenter,
-  type DragEndEvent,
-} from '@dnd-kit/core';
+import { useDroppable } from '@dnd-kit/core';
 import {
   SortableContext,
-  sortableKeyboardCoordinates,
   horizontalListSortingStrategy,
   useSortable,
-  arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal, IconArrowDown, IconSplitHorizontal, IconSplitVertical } from './icons';
@@ -59,6 +49,8 @@ interface Props {
   leafId?: string;
   // 分屏回调：点击分屏按钮时触发
   onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
+  // 跨 leaf 拖拽时，由 SplitPaneDragProvider 提供的 SortableContext items（动态管理）
+  sortableItems?: string[];
 }
 
 const renderKindIcon = (kind: TabKind) => {
@@ -216,25 +208,25 @@ function NewTerminalButton({
 // 当前 active 的 tab 加 active class；关闭 × 默认隐藏，hover 才显示（CSS 控制）。
 //
 // 拖拽重排（ADR-0001 TabReorder）：当传入 onReorder 时，整个 tab 条包进
-// DndContext + SortableContext，每个 tab 成为 useSortable 项；拖拽结束把「视觉顺序
-// 的 id 列表」交给 onReorder（父层调 store.reorderTabs 仅改 order，不碰渲染实例）。
+// SortableContext（每个 tab 成为 useSortable 项），但 DndContext 已提升到
+// 父层 SplitPaneDragProvider 中（ADR-0002 跨 leaf 拖拽），由父层统一管理
+// onDragStart/onDragOver/onDragEnd。
+//
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane }: Props) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane, sortableItems }: Props) {
   // 分组展示行（TabAutoGroup）：纯展示归类，不影响 tabs 数据顺序。
   const rows = buildGroupedRows(tabs, groupBy);
 
   const newVisible = showNew ?? onNew !== undefined;
 
+  // leaf 级 droppable（拖到 TabBar 空白区域时定位到 leaf 容器）
+  const { setNodeRef: setDroppableRef } = useDroppable({ id: leafId ? `leaf-${leafId}` : 'unknown' });
+
   // 无可重排（无 onReorder）时退化为纯展示，保持与原行为完全一致。
   if (!onReorder) {
     return (
-      <div className="terminal-tabbar" role="tablist">
+      <div className="terminal-tabbar" role="tablist" ref={setDroppableRef}>
         {rows.map((row, i) =>
           row.type === 'sep' ? (
             <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
@@ -312,81 +304,70 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
     );
   }
 
-  // tabs 顺序即视觉顺序（父层已按 store.order 排序传入）。拖拽结束依据当前
-  // tabs 顺序计算旧/新下标，arrayMove 后把新顺序回传 onReorder。
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = tabs.findIndex((t) => t.id === String(active.id));
-    const newIndex = tabs.findIndex((t) => t.id === String(over.id));
-    if (oldIndex === -1 || newIndex === -1) return;
-    const reordered = arrayMove(tabs, oldIndex, newIndex).map((t) => t.id);
-    onReorder(reordered);
-  };
+  // 使用动态 sortableItems（如果提供），否则使用默认的 tabs id 列表
+  const items = sortableItems ?? tabs.map((t) => t.id);
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-      <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
-        <div className="terminal-tabbar" role="tablist">
-          {rows.map((row, i) =>
-            row.type === 'sep' ? (
-              // 分组分隔符：非 sortable 静态元素，不参与拖拽排序计算；
-              // 仍需渲染在 SortableContext 内以共享 flex 行布局，但不进 items 数组。
-              <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
-            ) : (
-              <SortableTab
-                key={row.item.id}
-                item={row.item}
-                activeId={activeId}
-                onSelect={onSelect}
-                onClose={onClose}
-                dirty={tabDirty?.[row.item.id]}
-              />
-            ),
-          )}
-          {newVisible && onNew && (
+    <SortableContext items={items} strategy={horizontalListSortingStrategy}>
+      <div className="terminal-tabbar" role="tablist" ref={setDroppableRef}>
+        {rows.map((row, i) =>
+          row.type === 'sep' ? (
+            // 分组分隔符：非 sortable 静态元素，不参与拖拽排序计算；
+            // 仍需渲染在 SortableContext 内以共享 flex 行布局，但不进 items 数组。
+            <span key={`sep-${i}`} className="terminal-tab-group-sep" aria-hidden="true" />
+          ) : (
+            <SortableTab
+              key={row.item.id}
+              item={row.item}
+              activeId={activeId}
+              onSelect={onSelect}
+              onClose={onClose}
+              dirty={tabDirty?.[row.item.id]}
+            />
+          ),
+        )}
+        {newVisible && onNew && (
+          <button
+            type="button"
+            className="tab-new terminal-new-btn"
+            aria-label="新建"
+            title="新建"
+            onClick={onNew}
+          >
+            <IconNewSession size={14} />
+          </button>
+        )}
+        {onNewTerminal && (
+          <NewTerminalButton
+            onNewTerminal={onNewTerminal}
+            onNewTerminalWithProfile={onNewTerminalWithProfile}
+            terminalProfiles={terminalProfiles}
+          />
+        )}
+        {onSplitPane && leafId && (
+          <>
+            <div className="split-pane-btn-sep" />
             <button
               type="button"
-              className="tab-new terminal-new-btn"
-              aria-label="新建"
-              title="新建"
-              onClick={onNew}
+              className="split-pane-btn"
+              aria-label="水平分屏"
+              title="水平分屏（左右）"
+              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
             >
-              <IconNewSession size={14} />
+              <IconSplitHorizontal size={14} />
             </button>
-          )}
-          {onNewTerminal && (
-            <NewTerminalButton
-              onNewTerminal={onNewTerminal}
-              onNewTerminalWithProfile={onNewTerminalWithProfile}
-              terminalProfiles={terminalProfiles}
-            />
-          )}
-          {onSplitPane && leafId && (
-            <>
-              <div className="split-pane-btn-sep" />
-              <button
-                type="button"
-                className="split-pane-btn"
-                aria-label="水平分屏"
-                title="水平分屏（左右）"
-                onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'horizontal'); }}
-              >
-                <IconSplitHorizontal size={14} />
-              </button>
-              <button
-                type="button"
-                className="split-pane-btn"
-                aria-label="垂直分屏"
-                title="垂直分屏（上下）"
-                onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
-              >
-                <IconSplitVertical size={14} />
-              </button>
-            </>
-          )}
-        </div>
-      </SortableContext>
-    </DndContext>
+            <button
+              type="button"
+              className="split-pane-btn"
+              aria-label="垂直分屏"
+              title="垂直分屏（上下）"
+              onClick={(e) => { e.stopPropagation(); onSplitPane(leafId, 'vertical'); }}
+            >
+              <IconSplitVertical size={14} />
+            </button>
+          </>
+        )}
+      </div>
+    </SortableContext>
   );
 }

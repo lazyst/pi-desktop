@@ -3805,3 +3805,74 @@ html, body, #root {
   height: 8px;
 }
 
+/* ── 跨 leaf 拖拽视觉反馈（ADR-0002） ── */
+
+/* 目标 leaf 高亮（可拖放） */
+.split-pane-leaf--drag-over {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* 目标 leaf 高亮（去重冲突，不可拖放） */
+.split-pane-leaf--drag-over--invalid {
+  outline: 2px solid var(--danger);
+  outline-offset: -2px;
+}
+
+/* DragOverlay 样式 */
+.drag-overlay {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  color: var(--text);
+  opacity: 0.9;
+  cursor: grabbing;
+  user-select: none;
+  white-space: nowrap;
+}
+.drag-overlay-icon {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  opacity: 0.85;
+}
+.drag-overlay-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drag-overlay-invalid-icon {
+  margin-left: 4px;
+  flex: none;
+}
+
+/* 去重冲突时 DragOverlay 红色调 */
+.drag-overlay--invalid {
+  border-color: var(--danger);
+  outline: 1px solid var(--danger);
+  opacity: 0.8;
+}
+
+/* 插入位置指示线（左侧竖线） */
+.sortable-item--drop-before {
+  position: relative;
+}
+.sortable-item--drop-before::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  z-index: 1;
+}
+

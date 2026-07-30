@@ -1,6 +1,6 @@
 # 跨 SplitLeaf Tab 拖拽功能
 
-Status: ready-for-agent
+Status: completed
 
 ## Problem Statement
 

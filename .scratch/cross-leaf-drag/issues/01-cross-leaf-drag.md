@@ -1,5 +1,7 @@
 # 01-跨 leaf 拖拽实现
 
+Status: completed
+
 ## Problem
 
 Tab 只能在同一 SplitLeaf 内拖拽重排，无法在不同 SplitLeaf 之间移动。用户需要将 Tab 从一个分屏窗格拖拽到另一个窗格以灵活组织工作区布局。

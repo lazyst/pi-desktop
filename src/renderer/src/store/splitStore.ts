@@ -347,6 +347,57 @@ export function findTabByTerminalId(cwdTrees: Record<string, SplitTree>, id: str
   return null;
 }
 
+/**
+ * 判断指定 tab 是否可以移动到目标 leaf（去重 + 同 cwd 检查）。
+ * 导出供 SplitPaneDragProvider 使用。
+ */
+export function canMoveTabToLeaf(
+  tab: Tab,
+  targetLeaf: SplitLeaf,
+  targetCwd: string,
+  cwdTrees: Record<string, SplitTree>,
+): boolean {
+  // 检查 cwd 隔离：源 tab 的 cwd 必须与目标 leaf 的 cwd 一致
+  // 通过 findLeaf 确认 targetLeaf 属于 targetCwd
+  const targetFound = findLeaf(cwdTrees, targetLeaf.id);
+  if (!targetFound || targetFound.cwd !== targetCwd) return false;
+
+  switch (tab.kind) {
+    case 'session': {
+      const sessionKey = (tab as SessionTab).key;
+      return !targetLeaf.tabs.some(
+        (t) => t.kind === 'session' && (t as SessionTab).key === sessionKey,
+      );
+    }
+    case 'diff': {
+      const commitHash = (tab as DiffTab).commitHash;
+      return !targetLeaf.tabs.some(
+        (t) => t.kind === 'diff' && (t as DiffTab).commitHash === commitHash,
+      );
+    }
+    case 'preview': {
+      const path = (tab as PreviewTab).path;
+      return !targetLeaf.tabs.some(
+        (t) => t.kind === 'preview' && (t as PreviewTab).path === path,
+      );
+    }
+    case 'integrated-terminal': {
+      // 防御性检查：终端 id 全局唯一，但确保目标 leaf 没有同 id 终端
+      return !targetLeaf.tabs.some(
+        (t) => t.kind === 'integrated-terminal' && t.id === tab.id,
+      );
+    }
+    case 'session-content': {
+      const sessionKey = (tab as SessionContentTab).sessionKey;
+      return !targetLeaf.tabs.some(
+        (t) => t.kind === 'session-content' && (t as SessionContentTab).sessionKey === sessionKey,
+      );
+    }
+    default:
+      return true;
+  }
+}
+
 /** 在分屏树中查找 leaf。 */
 function findLeafInTree(tree: SplitTree, leafId: string): SplitLeaf | null {
   for (const leaf of allLeaves(tree)) {
@@ -439,6 +490,7 @@ export interface SplitStore {
   closeLeaf: (leafId: string) => void;
   setRatios: (nodeId: string, ratios: number[]) => void;
   setActiveLeaf: (leafId: string) => void;
+  moveTabAcrossLeafs: (tabId: string, sourceLeafId: string, targetLeafId: string, targetIndex: number) => void;
 }
 
 /** 获取当前活跃 leaf 的 id。leafId 可选，默认使用 activeLeafId。 */
@@ -1604,6 +1656,103 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
         cwdTrees[cwd] = updateTree(tree);
       }
       return { cwdTrees };
+    }),
+
+  moveTabAcrossLeafs: (tabId, sourceLeafId, targetLeafId, targetIndex) =>
+    set((state) => {
+      const sourceFound = findLeaf(state.cwdTrees, sourceLeafId);
+      const targetFound = findLeaf(state.cwdTrees, targetLeafId);
+      if (!sourceFound || !targetFound) return {};
+      const { cwd: sourceCwd, leaf: sourceLeaf } = sourceFound;
+      const { cwd: targetCwd, leaf: targetLeaf } = targetFound;
+
+      // 跨 cwd 移动是防御性检查（不允许），但保留逻辑
+      if (sourceCwd !== targetCwd) return {};
+
+      const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+      if (!tab) return {};
+
+      // 保存滚动位置
+      if (tab.kind === 'session' || tab.kind === 'integrated-terminal') {
+        capturePaneScrollState(tab.id);
+      }
+
+      // 从 source leaf 移除 tab
+      const sourceRemaining = sourceLeaf.tabs.filter((t) => t.id !== tabId);
+      const isLastTab = sourceRemaining.length === 0;
+
+      // 更新树结构
+      let cwdTrees = { ...state.cwdTrees };
+
+      if (isLastTab) {
+        // 移走最后一个 tab → 关闭 source leaf
+        const tree = cwdTrees[sourceCwd];
+        const newTree = removeLeafFromTree(tree, sourceLeafId);
+        if (!newTree) {
+          // 树空了 → 创建空 leaf
+          const emptyLeaf = createLeaf();
+          cwdTrees = { ...cwdTrees, [sourceCwd]: emptyLeaf };
+        } else {
+          cwdTrees = { ...cwdTrees, [sourceCwd]: newTree };
+        }
+      } else {
+        // 更新 source leaf 的 activeTabId
+        let updatedSourceLeaf: SplitLeaf = { ...sourceLeaf, tabs: sourceRemaining };
+
+        if (sourceLeaf.activeTabId === tabId) {
+          const tabCwd = getTabCwd(tab);
+          const next = selectNextTabOnClose(
+            sourceRemaining, tabId, tabCwd,
+            sourceLeaf.activeTabId, state.activeCwd,
+            state.cwdActiveTab, state.cwdTabHistory,
+          );
+          if (next && next.activeTabId) {
+            updatedSourceLeaf = { ...updatedSourceLeaf, activeTabId: next.activeTabId };
+          } else {
+            updatedSourceLeaf = { ...updatedSourceLeaf, activeTabId: null };
+          }
+        }
+
+        // 替换树中的 source leaf
+        const replaceSource = (tree: SplitTree): SplitTree => {
+          if (tree.type === 'leaf') {
+            return tree.id === sourceLeafId ? updatedSourceLeaf : tree;
+          }
+          return { ...tree, children: tree.children.map(replaceSource) };
+        };
+        cwdTrees = { ...cwdTrees, [sourceCwd]: replaceSource(cwdTrees[sourceCwd]) };
+      }
+
+      // 将 tab 插入到 target leaf
+      const targetLeafTabs = [...targetLeaf.tabs];
+      const safeIndex = Math.min(targetIndex, targetLeafTabs.length);
+      targetLeafTabs.splice(safeIndex, 0, tab);
+
+      const updatedTargetLeaf: SplitLeaf = {
+        ...targetLeaf,
+        tabs: targetLeafTabs,
+        activeTabId: tabId,
+      };
+
+      const replaceTarget = (tree: SplitTree): SplitTree => {
+        if (tree.type === 'leaf') {
+          return tree.id === targetLeafId ? updatedTargetLeaf : tree;
+        }
+        return { ...tree, children: tree.children.map(replaceTarget) };
+      };
+      cwdTrees = { ...cwdTrees, [targetCwd]: replaceTarget(cwdTrees[targetCwd]) };
+
+      // 更新历史记录与活跃状态
+      const cwdTabHistory = pushTabHistory(state.cwdTabHistory, targetCwd, tabId);
+      const cwdActiveTab = updateCwdActiveTab(state.cwdActiveTab, collectAllTabs(cwdTrees), targetCwd, tabId);
+
+      return {
+        cwdTrees,
+        activeLeafId: targetLeafId,
+        cwdActiveLeafId: { ...state.cwdActiveLeafId, [targetCwd]: targetLeafId },
+        cwdTabHistory,
+        cwdActiveTab: { ...cwdActiveTab, [targetCwd]: tabId },
+      };
     }),
 
   setActiveLeaf: (leafId) =>

@@ -5,7 +5,7 @@ vi.mock('../../components/paneManager', () => ({
   capturePaneScrollState: vi.fn(),
 }));
 
-import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs, findLeaf } from '../splitStore';
+import { useSplitStore, findTabById, findTabByKey, findTabByTerminalId, selectNextTabOnClose, getAllTabs, findLeaf, canMoveTabToLeaf } from '../splitStore';
 import type { Tab, TabKind, TabLocation, SessionTab, TabLoc } from '../splitStore';
 
 /** 重置 store 到初始空状态。 */
@@ -707,6 +707,309 @@ describe('splitStore — 数据模型与基础操作', () => {
       const found = findLeaf(s2.cwdTrees, leafId);
       expect(found).not.toBeNull();
       expect(found!.leaf.tabs.some((t) => t.id === 'term-2')).toBe(true);
+    });
+  });
+
+  describe('canMoveTabToLeaf — 去重检查', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      // 分屏创建两个 leaf
+      const s = getState();
+      const leafId = s.cwdActiveLeafId['/a']!;
+      s.splitPane(leafId, 'horizontal');
+
+      // 在第二个 leaf 中创建一些 tab（使用唯一 key 避免全局去重干扰）
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const newLeafId = tree.children[1].id;
+        s2.openTerminal('term-1', '/a', 'Terminal 1', newLeafId);
+        s2.openDiff('/a', 'hash1', newLeafId);
+        s2.openPreview('/a', 'file.ts', 'file.ts', newLeafId);
+        // 在第二个 leaf 中创建一个不同 key 的 session（用于测试"存在"场景）
+        s2.openSession({ key: '/a/target-session', cwd: '/a', name: 'target-sess' }, newLeafId);
+      }
+    });
+
+    it('同一 session key 已存在时返回 false', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const targetLeaf = tree.children[1];
+        if (targetLeaf.type === 'leaf') {
+          // 检查目标 leaf 中是否有 /a/target-session
+          const sessionTab = { id: '/a/target-session', kind: 'session' as const, location: 'editor' as const, title: 'target-sess', hidden: false, order: 0, key: '/a/target-session', cwd: '/a', name: 'target-sess' };
+          const result = canMoveTabToLeaf(sessionTab, targetLeaf, '/a', s.cwdTrees);
+          expect(result).toBe(false);
+        }
+      }
+    });
+
+
+    it('不同 session key 时返回 true', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const targetLeaf = tree.children[1];
+        if (targetLeaf.type === 'leaf') {
+          const sessionTab = { id: 'new-session', kind: 'session' as const, location: 'editor' as const, title: 'new', hidden: false, order: 0, key: 'new-session', cwd: '/a', name: 'new' };
+          const result = canMoveTabToLeaf(sessionTab, targetLeaf, '/a', s.cwdTrees);
+          expect(result).toBe(true);
+        }
+      }
+    });
+
+    it('不同 cwd 时返回 false（目标 leaf 不在 targetCwd 中）', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const targetLeaf = tree.children[1];
+        if (targetLeaf.type === 'leaf') {
+          const sessionTab = { id: 'new-session', kind: 'session' as const, location: 'editor' as const, title: 'new', hidden: false, order: 0, key: 'new-session', cwd: '/a', name: 'new' };
+          // 传 targetCwd='/nonexistent'，目标 leaf 不在该 cwd 中
+          const result = canMoveTabToLeaf(sessionTab, targetLeaf, '/nonexistent', s.cwdTrees);
+          expect(result).toBe(false);
+        }
+      }
+    });
+
+    it('终端 tab 允许跨 leaf 移动', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const targetLeaf = tree.children[1];
+        if (targetLeaf.type === 'leaf') {
+          const terminalTab = { id: 'term-new', kind: 'integrated-terminal' as const, location: 'editor' as const, title: 'New Terminal', hidden: false, order: 0, cwd: '/a' };
+          const result = canMoveTabToLeaf(terminalTab, targetLeaf, '/a', s.cwdTrees);
+          expect(result).toBe(true);
+        }
+      }
+    });
+
+    it('已有同 commitHash diff 时返回 false', () => {
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const targetLeaf = tree.children[1];
+        if (targetLeaf.type === 'leaf') {
+          const diffTab = { id: 'diff:/a//hash1', kind: 'diff' as const, location: 'editor' as const, title: 'hash1', hidden: false, order: 0, cwd: '/a', commitHash: 'hash1' };
+          const result = canMoveTabToLeaf(diffTab, targetLeaf, '/a', s.cwdTrees);
+          expect(result).toBe(false);
+        }
+      }
+    });
+  });
+
+  describe('moveTabAcrossLeafs — 跨 leaf 移动 tab', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      getState().openSession({ key: '/a/s2', cwd: '/a', name: 'sess-b' });
+    });
+
+    it('将 tab 从 leaf A 移动到 leaf B（验证 tabs 数组变化）', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      // 分屏创建 leaf B
+      s.splitPane(leafA, 'horizontal');
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        // 将 /a/s2 从 leafA 移动到 leafB
+        s2.moveTabAcrossLeafs('/a/s2', leafA, leafB, 0);
+
+        const s3 = getState();
+        const tree2 = s3.cwdTrees['/a'];
+        if (tree2.type === 'split') {
+          const leafAFound = findLeaf(s3.cwdTrees, leafA);
+          const leafBFound = findLeaf(s3.cwdTrees, leafB);
+
+          expect(leafAFound).not.toBeNull();
+          expect(leafBFound).not.toBeNull();
+
+          // leafA 应只有 /a/s1
+          expect(leafAFound!.leaf.tabs.some((t) => t.id === '/a/s2')).toBe(false);
+          expect(leafAFound!.leaf.tabs.some((t) => t.id === '/a/s1')).toBe(true);
+
+          // leafB 应有 /a/s2
+          expect(leafBFound!.leaf.tabs.some((t) => t.id === '/a/s2')).toBe(true);
+        }
+      }
+    });
+
+    it('移走最后一个 tab 后源 leaf 被关闭', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      // 分屏创建 leaf B
+      s.splitPane(leafA, 'horizontal');
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        // 分屏时 leafA 有 /a/s1, /a/s2 两个 tab
+        // 先创建一个新 tab 在 leafB 中
+        s2.openTerminal('term-1', '/a', 'Terminal 1', leafB);
+
+        // 把 /a/s1 移到 leafB → leafA 还剩 /a/s2
+        const s3 = getState();
+        s3.moveTabAcrossLeafs('/a/s1', leafA, leafB, 0);
+
+        // 把 /a/s2 移到 leafB → leafA 变空 → 自动关闭
+        const s4 = getState();
+        s4.moveTabAcrossLeafs('/a/s2', leafA, leafB, 0);
+
+        const s5 = getState();
+        // 检查 leafA 是否还在（应该被关闭了，树结构简化）
+        const tree3 = s5.cwdTrees['/a'];
+        // 因为只剩一个 leaf，树应该变回 leaf 类型
+        expect(tree3.type).toBe('leaf');
+      }
+    });
+
+    it('支持指定插入位置（索引 0 / 中间 / 末尾）', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      s.splitPane(leafA, 'horizontal');
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        // 在 leafB 中创建两个终端
+        s2.openTerminal('term-1', '/a', 'Terminal 1', leafB);
+        s2.openTerminal('term-2', '/a', 'Terminal 2', leafB);
+
+        // 将 /a/s1 插入到 leafB 的索引 1（中间）
+        s2.moveTabAcrossLeafs('/a/s1', leafA, leafB, 1);
+
+        const s3 = getState();
+        const leafBFound = findLeaf(s3.cwdTrees, leafB);
+        expect(leafBFound).not.toBeNull();
+
+        const tabs = leafBFound!.leaf.tabs;
+        // 期望顺序: term-1, /a/s1, term-2
+        // /a/s1 应该在第 1 个位置
+        const s1Idx = tabs.findIndex((t) => t.id === '/a/s1');
+        const term1Idx = tabs.findIndex((t) => t.id === 'term-1');
+        const term2Idx = tabs.findIndex((t) => t.id === 'term-2');
+        expect(s1Idx).toBeGreaterThan(term1Idx);
+        expect(s1Idx).toBeLessThan(term2Idx);
+      }
+    });
+
+    it('移动后目标 leaf 的 activeTabId 更新为被拖拽的 tab', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      s.splitPane(leafA, 'horizontal');
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        s2.moveTabAcrossLeafs('/a/s2', leafA, leafB, 0);
+
+        const s3 = getState();
+        const leafBFound = findLeaf(s3.cwdTrees, leafB);
+        expect(leafBFound).not.toBeNull();
+        expect(leafBFound!.leaf.activeTabId).toBe('/a/s2');
+      }
+    });
+
+    it('移动后 activeLeafId 更新为目标 leaf', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      s.splitPane(leafA, 'horizontal');
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        s2.moveTabAcrossLeafs('/a/s2', leafA, leafB, 0);
+
+        const s3 = getState();
+        expect(s3.activeLeafId).toBe(leafB);
+      }
+    });
+
+    it('移走 activeTabId 时，源 leaf 切换到下一个可见 tab', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      // 创建第三个 tab 在 leafA 中
+      s.openSession({ key: '/a/s3', cwd: '/a', name: 'sess-c' });
+
+      const s2 = getState();
+      // 当前 activeTabId 应该是 /a/s3（最新创建的）
+
+      s2.splitPane(leafA, 'horizontal');
+
+      const s3 = getState();
+      const tree = s3.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        // 移走 /a/s3（当前 active）
+        s3.moveTabAcrossLeafs('/a/s3', leafA, leafB, 0);
+
+        const s4 = getState();
+        const leafAFound = findLeaf(s4.cwdTrees, leafA);
+        expect(leafAFound).not.toBeNull();
+        // activeTabId 应切换到另一个可见 tab（/a/s2 或 /a/s1）
+        expect(leafAFound!.leaf.activeTabId).not.toBeNull();
+        expect(leafAFound!.leaf.activeTabId).not.toBe('/a/s3');
+      }
+    });
+
+    it('移动后 cwdTabHistory 和 cwdActiveTab 被更新', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      s.splitPane(leafA, 'horizontal');
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leafB = tree.children[1].id;
+
+        s2.moveTabAcrossLeafs('/a/s2', leafA, leafB, 0);
+
+        const s3 = getState();
+        // cwdTabHistory 应包含 /a/s2
+        const history = s3.cwdTabHistory['/a'];
+        expect(history).toBeDefined();
+        expect(history).toContain('/a/s2');
+
+        // cwdActiveTab 应更新为 /a/s2
+        expect(s3.cwdActiveTab['/a']).toBe('/a/s2');
+      }
+    });
+
+    it('同 leaf 移动不影响 reorderTabsInLeaf', () => {
+      const s = getState();
+      const leafA = s.cwdActiveLeafId['/a']!;
+
+      // 同 leaf 移动（sourceLeafId === targetLeafId）应该由 reorderTabsInLeaf 处理
+      // moveTabAcrossLeafs 的行为在此时不会触发
+      // 这只是验证 moveTabAcrossLeafs 在 source===target 时不会崩溃
+      s.moveTabAcrossLeafs('/a/s1', leafA, leafA, 0);
+
+      const s2 = getState();
+      const leafAFound = findLeaf(s2.cwdTrees, leafA);
+      expect(leafAFound).not.toBeNull();
+      // tab 应该还在
+      expect(leafAFound!.leaf.tabs.some((t) => t.id === '/a/s1')).toBe(true);
     });
   });
 });
