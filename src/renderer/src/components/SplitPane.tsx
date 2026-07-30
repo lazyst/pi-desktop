@@ -212,19 +212,21 @@ function SplitPaneDragProvider({
     setCanDrop(canDropResult);
 
     // 动态更新 SortableContext items
-    setLeafItems((prev) => {
-      const next = { ...prev };
+    // 同 leaf 拖拽：管理 items 实现插入指示线（被拖 tab 在 items 中有对应 DOM 元素）
+    // 跨 leaf 拖拽：不管理 items，被拖 tab 在目标 leaf 无 DOM 元素，
+    // 强行加入 items 会导致 horizontalListSortingStrategy 计算出错 → 其他 tab 消失
+    if (isSameLeaf) {
+      setLeafItems((prev) => {
+        const next = { ...prev };
 
-      // 如果目标 leaf 不在 prev 中（尚未被修改过），从 defaultLeafItems 初始化
-      // 否则会丢失目标 leaf 的其他 tab
-      if (!(targetLeafId in prev)) {
-        next[targetLeafId] = [...(defaultLeafItems[targetLeafId] ?? [])];
-      }
+        // 如果目标 leaf 不在 prev 中，从 defaultLeafItems 初始化
+        if (!(targetLeafId in prev)) {
+          next[targetLeafId] = [...(defaultLeafItems[targetLeafId] ?? [])];
+        }
 
-      // 如果目标 leaf 中已存在该 tab id，不再重复添加
-      if (next[targetLeafId]?.includes(activeId)) return prev;
+        // 如果目标 leaf 中已存在该 tab id，不再重复添加
+        if (next[targetLeafId]?.includes(activeId)) return prev;
 
-      if (canDropResult) {
         // 从所有 leaf 的 items 中移除
         for (const key of Object.keys(next)) {
           next[key] = next[key].filter((id) => id !== activeId);
@@ -232,28 +234,22 @@ function SplitPaneDragProvider({
         // 加入目标 leaf
         // 确定插入位置：如果 overId 是 tab id，放在该 tab 前面；否则追加到末尾
         if (overId.startsWith('leaf-')) {
-          // 拖到空白区域 → 追加到末尾
           next[targetLeafId] = [...(next[targetLeafId] ?? []), activeId];
         } else {
-          // 拖到某个 tab 上 → 插入到该 tab 前面
           const items = next[targetLeafId] ?? [];
           const overIdx = items.indexOf(overId);
           if (overIdx >= 0) {
-            items.splice(overIdx, 0, activeId);
-            next[targetLeafId] = items;
+            const updated = [...items];
+            updated.splice(overIdx, 0, activeId);
+            next[targetLeafId] = updated;
           } else {
             next[targetLeafId] = [...items, activeId];
           }
         }
-      } else {
-        // canDrop 为 false → 确保目标 leaf 的 items 中没有该 tab id
-        if (next[targetLeafId]) {
-          next[targetLeafId] = next[targetLeafId].filter((id) => id !== activeId);
-        }
-      }
 
-      return next;
-    });
+        return next;
+      });
+    }
   }, [cwdTrees, defaultLeafItems]);
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
