@@ -152,6 +152,26 @@ export function IconSidebarToggle({ size = 16, className, collapsed }: IconProps
 
 // 右栏折叠/展开按钮图标：展开时箭头向右（指示折叠），折叠时箭头向左（指示展开）。
 // collapsed 为 true 时箭头指向左，false 时箭头指向右。
+// 水平分屏（左右）图标：矩形被竖线一分为二。
+export function IconSplitHorizontal({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M12 5v14" />
+    </svg>
+  );
+}
+
+// 垂直分屏（上下）图标：矩形被横线一分为二。
+export function IconSplitVertical({ size = 16, className }: IconProps) {
+  return (
+    <svg {...base(size)} className={className} aria-hidden="true">
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M3 12h18" />
+    </svg>
+  );
+}
+
 export function IconRightPanelToggle({ size = 16, className, collapsed }: IconProps & { collapsed?: boolean }) {
   return (
     <svg {...base(size)} className={className} aria-hidden="true">

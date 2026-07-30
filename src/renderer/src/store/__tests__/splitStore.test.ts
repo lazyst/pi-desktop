@@ -351,4 +351,180 @@ describe('splitStore — 数据模型与基础操作', () => {
       expect(found).toBeNull();
     });
   });
+
+  describe('splitPane — 分屏', () => {
+    beforeEach(() => {
+      // 先创建一个 session tab，建立 cwd 树
+      getState().openSession({ key: '/a/session.jsonl', cwd: '/a', name: 'sess-a' });
+    });
+
+    it('水平分屏后树结构正确（两个 leaf 各 50%）', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      expect(leafId).toBeTruthy();
+
+      store.splitPane(leafId, 'horizontal');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      expect(tree.type).toBe('split');
+      if (tree.type === 'split') {
+        expect(tree.direction).toBe('horizontal');
+        expect(tree.ratios).toEqual([0.5, 0.5]);
+        expect(tree.children).toHaveLength(2);
+        expect(tree.children[0].type).toBe('leaf');
+        expect(tree.children[1].type).toBe('leaf');
+        expect(tree.children[0].id).toBe(leafId); // 原 leaf 保留
+        expect(tree.children[1].id).not.toBe(leafId); // 新 leaf
+      }
+    });
+
+    it('垂直分屏后 direction 为 vertical', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      store.splitPane(leafId, 'vertical');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        expect(tree.direction).toBe('vertical');
+      }
+    });
+
+    it('分屏后 activeLeafId 指向新 leaf', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      store.splitPane(leafId, 'horizontal');
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const newLeafId = tree.children[1].id;
+        expect(s.activeLeafId).toBe(newLeafId);
+      }
+    });
+
+    it('连续分屏（嵌套）后树结构正确', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      // 第一次分屏：水平
+      store.splitPane(leafId, 'horizontal');
+      let s = getState();
+      let tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leftLeaf = tree.children[0];
+        // 第二次分屏：在左 leaf 上垂直分屏
+        store.splitPane(leftLeaf.id, 'vertical');
+        s = getState();
+        tree = s.cwdTrees['/a'];
+        // 根节点还是 split
+        expect(tree.type).toBe('split');
+        if (tree.type === 'split') {
+          expect(tree.direction).toBe('horizontal');
+          expect(tree.children).toHaveLength(2);
+          // 左 child 现在是 split node（嵌套）
+          const leftChild = tree.children[0];
+          expect(leftChild.type).toBe('split');
+          if (leftChild.type === 'split') {
+            expect(leftChild.direction).toBe('vertical');
+            expect(leftChild.children).toHaveLength(2);
+            expect(leftChild.children[0].type).toBe('leaf');
+            expect(leftChild.children[1].type).toBe('leaf');
+          }
+        }
+      }
+    });
+  });
+
+  describe('closeLeaf — 关闭 leaf', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/session.jsonl', cwd: '/a', name: 'sess-a' });
+    });
+
+    it('关闭最后 leaf 后 leaf 被清空', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      store.closeLeaf(leafId);
+
+      const s = getState();
+      const tree = s.cwdTrees['/a'];
+      expect(tree.type).toBe('leaf');
+      if (tree.type === 'leaf') {
+        expect(tree.tabs).toHaveLength(0);
+      }
+    });
+
+    it('分屏后关闭一个 leaf 合并回单 leaf', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      store.splitPane(leafId, 'horizontal');
+
+      let s = getState();
+      let tree = s.cwdTrees['/a'];
+      expect(tree.type).toBe('split');
+
+      if (tree.type === 'split') {
+        const newLeafId = tree.children[1].id;
+        // 关闭新 leaf
+        store.closeLeaf(newLeafId);
+        s = getState();
+        tree = s.cwdTrees['/a'];
+        // 合并回单 leaf
+        expect(tree.type).toBe('leaf');
+        expect(tree.id).toBe(leafId); // 原 leaf 保留
+      }
+    });
+
+    it('嵌套分屏后关闭一个 leaf 树结构正确', () => {
+      const store = getState();
+      const leafId = store.cwdActiveLeafId['/a']!;
+      store.splitPane(leafId, 'horizontal');
+
+      let s = getState();
+      let tree = s.cwdTrees['/a'];
+      if (tree.type === 'split') {
+        const leftLeaf = tree.children[0];
+        // 在左 leaf 上垂直分屏
+        store.splitPane(leftLeaf.id, 'vertical');
+
+        s = getState();
+        tree = s.cwdTrees['/a'];
+        if (tree.type === 'split') {
+          const leftChild = tree.children[0];
+          if (leftChild.type === 'split') {
+            const nestedNewLeaf = leftChild.children[1].id;
+            // 关闭嵌套的新 leaf
+            store.closeLeaf(nestedNewLeaf);
+            s = getState();
+            tree = s.cwdTrees['/a'];
+            // 嵌套 split 合并回单 leaf
+            if (tree.type === 'split') {
+              expect(tree.children[0].type).toBe('leaf');
+              expect(tree.children).toHaveLength(2);
+            }
+          }
+        }
+      }
+    });
+  });
+
+  describe('空状态 — leaf 无 tab', () => {
+    beforeEach(() => {
+      getState().openSession({ key: '/a/session.jsonl', cwd: '/a', name: 'sess-a' });
+    });
+
+    it('初始 leaf 的 tabs 为空', () => {
+      const s = getState();
+      // 先 closeLeaf 清空 leaf
+      const leafId = s.cwdActiveLeafId['/a']!;
+      s.closeLeaf(leafId);
+
+      const s2 = getState();
+      const tree = s2.cwdTrees['/a'];
+      expect(tree.type).toBe('leaf');
+      if (tree.type === 'leaf') {
+        expect(tree.tabs).toHaveLength(0);
+      }
+    });
+  });
 });

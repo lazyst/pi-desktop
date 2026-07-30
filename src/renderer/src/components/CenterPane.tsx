@@ -26,6 +26,8 @@ interface Props {
   onNewTerminalWithProfile?: (profileId: string) => void;
   /** 可用终端 profile 列表 */
   terminalProfiles?: Array<{ id: string; label: string }>;
+  /** 分屏回调 */
+  onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
 }
 
 export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, addedDirs, onOpen, onNewTerminal, onNewTerminalWithProfile, terminalProfiles }: Props) {
@@ -190,6 +192,7 @@ export function CenterPane({ onOpenFile, onDestroyTerminal, onDestroySession, ad
             requestCloseTab={requestCloseTab}
             registerCloseGuard={registerCloseGuard}
             addedDirs={addedDirs}
+            onSplitPane={onSplitPane}
           />
         ))}
       </div>

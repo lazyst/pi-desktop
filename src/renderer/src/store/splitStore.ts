@@ -356,7 +356,7 @@ function findLeafInTree(tree: SplitTree, leafId: string): SplitLeaf | null {
 }
 
 /** 在所有 cwd 树中查找 leaf。 */
-function findLeaf(cwdTrees: Record<string, SplitTree>, leafId: string): { cwd: string; leaf: SplitLeaf } | null {
+export function findLeaf(cwdTrees: Record<string, SplitTree>, leafId: string): { cwd: string; leaf: SplitLeaf } | null {
   for (const [cwd, tree] of Object.entries(cwdTrees)) {
     const leaf = findLeafInTree(tree, leafId);
     if (leaf) return { cwd, leaf };

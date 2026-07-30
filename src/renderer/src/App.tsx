@@ -8,7 +8,7 @@ import { CenterPane } from './components/CenterPane';
 import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
 import { useTabStore } from './store/tabStore';
-import { getAllTabs } from './store/splitStore';
+import { getAllTabs, findLeaf, getTabCwd } from './store/splitStore';
 import { initTheme } from './theme';
 import { initFontSize, bumpFontSize, getFontSize, FONT_SIZE_MIN, FONT_SIZE_MAX } from './fontSize';
 import { usePanelLayout } from './hooks/usePanelLayout';
@@ -358,6 +358,36 @@ export default function App() {
     useTabStore.getState().openSessionContent(sessionKey, sessionName, cwd);
   }, [disk, appWorkDir]);
 
+  // 分屏：创建新 leaf + 自动创建终端
+  const handleSplitPane = useCallback(async (leafId: string, direction: 'horizontal' | 'vertical') => {
+    try {
+      // 在 split 前获取 parent leaf 的 active tab 的 cwd
+      const storeState = useTabStore.getState();
+      const found = findLeaf(storeState.cwdTrees, leafId);
+      if (!found) return;
+      const { leaf } = found;
+      const activeTab = leaf.tabs.find((t) => t.id === leaf.activeTabId);
+      const parentCwd = activeTab ? getTabCwd(activeTab) : storeState.activeCwd || appWorkDirRef.current || '';
+
+      // 创建分屏结构
+      useTabStore.getState().splitPane(leafId, direction);
+
+      // 在新 leaf 中创建终端
+      if (parentCwd) {
+        const profiles = profilesRef.current;
+        if (!profiles) return;
+        const cfg = await pi.getConfig();
+        const defaultId = cfg.defaultTerminalProfile;
+        const profile = (defaultId && profiles.find((p) => p.id === defaultId)) || profiles[0];
+        if (!profile) return;
+        const info = await pi.spawnTerminal({ command: undefined, cwd: parentCwd, profile });
+        useTabStore.getState().openTerminal(info.id, info.cwd, info.title);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
   return (
     <div className="app">
       <TitleBar
@@ -408,6 +438,7 @@ export default function App() {
         onNewTerminal={handleNewTerminal}
         onNewTerminalWithProfile={handleNewTerminalWithProfile}
         terminalProfiles={terminalProfiles}
+        onSplitPane={handleSplitPane}
       />
       <RightPanel
         addedDirs={Array.from(visibleDirs)}

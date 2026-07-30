@@ -35,6 +35,8 @@ interface Props {
   requestCloseTab: (id: string) => void;
   registerCloseGuard: (id: string, guard: (() => void) | null) => void;
   addedDirs?: string[];
+  // 分屏回调
+  onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
 }
 
 /** 比较两个数组是否浅相等。 */
@@ -68,6 +70,7 @@ function SplitPaneLeaf({
   requestCloseTab,
   registerCloseGuard,
   addedDirs,
+  onSplitPane,
 }: Props & { leaf: SplitLeaf }) {
   const selectTab = useSplitStore((s) => s.selectTab);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
@@ -122,6 +125,7 @@ function SplitPaneLeaf({
         onNewTerminal={onNewTerminal}
         onNewTerminalWithProfile={onNewTerminalWithProfile}
         terminalProfiles={terminalProfiles}
+        onSplitPane={onSplitPane}
       />
       <div className="center-pane-body">
         {/* keep-alive：所有 tab 内容永久挂载，非 active 用 opacity:0 隐藏 */}

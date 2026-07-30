@@ -16,7 +16,7 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal, IconArrowDown } from './icons';
+import { IconClose, IconNewSession, IconFile, IconGitDiff, IconSession, IconTerminal, IconArrowDown, IconSplitHorizontal, IconSplitVertical } from './icons';
 import { buildGroupedRows } from './tabGrouping';
 export type { RenderedRow } from './tabGrouping';
 
@@ -57,6 +57,8 @@ interface Props {
   terminalProfiles?: Array<{ id: string; label: string }>;
   // 所属 SplitLeaf 的 id（分屏模式下使用），用于 closeTab/selectTab/reorderTabsInLeaf 等操作
   leafId?: string;
+  // 分屏回调：点击分屏按钮时触发
+  onSplitPane?: (leafId: string, direction: 'horizontal' | 'vertical') => void;
 }
 
 const renderKindIcon = (kind: TabKind) => {
@@ -218,7 +220,7 @@ function NewTerminalButton({
 // 的 id 列表」交给 onReorder（父层调 store.reorderTabs 仅改 order，不碰渲染实例）。
 // 渲染顺序完全由父层传入的 tabs 顺序（即 store.order 排序后的结果）决定，本组件不
 // 另存一份顺序快照，从而保证 store 重排后 TabBar 视觉顺序即时跟随。
-export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles }: Props) {
+export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onReorder, groupBy, tabDirty, onNewTerminal, onNewTerminalWithProfile, terminalProfiles, leafId, onSplitPane }: Props) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -264,6 +266,28 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
               )}
             </div>
           ),
+        )}
+        {onSplitPane && leafId && (
+          <>
+            <button
+              type="button"
+              className="split-pane-btn"
+              aria-label="水平分屏"
+              title="水平分屏（左右）"
+              onClick={() => onSplitPane(leafId, 'horizontal')}
+            >
+              <IconSplitHorizontal size={14} />
+            </button>
+            <button
+              type="button"
+              className="split-pane-btn"
+              aria-label="垂直分屏"
+              title="垂直分屏（上下）"
+              onClick={() => onSplitPane(leafId, 'vertical')}
+            >
+              <IconSplitVertical size={14} />
+            </button>
+          </>
         )}
         {newVisible && onNew && (
           <button
@@ -318,6 +342,28 @@ export function TabBar({ tabs, activeId, onSelect, onClose, onNew, showNew, onRe
                 dirty={tabDirty?.[row.item.id]}
               />
             ),
+          )}
+          {onSplitPane && leafId && (
+            <>
+              <button
+                type="button"
+                className="split-pane-btn"
+                aria-label="水平分屏"
+                title="水平分屏（左右）"
+                onClick={() => onSplitPane(leafId, 'horizontal')}
+              >
+                <IconSplitHorizontal size={14} />
+              </button>
+              <button
+                type="button"
+                className="split-pane-btn"
+                aria-label="垂直分屏"
+                title="垂直分屏（上下）"
+                onClick={() => onSplitPane(leafId, 'vertical')}
+              >
+                <IconSplitVertical size={14} />
+              </button>
+            </>
           )}
           {newVisible && onNew && (
             <button
