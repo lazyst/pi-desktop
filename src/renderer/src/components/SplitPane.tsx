@@ -105,7 +105,10 @@ function SplitPaneDragProvider({
   const [leafItems, setLeafItems] = useState<Record<string, string[]>>({});
   const [hoveredLeafId, setHoveredLeafId] = useState<string | null>(null);
   const [canDrop, setCanDrop] = useState(true);
-  const [activeDragItem, setActiveDragItem] = useState<{ tabId: string; sourceLeafId: string } | null>(null);
+  /** ref 存储 drag item，回调总能读到最新值（避免 useCallback 闭包陈旧）。 */
+  const activeDragItemRef = useRef<{ tabId: string; sourceLeafId: string } | null>(null);
+  /** state 仅用于驱动 DragOverlay 渲染。 */
+  const [activeDragTab, setActiveDragTab] = useState<Tab | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -126,7 +129,8 @@ function SplitPaneDragProvider({
     if (!found) return;
 
     const sourceLeafId = found.leaf.id;
-    setActiveDragItem({ tabId, sourceLeafId });
+    activeDragItemRef.current = { tabId, sourceLeafId };
+    setActiveDragTab(found.tab);
 
     // 从 source leaf 的 items 中移除该 tab id
     setLeafItems((prev) => {
@@ -169,7 +173,11 @@ function SplitPaneDragProvider({
     if (!targetFound) return;
 
     // 检查是否可以移动到目标 leaf
-    const canDropResult = canMoveTabToLeaf(
+    // 同 leaf 拖拽（重排）始终允许，不加去重限制
+    // 跨 leaf 时才检查去重冲突
+    // 使用 ref 读取，避免 useCallback 闭包陈旧
+    const isSameLeaf = activeDragItemRef.current?.sourceLeafId === targetLeafId;
+    const canDropResult = isSameLeaf ? true : canMoveTabToLeaf(
       activeFound.tab,
       targetFound.leaf,
       targetFound.cwd,
@@ -223,8 +231,9 @@ function SplitPaneDragProvider({
     // 清理临时状态
     setHoveredLeafId(null);
     setCanDrop(true);
-    const dragItem = activeDragItem;
-    setActiveDragItem(null);
+    const dragItem = activeDragItemRef.current;
+    activeDragItemRef.current = null;
+    setActiveDragTab(null);
 
     // 恢复所有 leaf items 为空（TabBar 将使用默认的 tabs 顺序）
     setLeafItems({});
@@ -305,7 +314,7 @@ function SplitPaneDragProvider({
     }
 
     moveTabAcrossLeafs(activeId, sourceLeafId, targetLeafId, targetIndex);
-  }, [cwdTrees, activeDragItem, reorderTabsInLeaf, moveTabAcrossLeafs]);
+  }, [cwdTrees, reorderTabsInLeaf, moveTabAcrossLeafs]);
 
   // 构建每个 leaf 的默认 items（按 visible tab 顺序）
   // 仅在 leafItems 为空时使用
@@ -344,13 +353,8 @@ function SplitPaneDragProvider({
     canDrop,
   }), [mergedLeafItems, hoveredLeafId, canDrop]);
 
-  // 查找被拖拽的 tab 信息（用于 DragOverlay）
-  const activeTab = useMemo(() => {
-    if (!activeDragItem) return null;
-    const { tabId } = activeDragItem;
-    const found = findTabById(cwdTrees, tabId);
-    return found?.tab ?? null;
-  }, [activeDragItem, cwdTrees]);
+  // 被拖拽的 tab 信息（用于 DragOverlay），直接使用 activeDragTab state
+  const activeTab = activeDragTab;
 
   return (
     <DragContext.Provider value={contextValue}>
