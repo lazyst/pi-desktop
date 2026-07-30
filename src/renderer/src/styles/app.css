@@ -1870,6 +1870,7 @@ html, body, #root {
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   max-width: 85%;
+  margin: var(--sp-5);
 }
 .session-content-view .session-msg-user,
 .session-content-modal .session-msg-user {
@@ -3736,9 +3737,7 @@ html, body, #root {
   display: flex;
   flex-direction: column;
 }
-.turn-group {
-  margin-bottom: var(--sp-3);
-}
+
   gap: var(--sp-3);
 }
 
