@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useDebouncedSave } from '../hooks/useDebouncedSave';
 import { getTheme, getThemeFamily, setTheme, setThemeFamily } from '../theme';
 import { pi } from '../ipc';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -723,9 +724,8 @@ const FONT_WEIGHTS: { label: string; value: FontWeight }[] = [
   { label: '900 (Black)', value: '900' },
 ];
 
-// 辅助：合并新配置项 → 持久化 + 广播到所有存活终端。
-function saveTerminalConfig(partial: Record<string, unknown>) {
-  pi.setConfig(partial as any).catch(() => {});
+// 辅助：广播配置变更到所有存活终端（不持久化，持久化由 useDebouncedSave 处理）。
+function broadcastTerminalConfig(partial: Record<string, unknown>) {
   broadcastConfigUpdate(partial as any);
 }
 
@@ -758,6 +758,21 @@ function TerminalSettings() {
 
   // 滚动条
   const [scrollbarWidth, setScrollbarWidth] = useState(14);
+
+  // 防抖自动保存：将所有终端配置项合并为一个对象，800ms 防抖后持久化
+  const terminalConfig = {
+    scrollback, cursorBlink, cursorStyle, cursorInactiveStyle, cursorWidth,
+    fontFamily, lineHeight, letterSpacing, fontWeight, fontWeightBold,
+    smoothScrolling, scrollSensitivity, fastScrollSensitivity, scrollbarWidth,
+  };
+  useDebouncedSave(terminalConfig, async (cfg) => {
+    pi.setConfig(cfg as any).catch(() => {});
+  }, { delay: 800, deepCompare: true });
+
+  // 应用工作目录独立防抖自动保存
+  useDebouncedSave(appWorkDir, async (dir) => {
+    pi.setConfig({ appWorkDir: dir }).catch(() => {});
+  }, { delay: 800 });
 
   useEffect(() => {
     pi.getConfig()
@@ -891,7 +906,7 @@ function TerminalSettings() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setCursorBlink(v);
-                saveTerminalConfig({ cursorBlink: v });
+                broadcastTerminalConfig({ cursorBlink: v });
               }}
             />
             <span className="toggle-track">
@@ -909,7 +924,7 @@ function TerminalSettings() {
             onChange={(e) => {
               const v = e.target.value as 'block' | 'bar' | 'underline';
               setCursorStyle(v);
-              saveTerminalConfig({ cursorStyle: v });
+              broadcastTerminalConfig({ cursorStyle: v });
             }}
           >
             <option value="block">Block (█)</option>
@@ -927,7 +942,7 @@ function TerminalSettings() {
             onChange={(e) => {
               const v = e.target.value as 'none' | 'outline' | 'block' | 'bar' | 'underline';
               setCursorInactiveStyle(v);
-              saveTerminalConfig({ cursorInactiveStyle: v });
+              broadcastTerminalConfig({ cursorInactiveStyle: v });
             }}
           >
             <option value="none">无</option>
@@ -956,7 +971,7 @@ function TerminalSettings() {
               onBlur={() => {
                 const clamped = Math.min(25, Math.max(1, Math.round(cursorWidth)));
                 setCursorWidth(clamped);
-                saveTerminalConfig({ cursorWidth: clamped });
+                broadcastTerminalConfig({ cursorWidth: clamped });
               }}
             />
             <span className="settings-unit">px</span>
@@ -981,7 +996,7 @@ function TerminalSettings() {
               onChange={(e) => setFontFamily(e.target.value)}
               onBlur={() => {
                 if (fontFamily.trim()) {
-                  saveTerminalConfig({ fontFamily: fontFamily.trim() });
+                  broadcastTerminalConfig({ fontFamily: fontFamily.trim() });
                 }
               }}
             />
@@ -993,7 +1008,7 @@ function TerminalSettings() {
                 const v = e.target.value;
                 if (v) {
                   setFontFamily(v);
-                  saveTerminalConfig({ fontFamily: v });
+                  broadcastTerminalConfig({ fontFamily: v });
                 }
               }}
             >
@@ -1022,7 +1037,7 @@ function TerminalSettings() {
             onBlur={() => {
               const clamped = Math.min(3.0, Math.max(0.5, Math.round(lineHeight * 10) / 10));
               setLineHeight(clamped);
-              saveTerminalConfig({ lineHeight: clamped });
+              broadcastTerminalConfig({ lineHeight: clamped });
             }}
           />
         </div>
@@ -1045,7 +1060,7 @@ function TerminalSettings() {
               onBlur={() => {
                 const clamped = Math.min(20, Math.max(-5, Math.round(letterSpacing)));
                 setLetterSpacing(clamped);
-                saveTerminalConfig({ letterSpacing: clamped });
+                broadcastTerminalConfig({ letterSpacing: clamped });
               }}
             />
             <span className="settings-unit">px</span>
@@ -1061,7 +1076,7 @@ function TerminalSettings() {
             onChange={(e) => {
               const v = e.target.value as FontWeight;
               setFontWeight(v);
-              saveTerminalConfig({ fontWeight: v });
+              broadcastTerminalConfig({ fontWeight: v });
             }}
           >
             {FONT_WEIGHTS.map((w) => (
@@ -1079,7 +1094,7 @@ function TerminalSettings() {
             onChange={(e) => {
               const v = e.target.value as FontWeight;
               setFontWeightBold(v);
-              saveTerminalConfig({ fontWeightBold: v });
+              broadcastTerminalConfig({ fontWeightBold: v });
             }}
           >
             {FONT_WEIGHTS.map((w) => (
@@ -1110,7 +1125,6 @@ function TerminalSettings() {
               onBlur={() => {
                 const clamped = Math.min(100000, Math.max(1000, Math.round(scrollback)));
                 setScrollback(clamped);
-                pi.setConfig({ scrollback: clamped }).catch(() => {});
               }}
             />
             <span className="settings-unit">行</span>
@@ -1128,7 +1142,7 @@ function TerminalSettings() {
               onChange={(e) => {
                 const v = e.target.checked;
                 setSmoothScrolling(v);
-                saveTerminalConfig({ smoothScrolling: v, isPhysicalMouseWheel: true });
+                broadcastTerminalConfig({ smoothScrolling: v, isPhysicalMouseWheel: true });
               }}
             />
             <span className="toggle-track">
@@ -1154,7 +1168,7 @@ function TerminalSettings() {
             onBlur={() => {
               const clamped = Math.min(20, Math.max(0.1, Math.round(scrollSensitivity * 10) / 10));
               setScrollSensitivity(clamped);
-              saveTerminalConfig({ scrollSensitivity: clamped });
+              broadcastTerminalConfig({ scrollSensitivity: clamped });
             }}
           />
         </div>
@@ -1176,7 +1190,7 @@ function TerminalSettings() {
             onBlur={() => {
               const clamped = Math.min(100, Math.max(1, Math.round(fastScrollSensitivity)));
               setFastScrollSensitivity(clamped);
-              saveTerminalConfig({ fastScrollSensitivity: clamped });
+              broadcastTerminalConfig({ fastScrollSensitivity: clamped });
             }}
           />
         </div>
@@ -1204,7 +1218,7 @@ function TerminalSettings() {
               onBlur={() => {
                 const clamped = Math.min(40, Math.max(6, Math.round(scrollbarWidth)));
                 setScrollbarWidth(clamped);
-                saveTerminalConfig({ scrollbarWidth: clamped });
+                broadcastTerminalConfig({ scrollbarWidth: clamped });
               }}
             />
             <span className="settings-unit">px</span>
@@ -1237,13 +1251,7 @@ function TerminalSettings() {
             >
               浏览…
             </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={() => pi.setConfig({ appWorkDir }).catch(() => {})}
-            >
-              保存
-            </button>
+
           </div>
         </div>
         <p className="settings-hint">用于收容与具体项目无关、与 pi-agent 闲聊或临时的集成终端。修改后只影响之后新建的终端。</p>

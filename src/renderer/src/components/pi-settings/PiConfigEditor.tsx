@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { pi } from '../../ipc';
+import { useDebouncedSave } from '../../hooks/useDebouncedSave';
 
 // ─── Pi 配置文件编辑器：表单模式 + 源文件模式 ──────────────────────────
 
@@ -107,6 +108,23 @@ export function PiConfigEditor() {
   const [readonly, setReadonly] = useState(false);
   const editorRef = useRef<HTMLPreElement>(null);
 
+  // 表单模式防抖自动保存（800ms）
+  useDebouncedSave(formData, async (data) => {
+    const payload: Record<string, unknown> = {};
+    for (const group of CONFIG_GROUPS) {
+      for (const field of group.fields) {
+        let value: unknown = data[field.key];
+        if (field.type === 'number') {
+          value = value === '' ? null : Number(value);
+        } else if (field.type === 'toggle') {
+          value = value === 'true';
+        }
+        setByPath(payload, field.key, value);
+      }
+    }
+    await pi.piSettingsSet({ scope, data: payload });
+  }, { delay: 800, deepCompare: true });
+
   const load = useCallback(async () => {
     setStatus('加载中...');
     try {
@@ -150,32 +168,6 @@ export function PiConfigEditor() {
       setSourceError(null);
     }
   }, []);
-
-  const saveForm = useCallback(async () => {
-    setSaving(true);
-    setStatus('保存中...');
-    try {
-      const data: Record<string, unknown> = {};
-      for (const group of CONFIG_GROUPS) {
-        for (const field of group.fields) {
-          let value: unknown = formData[field.key];
-          if (field.type === 'number') {
-            value = value === '' ? null : Number(value);
-          } else if (field.type === 'toggle') {
-            value = value === 'true';
-          }
-          setByPath(data, field.key, value);
-        }
-      }
-      await pi.piSettingsSet({ scope, data });
-      setStatus('已保存');
-      await load();
-    } catch (err) {
-      setStatus('保存失败');
-    } finally {
-      setSaving(false);
-    }
-  }, [scope, formData, load]);
 
   const saveSource = useCallback(async () => {
     // 校验 JSON
@@ -277,13 +269,15 @@ export function PiConfigEditor() {
         </div>
         <div className="pi-settings-toolbar-right">
           <button className="btn btn-sm" onClick={load}>↻ 刷新</button>
-          <button
-            className="btn btn-primary btn-sm"
-            disabled={saving}
-            onClick={tab === 'form' ? saveForm : saveSource}
-          >
-            {saving ? '保存中...' : '保存'}
-          </button>
+          {tab === 'source' && (
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={saving}
+              onClick={saveSource}
+            >
+              {saving ? '保存中...' : '保存'}
+            </button>
+          )}
         </div>
       </div>
 

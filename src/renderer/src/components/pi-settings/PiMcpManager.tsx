@@ -146,7 +146,7 @@ export function PiMcpManager() {
 
   useEffect(() => { load(); }, [load]);
 
-  // 初始加载完成后标记，之后 files 变更触发自动保存（防抖 500ms）
+  // 初始加载完成后标记，之后 files 变更触发自动保存（防抖 800ms）
   useEffect(() => {
     if (!initialLoadDone.current) {
       if (status === '已加载' || status === '检测失败') {
@@ -164,7 +164,7 @@ export function PiMcpManager() {
         try {
           await pi.piMcpConfigsSave({ id: file.id, config: file.config });
         } catch { /* 静默失败 */ }
-      }, 500);
+      }, 800);
     });
 
     return () => {

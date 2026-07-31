@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { pi } from '../../ipc';
+import { useDebouncedSave } from '../../hooks/useDebouncedSave';
 
 // ─── 模型配置组件（完整版，对齐 pi-tool 全部高级配置项）───────────────
 
@@ -94,7 +95,6 @@ const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 export function PiModelConfig() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [status, setStatus] = useState('加载中...');
-  const [saving, setSaving] = useState(false);
   // 折叠状态：section key → boolean
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
 
@@ -122,42 +122,38 @@ export function PiModelConfig() {
 
   useEffect(() => { load(); }, [load]);
 
-  const save = useCallback(async () => {
-    setSaving(true);
-    try {
-      const providersObj: Record<string, unknown> = {};
-      for (const p of providers) {
-        if (!p.key?.trim()) continue;
-        const { _collapsed, ...clean } = p;
-        if (clean.models) {
-          clean.models = clean.models.map(m => {
-            const { _collapsed: mc, ...cleanM } = m;
-            // 清理空 thinkingLevelMap
-            if (cleanM.thinkingLevelMap) {
-              const filtered: Record<string, string | null> = {};
-              for (const [k, v] of Object.entries(cleanM.thinkingLevelMap)) {
-                if (v !== undefined) filtered[k] = v;
-              }
-              cleanM.thinkingLevelMap = Object.keys(filtered).length > 0 ? filtered : undefined;
+  // 防抖自动保存（800ms）：providers 变化时自动持久化
+  useDebouncedSave(providers, async (providersList) => {
+    const providersObj: Record<string, unknown> = {};
+    for (const p of providersList) {
+      if (!p.key?.trim()) continue;
+      const { _collapsed, ...clean } = p;
+      if (clean.models) {
+        clean.models = clean.models.map(m => {
+          const { _collapsed: mc, ...cleanM } = m;
+          // 清理空 thinkingLevelMap
+          if (cleanM.thinkingLevelMap) {
+            const filtered: Record<string, string | null> = {};
+            for (const [k, v] of Object.entries(cleanM.thinkingLevelMap)) {
+              if (v !== undefined) filtered[k] = v;
             }
-            // 清理空 cost
-            if (cleanM.cost) {
-              const hasCost = Object.values(cleanM.cost as Record<string, number | undefined>).some(v => v != null);
-              if (!hasCost) delete cleanM.cost;
-            }
-            return cleanM;
-          });
-        }
-        // 清理空 headers
-        if (clean.headers && Object.keys(clean.headers).length === 0) delete clean.headers;
-        providersObj[p.key.trim()] = clean;
+            cleanM.thinkingLevelMap = Object.keys(filtered).length > 0 ? filtered : undefined;
+          }
+          // 清理空 cost
+          if (cleanM.cost) {
+            const hasCost = Object.values(cleanM.cost as Record<string, number | undefined>).some(v => v != null);
+            if (!hasCost) delete cleanM.cost;
+          }
+          return cleanM;
+        });
       }
-      await pi.piModelsSet({ providers: providersObj });
-      setStatus(`${providers.length} 个提供者`);
-    } finally {
-      setSaving(false);
+      // 清理空 headers
+      if (clean.headers && Object.keys(clean.headers).length === 0) delete clean.headers;
+      providersObj[p.key.trim()] = clean;
     }
-  }, [providers]);
+    await pi.piModelsSet({ providers: providersObj });
+    setStatus(`${providersList.length} 个提供者`);
+  }, { delay: 800, deepCompare: true });
 
   // ── Provider CRUD ──
 
@@ -604,8 +600,7 @@ export function PiModelConfig() {
         <span className="pi-settings-badge">{status}</span>
         <div className="pi-model-toolbar-actions">
           <button className="btn btn-sm" onClick={addProvider}>＋ 添加提供者</button>
-          <button className="btn btn-primary btn-sm" disabled={saving} onClick={save}>
-            {saving ? '保存中...' : '保存'}
+          <button className="btn btn-sm" onClick={load}>↻ 刷新
           </button>
         </div>
       </div>

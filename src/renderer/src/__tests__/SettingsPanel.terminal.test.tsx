@@ -101,7 +101,7 @@ describe('SettingsPanel 终端设置', () => {
     const input = (await screen.findByLabelText('应用工作目录')) as HTMLInputElement;
     expect(input.value).toBe('C:\\Users\\hcz\\piDesktop');
     fireEvent.change(input, { target: { value: 'D:\\work' } });
-    fireEvent.click(screen.getByText('保存'));
+    
     await waitFor(() => expect(api.setConfig).toHaveBeenCalledWith({ appWorkDir: 'D:\\work' }));
   });
 
