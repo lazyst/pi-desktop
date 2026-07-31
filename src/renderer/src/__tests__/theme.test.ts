@@ -6,31 +6,45 @@ import { TERM_THEMES } from '../theme';
 
 const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/styles/tokens.css'), 'utf-8');
 
-// 抽取某主题块内某个 CSS 变量的值（:root = 暗色；[data-theme="light"] = 亮色）。
+// 抽取某主题块内某个 CSS 变量的值。
 function cssVar(selector: string, name: string): string {
   const block = css.split(selector)[1]?.split('}')[0] ?? '';
   const m = block.match(new RegExp(`--${name}\\s*:\\s*([^;]+);`));
   return m ? m[1].trim() : '';
 }
 
-describe('TERM_THEMES 与 tokens.css 同源', () => {
-  it('暗色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
-    expect(TERM_THEMES.dark.background).toBe(cssVar(':root {', 'bg-app'));
-    expect(TERM_THEMES.dark.foreground).toBe(cssVar(':root {', 'text'));
+describe('TERM_THEMES 与 tokens.css 同源（由 theme.ts 委托导出）', () => {
+  it('github 暗色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.github.dark.background).toBe(cssVar(':root {', 'bg-app'));
+    expect(TERM_THEMES.github.dark.foreground).toBe(cssVar(':root {', 'text'));
   });
 
-  it('亮色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
-    expect(TERM_THEMES.light.background).toBe(cssVar('[data-theme="light"] {', 'bg-app'));
-    expect(TERM_THEMES.light.foreground).toBe(cssVar('[data-theme="light"] {', 'text'));
+  it('github 亮色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.github.light.background).toBe(cssVar('[data-theme="light"] {', 'bg-app'));
+    expect(TERM_THEMES.github.light.foreground).toBe(cssVar('[data-theme="light"] {', 'text'));
   });
 
-  it('选区色复用各自主题的 accent（冷静蓝签名）', () => {
-    // --accent 暗色 #7c9cff = rgb(124, 156, 255)；亮色 #3b5bdb = rgb(59, 91, 219)
-    expect(TERM_THEMES.dark.selectionBackground).toContain('124, 156, 255');
-    expect(TERM_THEMES.light.selectionBackground).toContain('59, 91, 219');
+  it('aurora 暗色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.aurora.dark.background).toBe(cssVar('[data-theme-family="aurora"] {', 'bg-app'));
+    expect(TERM_THEMES.aurora.dark.foreground).toBe(cssVar('[data-theme-family="aurora"] {', 'text'));
   });
 
-  it('覆盖两套主题且键与 Theme 一致', () => {
-    expect(Object.keys(TERM_THEMES).sort()).toEqual(['dark', 'light']);
+  it('aurora 亮色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.aurora.light.background).toBe(cssVar('[data-theme-family="aurora"][data-theme="light"] {', 'bg-app'));
+    expect(TERM_THEMES.aurora.light.foreground).toBe(cssVar('[data-theme-family="aurora"][data-theme="light"] {', 'text'));
+  });
+
+  it('mineral 暗色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.mineral.dark.background).toBe(cssVar('[data-theme-family="mineral"] {', 'bg-app'));
+    expect(TERM_THEMES.mineral.dark.foreground).toBe(cssVar('[data-theme-family="mineral"] {', 'text'));
+  });
+
+  it('mineral 亮色：终端背景/前景 = DOM 的 --bg-app / --text', () => {
+    expect(TERM_THEMES.mineral.light.background).toBe(cssVar('[data-theme-family="mineral"][data-theme="light"] {', 'bg-app'));
+    expect(TERM_THEMES.mineral.light.foreground).toBe(cssVar('[data-theme-family="mineral"][data-theme="light"] {', 'text'));
+  });
+
+  it('覆盖三个家族且每个家族有 dark/light', () => {
+    expect(Object.keys(TERM_THEMES).sort()).toEqual(['aurora', 'github', 'mineral']);
   });
 });

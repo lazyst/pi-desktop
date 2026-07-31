@@ -5,6 +5,7 @@ describe('config (pure)', () => {
   it('defaultConfig has the expected shape', () => {
     const c = defaultConfig();
     expect(c.theme).toBe('dark');
+    expect(c.themeFamily).toBe('github');
     expect(c.pinnedDirs).toEqual([]);
     expect(c.window.maximized).toBe(false);
     expect(c.window.bounds.width).toBe(1100);

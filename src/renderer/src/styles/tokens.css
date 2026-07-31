@@ -163,3 +163,145 @@ body {
   /* Shadow */
   --shadow-modal: 0 10px 40px rgba(31, 35, 40, 0.20);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   主题家族：Aurora（冷蓝渐变风格）
+   暗色基调沿用 GitHub 的 #0d1117，但面板色更冷、强调色为渐变蓝 #6394ff。
+   亮色基调为 #f5f7fb，强调色为 #4a82e8。
+   ═══════════════════════════════════════════════════════════════════════════════ */
+[data-theme-family="aurora"] {
+  /* Backgrounds */
+  --bg-app: #0d1117;
+  --bg-panel: #151c27;
+  --bg-hover: #1c2535;
+  --bg-menu-hover: #232f42;
+  --bg-active: rgba(99, 148, 255, 0.10);
+  --bg-elevated: #1a2233;
+  --editor-surface: #151c27;
+
+  /* Borders */
+  --border: #26304a;
+  --border-strong: #354468;
+
+  /* Text */
+  --text: #e8edf5;
+  --text-muted: #b3bdd0;
+  --text-faint: #8b95a8;
+  --text-dim: #b3bdd0;
+
+  /* Accent + semantic */
+  --accent: #6394ff;
+  --accent-hover: #7ba8ff;
+  --accent-soft: rgba(99, 148, 255, 0.40);
+  --success: #34d399;
+  --danger: #f87171;
+  --danger-hover: #fca5a5;
+  --focus-ring: 0 0 0 2px rgba(99, 148, 255, 0.50);
+
+  /* Shadow */
+  --shadow-modal: 0 10px 40px rgba(0, 0, 0, 0.55);
+}
+
+[data-theme-family="aurora"][data-theme="light"] {
+  /* Backgrounds */
+  --bg-app: #f5f7fb;
+  --bg-panel: #ffffff;
+  --bg-hover: #eef1f6;
+  --bg-menu-hover: #e8ecf3;
+  --bg-active: rgba(99, 148, 255, 0.08);
+  --bg-elevated: #ffffff;
+  --editor-surface: #ffffff;
+
+  /* Borders */
+  --border: #dce1ea;
+  --border-strong: #c8d0dc;
+
+  /* Text */
+  --text: #1a1f2e;
+  --text-muted: #4a5266;
+  --text-faint: #6f7890;
+  --text-dim: #4a5266;
+
+  /* Accent + semantic */
+  --accent: #4a82e8;
+  --accent-hover: #3a72d6;
+  --accent-soft: rgba(74, 130, 232, 0.45);
+  --success: #059669;
+  --danger: #dc2626;
+  --danger-hover: #b91c1c;
+  --focus-ring: 0 0 0 2px rgba(74, 130, 232, 0.45);
+
+  /* Shadow */
+  --shadow-modal: 0 10px 40px rgba(31, 35, 40, 0.15);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   主题家族：Mineral（蓝绿翡翠风格）
+   暗色为深板岩 #0f1419，强调色为蓝绿 #2dd4bf。
+   亮色为暖石色 #f0ebe3，强调色为深蓝绿 #0d9488。
+   ═══════════════════════════════════════════════════════════════════════════════ */
+[data-theme-family="mineral"] {
+  /* Backgrounds */
+  --bg-app: #0f1419;
+  --bg-panel: #17212b;
+  --bg-hover: #1e2a38;
+  --bg-menu-hover: #263546;
+  --bg-active: rgba(45, 212, 191, 0.08);
+  --bg-elevated: #1c2834;
+  --editor-surface: #17212b;
+
+  /* Borders */
+  --border: #2a3a4a;
+  --border-strong: #3a4e60;
+
+  /* Text */
+  --text: #e2e8f0;
+  --text-muted: #a0b4c8;
+  --text-faint: #7a8ea0;
+  --text-dim: #a0b4c8;
+
+  /* Accent + semantic */
+  --accent: #2dd4bf;
+  --accent-hover: #5eead4;
+  --accent-soft: rgba(45, 212, 191, 0.35);
+  --success: #4ade80;
+  --danger: #f87171;
+  --danger-hover: #fca5a5;
+  --focus-ring: 0 0 0 2px rgba(45, 212, 191, 0.50);
+
+  /* Shadow */
+  --shadow-modal: 0 10px 40px rgba(0, 0, 0, 0.60);
+}
+
+[data-theme-family="mineral"][data-theme="light"] {
+  /* Backgrounds */
+  --bg-app: #f0ebe3;
+  --bg-panel: #faf6f0;
+  --bg-hover: #e8e0d4;
+  --bg-menu-hover: #dfd5c6;
+  --bg-active: rgba(13, 148, 136, 0.08);
+  --bg-elevated: #ffffff;
+  --editor-surface: #faf6f0;
+
+  /* Borders */
+  --border: #d6cec0;
+  --border-strong: #c0b6a6;
+
+  /* Text */
+  --text: #1a1e24;
+  --text-muted: #4a5268;
+  --text-faint: #6a7288;
+  --text-dim: #4a5268;
+
+  /* Accent + semantic */
+  --accent: #0d9488;
+  --accent-hover: #0f766e;
+  --accent-soft: rgba(13, 148, 136, 0.40);
+  --success: #047857;
+  --danger: #b91c1c;
+  --danger-hover: #991b1b;
+  --focus-ring: 0 0 0 2px rgba(13, 148, 136, 0.45);
+
+  /* Shadow */
+  --shadow-modal: 0 10px 40px rgba(31, 35, 40, 0.15);
+}

@@ -5,6 +5,7 @@
 import { useEffect } from 'react';
 import type { editor } from 'monaco-editor';
 import * as monaco from 'monaco-editor';
+import type { ThemeFamily } from './types';
 
 /** 当前是否为暗色主题（读根节点 data-theme，缺省按暗色）。 */
 export function themeIsDark(): boolean {
@@ -12,6 +13,11 @@ export function themeIsDark(): boolean {
   if (attr === 'light') return false;
   if (attr === 'dark') return true;
   return true; // no attribute → default dark palette
+}
+
+/** 当前主题家族（读根节点 data-theme-family，缺省 'github'）。 */
+export function getThemeFamily(): ThemeFamily {
+  return (document.documentElement.getAttribute('data-theme-family') as ThemeFamily) ?? 'github';
 }
 
 /** 当前字号缩放比例（--font-scale：1 表示基准 13px）。缺省 1。 */
@@ -29,7 +35,7 @@ export function getMonacoFontSize(): number {
 }
 
 /**
- * 主题跟随：监听根节点 data-theme，切换 vs-dark / vs（Monaco 内置主题）。
+ * 主题跟随：监听根节点 data-theme 与 data-theme-family，切换 vs-dark / vs（Monaco 内置主题）。
  * 编辑器背景色通过 CSS --editor-surface 变量在 app.css 中覆盖，避免自定义主题
  * 与 @monaco-editor/react 内部 theme 处理机制之间的冲突。
  * Monaco 的 setTheme 是全局单例，故任意编辑器组件调用都等价；在各自组件内调用
@@ -41,7 +47,7 @@ export function useMonacoThemeFollow(): void {
     const apply = () => monaco.editor.setTheme(themeIsDark() ? 'vs-dark' : 'vs');
     apply();
     const observer = new MutationObserver(apply);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-theme-family'] });
     return () => observer.disconnect();
   }, []);
 }

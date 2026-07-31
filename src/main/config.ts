@@ -18,6 +18,7 @@ export function getDefaultAppWorkDir(): string {
 export function defaultConfig(): AppConfig {
   return {
     theme: 'dark',
+    themeFamily: 'github',
     pinnedDirs: [],
     addedDirs: [],
     window: { maximized: false, bounds: { x: 0, y: 0, width: 1100, height: 720 } },

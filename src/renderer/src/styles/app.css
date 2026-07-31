@@ -2571,6 +2571,21 @@ html, body, #root {
   --vscode-editor-hoverHighlightBackground: rgba(173, 214, 255, 0.15);
   --vscode-editor-lineHighlightBackground: rgba(238, 238, 238, 0.50);
 }
+
+/* Mineral 家族：Monaco 选中色改用蓝绿翡翠调 */
+[data-theme-family="mineral"][data-theme="dark"] .monaco-editor {
+  --vscode-editor-selectionBackground: rgba(45, 212, 191, 0.22);
+  --vscode-editor-inactiveSelectionBackground: rgba(45, 212, 191, 0.10);
+  --vscode-editor-selectionHighlightBackground: rgba(45, 212, 191, 0.06);
+  --vscode-editor-findMatchBackground: rgba(45, 212, 191, 0.18);
+  --vscode-editor-findMatchHighlightBackground: rgba(45, 212, 191, 0.10);
+  --vscode-editor-findRangeHighlightBackground: rgba(45, 212, 191, 0.06);
+  --vscode-editor-rangeHighlightBackground: rgba(45, 212, 191, 0.06);
+  --vscode-editor-wordHighlightBackground: rgba(45, 212, 191, 0.08);
+  --vscode-editor-wordHighlightStrongBackground: rgba(45, 212, 191, 0.12);
+  --vscode-editor-hoverHighlightBackground: rgba(45, 212, 191, 0.04);
+  --vscode-editor-lineHighlightBackground: rgba(45, 212, 191, 0.06);
+}
 /* Markdown preview wrapper + toolbar (inside CodePreview) */
 .code-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* Markdown 预览模式：内容可能超出视口，需可上下滚动（编辑模式由 CodeMirror

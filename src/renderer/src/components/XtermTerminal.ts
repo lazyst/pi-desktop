@@ -39,7 +39,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import { getTheme, TERM_THEMES, getTermTheme, type Theme } from '../theme';
+import { getTheme, getThemeFamily, TERM_THEMES, getTermTheme, type ThemeFamily, type ThemeVariant } from '../theme';
 import { getFontSize } from '../fontSize';
 import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
 
@@ -561,9 +561,9 @@ export class XtermTerminal implements LiveTerminal {
    * 运行时重新构造 xterm 主题（背景/前景取当前容器 --bg-app / --text），再 forceRedraw 清
    * WebGL 纹理残留，避免旧配色闪留、确保与容器背景严格一致（对齐 VS Code getBackgroundColor）。
    */
-  applyTheme(theme: Theme): void {
+  applyTheme(family: ThemeFamily, variant: ThemeVariant): void {
     if (!this.term || this.disposed) return;
-    this.term.options.theme = getTermTheme(theme);
+    this.term.options.theme = getTermTheme(family, variant);
     this.forceRedraw();
   }
 
@@ -1150,7 +1150,7 @@ export class XtermTerminal implements LiveTerminal {
       scrollback: getScrollback(),
       // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义，
       // 由 theme.ts 的 TERM_THEMES 在运行时读取，见 theme.ts）。
-      theme: TERM_THEMES[getTheme()],
+      theme: TERM_THEMES[getThemeFamily()][getTheme()],
       // 链接处理器（对齐 VS Code TerminalLinkManager 的 linkHandler）：
       // 拦截 xterm 原生 OSC 8 超链接（如 pi 会话中 AI 输出的 Markdown 链接），
       // 防止 xterm 默认行为弹安全对话框，改为走 pi.openExternal。
@@ -1434,7 +1434,7 @@ export class XtermTerminal implements LiveTerminal {
       this.doResize(true);
     });
     // 主题切换 / 全局字号变化不再由本实例订阅（见 lib/terminal-registry 单点订阅刷新所有存活实例）；
-    // 初始主题 / 字号在 _initXterm 构造 term 时已取当前值（theme: TERM_THEMES[getTheme()]、fontSize: getFontSize()），
+    // 初始主题 / 字号在 _initXterm 构造 term 时已取当前值（theme: TERM_THEMES[getThemeFamily()][getTheme()]、fontSize: getFontSize()），
     // 后续变更经 registry → applyTheme / applyFontSize 刷新本实例。
 
     // resize 分轴防抖器（对齐 VS Code TerminalResizeDebouncer）。

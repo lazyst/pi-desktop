@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { getTheme, setTheme } from '../theme';
+import { getTheme, getThemeFamily, setTheme, setThemeFamily } from '../theme';
 import { pi } from '../ipc';
 import { ConfirmDialog } from './ConfirmDialog';
 import { SessionContentDialog } from './SessionContentDialog';
 import { IconTrash } from './icons';
-import type { Theme, CloseBehavior, SessionGroup, TerminalProfile, FontWeight } from '../types';
+import type { Theme, ThemeFamily, CloseBehavior, SessionGroup, TerminalProfile, FontWeight } from '../types';
 import { getFontSize, bumpFontSize, onFontSizeChange, FONT_SIZE_MIN, FONT_SIZE_MAX } from '../fontSize';
 import { PiConfigEditor } from './pi-settings/PiConfigEditor';
 import { PiModelConfig } from './pi-settings/PiModelConfig';
@@ -144,8 +144,15 @@ export function SettingsPanel({ onClose }: Props) {
 }
 
 // ── 常规 ────────────────────────────────────────────────────────────────────
+const THEME_FAMILIES: { key: ThemeFamily; label: string; desc: string }[] = [
+  { key: 'github', label: 'GitHub', desc: '经典 GitHub 蓝调' },
+  { key: 'aurora', label: 'Aurora', desc: '冷蓝渐变 · 玻璃质感' },
+  { key: 'mineral', label: 'Mineral', desc: '蓝绿翡翠 · 温暖层次' },
+];
+
 function GeneralSettings() {
   const [theme, setLocal] = useState<Theme>(getTheme());
+  const [themeFamily, setLocalFamily] = useState<ThemeFamily>(getThemeFamily());
   const [closeBehavior, setCloseBehavior] = useState<CloseBehavior>('minimize-to-tray');
   // 字体大小：本地 state 镜像全局 fontSize，步进按钮 / Ctrl+滚轮都走 setFontSize 通道。
   const [fontSize, setFontSizeLocal] = useState<number>(getFontSize());
@@ -164,6 +171,11 @@ function GeneralSettings() {
     setLocal(t);
   };
 
+  const chooseFamily = (f: ThemeFamily) => {
+    setThemeFamily(f);
+    setLocalFamily(f);
+  };
+
   const chooseClose = (b: CloseBehavior) => {
     setCloseBehavior(b);
     pi.setConfig({ closeBehavior: b }).catch(() => {});
@@ -178,6 +190,24 @@ function GeneralSettings() {
 
   return (
     <>
+      <div className="settings-row">
+        <span className="settings-label">配色风格</span>
+        <div className="segmented" role="radiogroup" aria-label="配色风格">
+          {THEME_FAMILIES.map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              role="radio"
+              aria-checked={themeFamily === f.key}
+              className={`seg${themeFamily === f.key ? ' active' : ''}`}
+              onClick={() => chooseFamily(f.key)}
+              title={f.desc}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="settings-row">
         <span className="settings-label">主题</span>
         <div className="segmented" role="radiogroup" aria-label="主题">

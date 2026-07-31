@@ -10,3 +10,6 @@ package-lock.json
 
 # codegraph index (local AST cache)
 .codegraph/
+
+# scratch / throwaway prototypes
+.scratch/

@@ -16,13 +16,15 @@ import { setTheme, getTheme } from '../../theme';
 import { setFontSize, getFontSize } from '../../fontSize';
 
 // 测试用存活终端桩：记录最近一次 applyTheme / applyFontSize / updateConfig 入参。
-function makeFakeTerminal(): LiveTerminal & { theme: string | null; size: number | null; config: any } {
+function makeFakeTerminal(): LiveTerminal & { theme: string | null; themeFamily: string | null; size: number | null; config: any } {
   return {
     theme: null,
+    themeFamily: null,
     size: null,
     config: null,
-    applyTheme(t) {
-      this.theme = t;
+    applyTheme(family, variant) {
+      this.themeFamily = family;
+      this.theme = variant;
     },
     applyFontSize(s) {
       this.size = s;
@@ -60,12 +62,16 @@ describe('terminal-registry 单点订阅刷新所有存活实例', () => {
     registerTerminal(b);
     // 初始主题（mount 时）不应被 registry 直接驱动，需在 setTheme 时才刷新。
     a.theme = null;
+    a.themeFamily = null;
     b.theme = null;
+    b.themeFamily = null;
 
     setTheme('light');
     expect(getTheme()).toBe('light');
     expect(a.theme).toBe('light');
+    expect(a.themeFamily).toBe('github');
     expect(b.theme).toBe('light');
+    expect(b.themeFamily).toBe('github');
 
     setTheme('dark');
     expect(a.theme).toBe('dark');
@@ -98,7 +104,9 @@ describe('terminal-registry 单点订阅刷新所有存活实例', () => {
     registerTerminal(a);
     unregisterTerminal(a);
     a.theme = null;
+    a.themeFamily = null;
     setTheme('light');
     expect(a.theme).toBe(null);
+    expect(a.themeFamily).toBe(null);
   });
 });
