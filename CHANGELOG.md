@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.1] — 2026-07
+
+### 修复
+
+- **开屏动画颜色不跟随主题**：splash 的 π 图标颜色、脉冲点颜色、背景色和文字色
+  始终使用 fallback 值，不随用户选择的主题变化。
+  在 `</head>` 前内联脚本通过 preload 注入的初始配置同步读取 themeFamily + theme，
+  设置 `--splash-bg`、`--splash-text`、`--splash-accent` 三个 CSS 变量，
+  使 splash 从第一帧就使用正确的主题色
+
 ## [1.0.0] — 2026-07
 
 ### 新增
