@@ -1875,8 +1875,9 @@ html, body, #root {
 .session-content-view .session-msg-user,
 .session-content-modal .session-msg-user {
   align-self: flex-end;
-  background: var(--accent);
-  color: #fff;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
 }
 .session-content-view .session-msg-assistant,
 .session-content-modal .session-msg-assistant {
@@ -1887,6 +1888,8 @@ html, body, #root {
   flex-direction: column;
   gap: var(--sp-2);
   max-width: 100%;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-md) var(--r-md) var(--r-md) 0;
 }
 
 /* ── Process 折叠块（思考过程 + 工具调用） ── */
@@ -2096,8 +2099,11 @@ html, body, #root {
   text-align: left;
 }
 .session-markdown-renderer th {
-  background: var(--bg-panel);
+  background: var(--bg-hover);
   font-weight: 600;
+}
+.session-markdown-renderer tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--border) 8%, transparent);
 }
 /* 确保 markdown 渲染器在会话气泡中的 padding 与周围文本一致 */
 .session-markdown-renderer-wrapper {
@@ -2658,7 +2664,10 @@ html, body, #root {
   padding: 6px 10px;
   text-align: left;
 }
-.markdown-file-preview th { background: var(--bg-panel); }
+.markdown-file-preview th { background: var(--bg-hover); }
+.markdown-file-preview tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--border) 8%, transparent);
+}
 .markdown-file-preview img { max-width: 100%; }
 .markdown-file-preview hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
 .markdown-file-preview ul, .markdown-file-preview ol { padding-left: 1.6em; }
@@ -3783,6 +3792,13 @@ html, body, #root {
 }
 .session-content-tab-btn:hover {
   background: var(--bg-hover);
+}
+/* 启动会话按钮 */
+.session-content-tab-btn[title="启动会话"] {
+  color: var(--success);
+}
+.session-content-tab-btn[title="启动会话"]:hover {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
 }
 .session-content-tab-btn--danger {
   color: var(--danger);
