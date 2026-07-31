@@ -2082,6 +2082,23 @@ html, body, #root {
   max-width: 100%;
   border-radius: var(--r-sm);
 }
+.session-markdown-renderer table {
+  border-collapse: collapse;
+  margin: 0.4em 0;
+  width: auto;
+  max-width: 100%;
+  font-size: var(--fs-sm);
+}
+.session-markdown-renderer th,
+.session-markdown-renderer td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.session-markdown-renderer th {
+  background: var(--bg-panel);
+  font-weight: 600;
+}
 /* 确保 markdown 渲染器在会话气泡中的 padding 与周围文本一致 */
 .session-markdown-renderer-wrapper {
   margin-top: var(--sp-1);
