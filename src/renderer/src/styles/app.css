@@ -351,7 +351,7 @@ html, body, #root {
   flex: none;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
   line-height: 1;
@@ -370,7 +370,7 @@ html, body, #root {
   flex: none;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
   line-height: 1;
@@ -406,7 +406,7 @@ html, body, #root {
   flex: none;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
   line-height: 1;
@@ -423,7 +423,7 @@ html, body, #root {
   flex: none;
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text);
   font-family: var(--font-mono);
   font-size: var(--fs-lg);
   line-height: 1;

@@ -639,7 +639,8 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
   if (error) {
     return <div className="file-error">{error}</div>;
   }
-  if (roots.length === 0) {
+  if (roots.length === 0 && !editing) {
+    // 纯空目录（无编辑态）：只显示"空目录"提示，不渲染 FileTreeVirtualRows
     return (
       <div
         className="file-tree file-tree-empty"
@@ -647,6 +648,24 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
         onContextMenu={(e) => onOpenContextMenu(e, null)}
       >
         <div className="file-empty" style={{ paddingLeft: 8 }}>空目录</div>
+        {menu && (
+          <ContextMenu
+            x={menu.x}
+            y={menu.y}
+            items={menuItems}
+            onClose={() => setMenu(null)}
+          />
+        )}
+        {confirmDelete && (
+          <ConfirmDialog
+            title="删除确认"
+            message={`将删除 ${confirmDelete.length} 个项目${confirmDelete.some((t) => t.isDir) ? '（含目录及其全部内容）' : ''}，此操作不可撤销。`}
+            confirmLabel="删除"
+            cancelLabel="取消"
+            onConfirm={() => void confirmDeleteNow()}
+            onCancel={() => setConfirmDelete(null)}
+          />
+        )}
       </div>
     );
   }
