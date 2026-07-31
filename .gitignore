@@ -13,3 +13,6 @@ package-lock.json
 
 # scratch / throwaway prototypes
 .scratch/
+
+# pi agent workspace config
+.pi/
