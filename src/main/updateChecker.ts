@@ -18,7 +18,7 @@ import { spawn } from 'node:child_process';
 // ============================================================================
 
 /** GitHub 仓库 owner/name */
-const REPO = 'lazyst/pi-desktop';
+const REPO = 'lazyst/pi-workbench';
 
 /**
  * GitHub Releases 最新版重定向 URL（不依赖 API）。
@@ -36,13 +36,13 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
  * 从版本号 tag 构造安装包下载 URL（不依赖 GitHub API）。
- * 例如：v0.4.2 → https://github.com/lazyst/pi-desktop/releases/download/v0.4.2/pi-desktop%20Setup%200.4.2.exe
+ * 例如：v0.4.2 → https://github.com/lazyst/pi-workbench/releases/download/v0.4.2/pi-workbench%20Setup%200.4.2.exe
  */
 function buildDownloadUrl(tag: string): string {
   const base = `https://github.com/${REPO}/releases/download/${tag}`;
   // 去掉 v 前缀用于文件名
   const ver = tag.replace(/^v/i, '');
-  const fileName = `pi-desktop%20Setup%20${ver}.exe`;
+  const fileName = `pi-workbench%20Setup%20${ver}.exe`;
   return `${base}/${fileName}`;
 }
 
@@ -203,7 +203,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
     clearTimeout(timer);
 
     // 从重定向 Location 中提取版本号
-    // Location 形如: /lazyst/pi-desktop/releases/tag/v0.4.2
+    // Location 形如: /lazyst/pi-workbench/releases/tag/v0.4.2
     const location = response.headers.get('location') || '';
     const tagMatch = location.match(/\/tag\/(.+)$/);
     const latestVersion = tagMatch ? tagMatch[1] : null;
@@ -220,7 +220,7 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
 
     // 构造安装包资产信息（不依赖 API，直接按模式构造）
     const downloadUrl = buildDownloadUrl(latestVersion);
-    const assetName = `pi-desktop Setup ${latestVersion.replace(/^v/i, '')}.exe`;
+    const assetName = `pi-workbench Setup ${latestVersion.replace(/^v/i, '')}.exe`;
     const rawAssets: ReleaseAsset[] = [
       { name: assetName, url: downloadUrl, size: 0 },
     ];
@@ -280,7 +280,7 @@ export async function downloadUpdate(
   if (matched.length === 0 && info.latestVersion) {
     // 资产列表为空（非 API 模式）或没有匹配项，直接构造 URL
     const url = buildDownloadUrl(info.latestVersion);
-    const name = `pi-desktop Setup ${info.latestVersion.replace(/^v/i, '')}.exe`;
+    const name = `pi-workbench Setup ${info.latestVersion.replace(/^v/i, '')}.exe`;
     matched = [{ name, url, size: 0 }];
   }
 
@@ -294,7 +294,7 @@ export async function downloadUpdate(
   const asset = matched[0];
 
   // 3. 准备下载
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-desktop-update-'));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pi-workbench-update-'));
   const localPath = path.join(tempDir, asset.name);
 
   const abortController = new AbortController();
@@ -305,7 +305,7 @@ export async function downloadUpdate(
       headers: {
         Accept:
           'application/octet-stream, application/vnd.github.v3.raw;q=0.9',
-        'User-Agent': 'pi-desktop',
+        'User-Agent': 'pi-workbench',
       },
       signal: abortController.signal,
       // 不跟随重定向，手动处理以获取 Content-Disposition 等响应头
