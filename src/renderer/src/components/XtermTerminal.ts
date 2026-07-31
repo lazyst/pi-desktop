@@ -39,7 +39,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import { getTheme, getThemeFamily, TERM_THEMES, getTermTheme, type ThemeFamily, type ThemeVariant } from '../theme';
+import { getTheme, getThemeFamily, getTermTheme, type ThemeFamily, type ThemeVariant } from '../theme';
 import { getFontSize } from '../fontSize';
 import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
 
@@ -1154,9 +1154,10 @@ export class XtermTerminal implements LiveTerminal {
       // lineHeight 对齐 VS Code 默认 1.0（VS Code 终端默认行高 1.0）。
       lineHeight: getLineHeight(),
       scrollback: getScrollback(),
-      // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义，
-      // 由 theme.ts 的 TERM_THEMES 在运行时读取，见 theme.ts）。
-      theme: TERM_THEMES[getThemeFamily()][getTheme()],
+      // 背景色跟随容器 --bg-app（对齐 VS Code getBackgroundColor 的「与容器像素一致」语义）。
+      // 使用 getTermTheme 运行时读取当前 CSS 变量，而非 TERM_THEMES 模块级常量——
+      // 后者在模块加载时求值，此时 paint() 尚未执行，导致所有变体都捕获了默认暗色值。
+      theme: getTermTheme(getThemeFamily(), getTheme()),
       // 链接处理器（对齐 VS Code TerminalLinkManager 的 linkHandler）：
       // 拦截 xterm 原生 OSC 8 超链接（如 pi 会话中 AI 输出的 Markdown 链接），
       // 防止 xterm 默认行为弹安全对话框，改为走 pi.openExternal。
@@ -1440,7 +1441,7 @@ export class XtermTerminal implements LiveTerminal {
       this.doResize(true);
     });
     // 主题切换 / 全局字号变化不再由本实例订阅（见 lib/terminal-registry 单点订阅刷新所有存活实例）；
-    // 初始主题 / 字号在 _initXterm 构造 term 时已取当前值（theme: TERM_THEMES[getThemeFamily()][getTheme()]、fontSize: getFontSize()），
+    // 初始主题 / 字号在 _initXterm 构造 term 时已取当前值（theme: getTermTheme(getThemeFamily(), getTheme())、fontSize: getFontSize()），
     // 后续变更经 registry → applyTheme / applyFontSize 刷新本实例。
 
     // resize 分轴防抖器（对齐 VS Code TerminalResizeDebouncer）。
