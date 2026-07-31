@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { pi } from '../ipc';
+import { SessionMarkdownRenderer } from './SessionMarkdownRenderer';
 
 export interface SessionMessage {
   role: string;
@@ -168,7 +169,7 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
                             <span className="tool-label">tool</span>
                             <span className="tool-name">[{t.toolName ?? '?'}]</span>
                           </div>
-                          <div className="session-process-content">{t.content}</div>
+                          <pre className="session-process-tool-content"><code className="hljs">{t.content}</code></pre>
                         </div>
                       ))}
                     </div>
@@ -177,7 +178,9 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
 
                 {/* ── 最终回复（仅最后一个 assistant 的文本） ── */}
                 {group.finalText && (
-                  <div className="session-msg-content session-msg-final">{group.finalText}</div>
+                  <div className="session-markdown-renderer-wrapper">
+                    <SessionMarkdownRenderer content={group.finalText} />
+                  </div>
                 )}
               </div>
             )}
@@ -188,7 +191,9 @@ export function SessionContentView({ sessionKey, sessionName }: Props) {
                 <div className="session-msg-role">
                   {ROLE_ICON.assistant} {ROLE_LABEL.assistant}
                 </div>
-                <div className="session-msg-content">{group.finalText}</div>
+                <div className="session-markdown-renderer-wrapper">
+                  <SessionMarkdownRenderer content={group.finalText} />
+                </div>
               </div>
             )}
           </div>

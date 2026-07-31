@@ -2057,6 +2057,50 @@ html, body, #root {
   font-style: italic;
 }
 
+/* ── 会话消息中的 markdown 渲染 ── */
+.session-markdown-renderer {
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: var(--fs-sm);
+}
+.session-markdown-renderer p {
+  margin: 0.4em 0;
+}
+.session-markdown-renderer p:first-child {
+  margin-top: 0;
+}
+.session-markdown-renderer p:last-child {
+  margin-bottom: 0;
+}
+.session-markdown-renderer .md-codeblock {
+  margin: 0.4em 0;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.session-markdown-renderer img {
+  max-width: 100%;
+  border-radius: var(--r-sm);
+}
+/* 确保 markdown 渲染器在会话气泡中的 padding 与周围文本一致 */
+.session-markdown-renderer-wrapper {
+  margin-top: var(--sp-1);
+}
+
+/* 会话 tool 消息的代码块 */
+.session-process-tool-content {
+  margin: var(--sp-1) 0 0;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--bg-active);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+}
+
 /* ============================================================================
    文件管理器 / 预览 / Git 面板（A + B + D）
    视觉语言复用 Sidebar 的 --bg-panel / --border / --accent 变量体系。
