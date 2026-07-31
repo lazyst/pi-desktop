@@ -58,9 +58,9 @@ describe('terminal-themes 与 tokens.css 同源（从独立模块导出）', () 
     expect(TERM_THEMES.mineral.light.foreground).toBe(cssVar('[data-theme-family="mineral"][data-theme="light"] {', 'text'));
   });
 
-  it('mineral 选区色复用 accent（#2dd4bf）', () => {
-    expect(TERM_THEMES.mineral.dark.selectionBackground).toContain('45, 212, 191');
-    expect(TERM_THEMES.mineral.light.selectionBackground).toContain('13, 148, 136');
+  it('mineral 选区色复用 accent（#d97706）', () => {
+    expect(TERM_THEMES.mineral.dark.selectionBackground).toContain('217, 119, 6');
+    expect(TERM_THEMES.mineral.light.selectionBackground).toContain('234, 88, 12');
   });
 
   // ── 结构校验 ──

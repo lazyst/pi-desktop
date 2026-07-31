@@ -565,6 +565,12 @@ export class XtermTerminal implements LiveTerminal {
     if (!this.term || this.disposed) return;
     this.term.options.theme = getTermTheme(family, variant);
     this.forceRedraw();
+    // 强制刷新整个视口，使新主题立即在屏幕上呈现。
+    // xterm 的 options.theme 设置后不会自动触发渲染循环，
+    // 需要显式调用 refresh 来触发重绘（对齐 VS Code 做法）。
+    try {
+      this.term.refresh(0, this.term.rows - 1);
+    } catch { /* 刷新失败时静默忽略 */ }
   }
 
   /**

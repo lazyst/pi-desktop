@@ -148,7 +148,7 @@ export function SettingsPanel({ onClose }: Props) {
 const THEME_FAMILIES: { key: ThemeFamily; label: string; desc: string }[] = [
   { key: 'github', label: 'GitHub', desc: '经典 GitHub 蓝调' },
   { key: 'aurora', label: 'Aurora', desc: '冷蓝渐变 · 玻璃质感' },
-  { key: 'mineral', label: 'Mineral', desc: '蓝绿翡翠 · 温暖层次' },
+  { key: 'mineral', label: 'Mineral', desc: '琥珀暖橙 · 矿物质感' },
 ];
 
 function GeneralSettings() {

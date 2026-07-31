@@ -72,29 +72,29 @@ const ANSI: Record<ThemeFamily, Record<ThemeVariant, AnsiPalette>> = {
     },
   },
 
-  // ── Mineral（蓝绿翡翠风格，调色板偏暖/绿松石）──
+  // ── Mineral（琥珀暖橙风格，调色板偏暖/琥珀橙）──
   mineral: {
     dark: {
-      selectionBackground: 'rgba(45, 212, 191, 0.25)',
+      selectionBackground: 'rgba(217, 119, 6, 0.25)',
       black: '#2d3748', red: '#f87171', green: '#4ade80', yellow: '#fbbf24',
-      blue: '#60a5fa', magenta: '#a78bfa', cyan: '#2dd4bf', white: '#cbd5e1',
+      blue: '#60a5fa', magenta: '#a78bfa', cyan: '#f59e0b', white: '#cbd5e1',
       brightBlack: '#4a5568', brightRed: '#fca5a5', brightGreen: '#86efac',
       brightYellow: '#fde68a', brightBlue: '#93c5fd', brightMagenta: '#c4b5fd',
-      brightCyan: '#5eead4', brightWhite: '#e2e8f0',
+      brightCyan: '#fbbf24', brightWhite: '#e2e8f0',
       scrollbarSliderBackground: 'rgba(194, 206, 220, 0.12)',
       scrollbarSliderHoverBackground: 'rgba(194, 206, 220, 0.35)',
-      scrollbarSliderActiveBackground: 'rgba(45, 212, 191, 0.55)',
+      scrollbarSliderActiveBackground: 'rgba(217, 119, 6, 0.55)',
     },
     light: {
-      selectionBackground: 'rgba(13, 148, 136, 0.18)',
+      selectionBackground: 'rgba(234, 88, 12, 0.18)',
       black: '#374151', red: '#b91c1c', green: '#047857',
-      yellow: '#a16207', blue: '#2563eb', magenta: '#6d28d9', cyan: '#0d9488', white: '#9ca3af',
+      yellow: '#a16207', blue: '#2563eb', magenta: '#6d28d9', cyan: '#ea580c', white: '#9ca3af',
       brightBlack: '#6b7280', brightRed: '#dc2626', brightGreen: '#059669',
       brightYellow: '#ca8a04', brightBlue: '#3b82f6', brightMagenta: '#7c3aed',
-      brightCyan: '#0f766e', brightWhite: '#d1d5db',
+      brightCyan: '#f97316', brightWhite: '#d1d5db',
       scrollbarSliderBackground: 'rgba(31, 35, 40, 0.14)',
       scrollbarSliderHoverBackground: 'rgba(31, 35, 40, 0.34)',
-      scrollbarSliderActiveBackground: 'rgba(13, 148, 136, 0.50)',
+      scrollbarSliderActiveBackground: 'rgba(234, 88, 12, 0.50)',
     },
   },
 };

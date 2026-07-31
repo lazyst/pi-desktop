@@ -236,9 +236,9 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════════
-   主题家族：Mineral（蓝绿翡翠风格）
-   暗色为深板岩 #0f1419，强调色为蓝绿 #2dd4bf。
-   亮色为暖石色 #f0ebe3，强调色为深蓝绿 #0d9488。
+   主题家族：Mineral（琥珀暖橙风格）
+   暗色为深板岩 #0f1419，强调色为暖橙 #d97706。
+   亮色为暖石色 #f0ebe3，强调色为深琥珀 #b45309。
    ═══════════════════════════════════════════════════════════════════════════════ */
 [data-theme-family="mineral"] {
   /* Backgrounds */
@@ -246,7 +246,7 @@ body {
   --bg-panel: #17212b;
   --bg-hover: #1e2a38;
   --bg-menu-hover: #263546;
-  --bg-active: rgba(45, 212, 191, 0.08);
+  --bg-active: rgba(217, 119, 6, 0.08);
   --bg-elevated: #1c2834;
   --editor-surface: #17212b;
 
@@ -261,13 +261,13 @@ body {
   --text-dim: #a0b4c8;
 
   /* Accent + semantic */
-  --accent: #2dd4bf;
-  --accent-hover: #5eead4;
-  --accent-soft: rgba(45, 212, 191, 0.35);
-  --success: #4ade80;
-  --danger: #f87171;
-  --danger-hover: #fca5a5;
-  --focus-ring: 0 0 0 2px rgba(45, 212, 191, 0.50);
+  --accent: #d97706;
+  --accent-hover: #f59e0b;
+  --accent-soft: rgba(217, 119, 6, 0.35);
+  --success: #65a30d;
+  --danger: #ef4444;
+  --danger-hover: #f87171;
+  --focus-ring: 0 0 0 2px rgba(217, 119, 6, 0.50);
 
   /* Shadow */
   --shadow-modal: 0 10px 40px rgba(0, 0, 0, 0.60);
@@ -279,7 +279,7 @@ body {
   --bg-panel: #faf6f0;
   --bg-hover: #e8e0d4;
   --bg-menu-hover: #dfd5c6;
-  --bg-active: rgba(13, 148, 136, 0.08);
+  --bg-active: rgba(234, 88, 12, 0.08);
   --bg-elevated: #ffffff;
   --editor-surface: #faf6f0;
 
@@ -294,13 +294,13 @@ body {
   --text-dim: #4a5268;
 
   /* Accent + semantic */
-  --accent: #0d9488;
-  --accent-hover: #0f766e;
-  --accent-soft: rgba(13, 148, 136, 0.40);
-  --success: #047857;
+  --accent: #ea580c;
+  --accent-hover: #f97316;
+  --accent-soft: rgba(234, 88, 12, 0.40);
+  --success: #4d7c0f;
   --danger: #b91c1c;
   --danger-hover: #991b1b;
-  --focus-ring: 0 0 0 2px rgba(13, 148, 136, 0.45);
+  --focus-ring: 0 0 0 2px rgba(234, 88, 12, 0.45);
 
   /* Shadow */
   --shadow-modal: 0 10px 40px rgba(31, 35, 40, 0.15);
