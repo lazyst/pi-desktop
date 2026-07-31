@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.9.9] — 2026-07
+
+### 新增
+
+- **主题家族系统 — Aurora + Mineral 风格**：新增 ThemeFamily 类型 (github|aurora|mineral)，
+  与 ThemeVariant (dark|light) 双属性驱动。Aurora（冷蓝渐变）和 Mineral（蓝绿翡翠）
+  两套 CSS token 暗/亮色，终端 ANSI 调色板按家族分别定义，
+  Monaco 编辑器 Mineral 暗色主题选中色改用蓝绿调。
+  设置面板新增「配色风格」三段式选择器
+- **会话查看 Markdown 渲染**：新建 SessionMarkdownRenderer 组件，
+  从 MarkdownPreview 提取完整插件链（react-markdown + remark/rehype 生态），
+  assistant 消息做 markdown 渲染，user/tool 消息保持纯文本。
+  支持 mermaid 代码块、代码复制、右键菜单、sanitize 安全过滤
+- **设置面板防抖自动保存统一**：新增 useDebouncedSave hook（800ms 防抖，
+  支持深度比较、递归保存、卸载 flush），TerminalSettings / PiConfigEditor /
+  PiModelConfig / PiMcpManager 统一使用，移除手动保存按钮
+
+### 修复
+
+- **FileTree 空目录右键菜单不显示**：roots.length === 0 时早期 return
+  缺少 ContextMenu 渲染，右键菜单 state 虽设置但组件从未挂载
+- **FileTree 空目录新建文件/文件夹无响应**：空目录分支未渲染
+  FileTreeVirtualRows，导致 inline input 不可见
+- **会话 Markdown 表格无边框**：.session-markdown-renderer 缺少
+  table/th/td 样式，从 .markdown-file-preview 迁移并适配窄宽度
+
+### 样式
+
+- **会话视图主题配色优化**：
+  - P0：用户消息气泡从整块高饱和 accent 改为半透明柔和方案
+    (color-mix 12% + 1px 边框)
+  - P0：AI 回复区域添加左侧 3px accent 引用线
+  - P1：操作按钮使用语义色（启动→绿色，删除→红色）
+  - P2：表格表头提升至 --bg-hover，新增偶数行斑马纹
+- TabBar 中间区域右侧按钮默认颜色改为 var(--text)
+
+### 变更
+
+- **仓库重命名**：从 pi-desktop 迁移到 pi-workbench，
+  更新 git remote URL、README 中英文版、updateChecker 中的仓库名和安装包文件名
+
 ## [0.9.8] — 2026-07
 
 ### 新增
