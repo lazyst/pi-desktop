@@ -200,6 +200,12 @@ contextBridge.exposeInMainWorld('pi', {
     ipcRenderer.on('session:new-from-pi', handler);
     return () => ipcRenderer.removeListener('session:new-from-pi', handler);
   },
+  // 会话名变更通知（/name 命令触发）
+  onSessionNameChanged: (cb: (payload: { ptyId: string; name: string }) => void) => {
+    const handler = (_e: unknown, payload: any) => cb(payload);
+    ipcRenderer.on('session:name-changed', handler);
+    return () => ipcRenderer.removeListener('session:name-changed', handler);
+  },
   // 注册 PTY 初始 owner（渲染进程通知主进程）
   registerPtyOwner: (ptyId: string, ownerKey: string) => {
     ipcRenderer.send('session:register-pty-owner', { ptyId, ownerKey });

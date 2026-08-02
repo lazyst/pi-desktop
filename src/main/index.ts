@@ -406,7 +406,31 @@ function unescapeField(s: string): string {
             }
           }
         }
-      } else {
+        return;
+      }
+
+      // 检测 PiName OSC 序列: \x1b]633;PiName;name\x07（会话名变更）
+      const piNameMatch = data.match(
+        /\x1b\]633;PiName;((?:[^;\x07\\]|\\.)*)\x07/,
+      );
+      if (piNameMatch) {
+        const name = unescapeField(piNameMatch[1]);
+        win.webContents.send('session:name-changed', { ptyId: id, name });
+        // 从数据中剥离 OSC 序列
+        const cleanData = data.replace(/\x1b\]633;PiName;[^\x07]*\x07/, '');
+        if (cleanData) {
+          win.webContents.send('terminal:data', { id, data: cleanData });
+          const routes = ptyRegistry.getRoutes(id);
+          if (routes) {
+            for (const routeId of routes) {
+              win.webContents.send('terminal:data', { id: routeId, data: cleanData });
+            }
+          }
+        }
+        return;
+      }
+
+      {
         win.webContents.send('terminal:data', { id, data });
         // 把数据路由到子 session
         const routes = ptyRegistry.getRoutes(id);

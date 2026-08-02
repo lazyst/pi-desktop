@@ -95,7 +95,26 @@ export function useSessionStatus() {
         useTabStore.getState().renameSessionTab(ptyId, name);
       });
     }
-    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); };
+    // 订阅会话名变更（/name 命令触发）
+    let offNameChanged: (() => void) | undefined;
+    if (typeof pi.onSessionNameChanged === 'function') {
+      offNameChanged = pi.onSessionNameChanged(({ ptyId, name }) => {
+        // 更新 tabStore 中的会话名（live tab）
+        useTabStore.getState().renameSessionTab(ptyId, name);
+        // 如果该 live 会话有对应的虚拟 session（pi-<uuid>），也更新
+        for (const [virtualKey, mappedPtyId] of _virtualToPty) {
+          if (mappedPtyId === ptyId) {
+            useTabStore.getState().renameSessionTab(virtualKey, name);
+            break;
+          }
+        }
+        // 更新 virtualSessions 中的名称
+        setVirtualSessions((prev) =>
+          prev.map((s) => (s.key === ptyId || _virtualToPty.get(s.key) === ptyId ? { ...s, name } : s)),
+        );
+      });
+    }
+    return () => { offStatus?.(); offExit?.(); offIndex?.(); offRelink?.(); offNameChanged?.(); };
   }, []);
 
   return {
