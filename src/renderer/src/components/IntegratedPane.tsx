@@ -69,6 +69,11 @@ export function IntegratedPane({ terminalId, active }: Props) {
       const fileName = path.split(/[\\/]/).filter(Boolean).pop() || path;
       useTabStore.getState().openPreview('', path, fileName);
     };
+    // 终端标题变化（OSC 0 序列）：同步更新 tab 标题（shell 自设标题 / pi 扩展 spinner 帧）。
+    // 标题更新是渲染端纯本地状态（splitStore），直接调 store action，无需 IPC 往返。
+    term.onTitleChange = (title) => {
+      useTabStore.getState().updateTabTitle(terminalId, title);
+    };
     if (active) mountPane(terminalId, host);
     return () => {
       // 清理时只卸载 xterm 渲染实例（经 PaneManager.releasePane 注销），

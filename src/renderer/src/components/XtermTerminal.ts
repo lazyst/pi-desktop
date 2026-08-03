@@ -66,6 +66,7 @@ import '@xterm/xterm/css/xterm.css';
 
 // —— lib/terminal 模块注入 ——
 import { isXtermInstanceDisposed } from '../lib/terminal/instance-disposed';
+import { PtyOutputProcessor } from '../lib/terminal/pty-output-processor';
 import { runGuardedWriteCompletionStep } from '../lib/terminal/write-callback-guard';
 import { discardInFlightTerminalOutputAckCredits } from '../lib/terminal/ack-credit';
 import { forceTerminalViewportScrollbarSync } from '../lib/terminal/scrollbar-sync';
@@ -299,6 +300,18 @@ export class XtermTerminal implements LiveTerminal {
   onOpenFile: ((path: string, line?: number, col?: number) => void) | null = null;
   // 命令完成回调（供未来「重跑 / 复制命令」等能力使用）。
   onCommandFinished: ((command: string) => void) | null = null;
+  // 终端标题变化回调（OSC 0/1/2 标题序列）：xterm 解析 \x1b]0;title\x07 后触发。
+  // 供壳更新 tab 标题——pi 扩展的 spinner 标题帧依赖此回调才能显示（见 pi-desktop-sync-source）。
+  onTitleChange: ((title: string) => void) | null = null;
+  // 代理状态变化回调：代理开始工作（spinner 启动）。
+  onAgentBecameWorking: (() => void) | null = null;
+  // 代理状态变化回调：代理变为空闲（spinner 停止）。
+  onAgentBecameIdle: (() => void) | null = null;
+  // 侧效果处理器实例（标题/铃声/代理状态聚合、批内去重、微任务调度 flush）。
+  private outputProcessor: PtyOutputProcessor | null = null;
+
+  // 最近一次 xterm 解析到的标题（OSC 0/1/2），供 getTitle() 查询。
+  private _latestTitle: string | null = null;
 
   // —— 写前/写后通知（对齐 VS Code TerminalInstance._onWillData / _onData）——
   // 外部消费者可在 onWillData 中保存滚动状态、在 onData 中恢复。
@@ -393,19 +406,40 @@ export class XtermTerminal implements LiveTerminal {
     if (this.active === active) return;
     this.active = active;
     if (active && this.host && this.term && !this.disposed) {
-      // 切回可见：flush 待执行 resize + 立即 resize（对齐 VS Code setVisible）。
+      // 同步校准尺寸（即使 RenderService 暂停，resize 记录 _needsFullRefresh 标记，
+      // 由后续 flush 后的 refresh/forceRepaint 一次性绘制，无副作用）
       this.resizeDebouncer?.flush();
       this.doResize(true);
-      // 隐藏期（visibility:hidden / display:none）WebGL 上下文可能被浏览器回收，
-      // 切回时强制 refresh 重绘已有缓冲区内容，避免"切回变空白新终端"。
-      // 注意：refresh 必须在 doResize 之后（doResize 可能被零尺寸拦截而跳过），
-      // 此处直接用 this.term.rows 以确保至少重绘当前有效行数。
-      try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
-      // 穿透 xterm RenderService 暂停状态：tab 切换后 IntersectionObserver 可能滞后一帧，
-      // 导致 RenderService._isPaused === true 吞掉 refresh 调用。forceRepaintThroughRenderPause
-      // 直接清除暂停标记并驱动同步全屏渲染，确保用户立即看到终端内容而非空白帧。
-      forceRepaintThroughRenderPause(this.term);
+      // 异步等待所有 pending 的 term.write() 被解析完成，再执行渲染。
+      // 这样隐藏期间累积的写入数据在可见时正确渲染，避免"旧帧残留"。
+      this._flushAndRender().catch(() => { /* fire-and-forget */ });
     }
+  }
+
+  /**
+   * 等待所有待写入的 term.write() 被 xterm 解析完成，再执行强制渲染穿透暂停。
+   *
+   * 当 tab 从非 active 切回 active 时，隐藏期间累积的 term.write() 调用可能尚未
+   * 被 xterm 解析完成，若直接渲染会导致"旧帧残留"——用户看到的是隐藏前的缓冲区状态，
+   * 而非最新输出。
+   *
+   * 先 flush() 确保所有 pending 写入被解析完成（通过 await _pendingWritePromise +
+   * 轮询 _latestWriteSeq === _latestParsedSeq），再执行 refresh + forceRepaint。
+   * resize 已由 caller（setActive）同步完成，无需在此重复。
+   *
+   * 使用 fire-and-forget 模式：setActive 保持同步返回，不阻塞 caller。
+   */
+  private async _flushAndRender(): Promise<void> {
+    // 1. 等待所有 pending 的 term.write() 被 xterm 解析完成
+    await this.flush();
+
+    // 2. 再次检查生命周期状态（flush 期间可能被 unmount 或切走）
+    if (this.disposed || !this.active || !this.term || !this.host) return;
+
+    // 3. 强制全屏刷新和渲染暂停穿透（flush 后缓冲区已包含最新数据，
+    //    但 RenderService 可能仍处于暂停状态，需 forceRepaint 确保绘制）
+    try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
+    forceRepaintThroughRenderPause(this.term);
   }
 
   /** 非 active / 卸载时销毁终端，释放所有监听与定时器。
@@ -414,6 +448,9 @@ export class XtermTerminal implements LiveTerminal {
    * 先 flush 剩余 ack，再 dispose ackBufferer（强制 resume PTY 避免 inflight 不归零）。 */
   unmount(): void {
     this.disposed = true;
+    // 侧效果处理器：先 flush 尾部侧效果（标题/铃声/状态回调不丢失），再销毁。
+    this.outputProcessor?.dispose();
+    this.outputProcessor = null;
     // 对齐 VS Code：先 flush 待写数据，确保所有写入完成
     this.ackBufferer?.flush();
     this.ackBufferer?.dispose();
@@ -782,6 +819,12 @@ export class XtermTerminal implements LiveTerminal {
   /** 清除选区（对齐 VS Code clearSelection）。 */
   clearSelection(): void {
     this.term?.clearSelection();
+  }
+
+  /** 获取当前终端标题（xterm 最近解析到的 OSC 0/1/2 标题；尚未收到任何标题序列时为 null）。
+   * 供壳在未设置 onTitleChange 回调时主动查询标题。 */
+  getTitle(): string | null {
+    return this._latestTitle;
   }
 
   /**
@@ -1334,11 +1377,38 @@ export class XtermTerminal implements LiveTerminal {
       /* 旧版 xterm 无 onScroll：降级为始终贴底，浮钮不出现 */
     }
 
-    // 铃响（对齐 VS Code onBell）：终端响铃时触发，供壳播放提示音或闪烁标签。
+    // 终端标题变化（OSC 0/1/2 序列）与铃声——统一经侧效果处理器聚合。
+    // 先创建处理器实例（确保 onBell 订阅时 this.outputProcessor 已就绪），
+    // 再注册 xterm 事件。
+    // AFTER 路径：xterm 已处理跨块拆分，解析后的标题和铃声经处理器批内去重、
+    // 状态判定与 working/idle 回调，flush 时统一转发给壳（原始标题透传）。
     try {
-      term.onBell(() => this.onBell?.());
+      this.outputProcessor = new PtyOutputProcessor({
+
+        onTitleChange: (rawTitle) => {
+          this.onTitleChange?.(rawTitle);
+        },
+        onBell: () => {
+          this.onBell?.();
+        },
+        onAgentBecameWorking: () => {
+          this.onAgentBecameWorking?.();
+        },
+        onAgentBecameIdle: () => {
+          this.onAgentBecameIdle?.();
+        },
+      });
+      // xterm 解析标题后 → 处理器 AFTER 路径
+      term.onTitleChange((title) => {
+        this._latestTitle = title; // 同步更新，供 getTitle() 查询
+        this.outputProcessor?.onTitleChange(title);
+      });
+      // 铃声 → 处理器 AFTER 路径（处理器已创建，onBell 订阅安全）
+      term.onBell(() => {
+        this.outputProcessor?.handleBell();
+      });
     } catch {
-      /* 旧版 xterm 无 onBell */
+      /* 旧版 xterm 无 onTitleChange 或 onBell */
     }
 
     // 选区变化（对齐 VS Code onSelectionChange）：选区变化时触发，供壳更新菜单状态。

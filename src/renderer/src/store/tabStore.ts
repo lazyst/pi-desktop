@@ -38,6 +38,8 @@ export interface TabStore {
   closeCenterTab: (id: string) => void;
   promoteTabNames: (diskList: { key: string; name: string }[]) => void;
   renameSessionTab: (key: string, name: string) => void;
+  // 终端 OSC 0 标题变化时更新 tab 标题（pi 扩展 spinner 标题帧 / shell 自设标题）。
+  updateTabTitle: (id: string, title: string) => void;
 }
 
 // useTabStore 指向 useSplitStore（向后兼容）

@@ -484,6 +484,9 @@ export interface SplitStore {
   closeCenterTab: (id: string) => void;
   promoteTabNames: (diskList: { key: string; name: string }[]) => void;
   renameSessionTab: (key: string, name: string) => void;
+  // 终端 OSC 0 标题变化时更新 tab 标题（pi 扩展 spinner 标题帧 / shell 自设标题）。
+  // 仅更新 title 展示字段，不动 name（会话真名由 /name → PiName → renameSessionTab 管理）。
+  updateTabTitle: (id: string, title: string) => void;
 
   // 分屏专用 action
   splitPane: (leafId: string, direction: SplitDirection) => void;
@@ -1559,6 +1562,32 @@ export const useSplitStore = create<SplitStore>((set, get) => ({
               if (tab.kind !== 'session' || (tab as SessionTab).key !== key) return tab;
               changedLeaf = true;
               return { ...tab, name, title: name };
+            });
+            return changedLeaf ? { ...t, tabs } : t;
+          }
+          return { ...t, children: t.children.map(updateTree) };
+        };
+        const updated = updateTree(tree);
+        if (updated !== tree) {
+          changed = true;
+          cwdTrees[cwd] = updated;
+        }
+      }
+      return changed ? { cwdTrees } : {};
+    }),
+
+  updateTabTitle: (id, title) =>
+    set((state) => {
+      let changed = false;
+      let cwdTrees = { ...state.cwdTrees };
+      for (const [cwd, tree] of Object.entries(cwdTrees)) {
+        const updateTree = (t: SplitTree): SplitTree => {
+          if (t.type === 'leaf') {
+            let changedLeaf = false;
+            const tabs = t.tabs.map((tab) => {
+              if (tab.id !== id || tab.title === title) return tab;
+              changedLeaf = true;
+              return { ...tab, title };
             });
             return changedLeaf ? { ...t, tabs } : t;
           }

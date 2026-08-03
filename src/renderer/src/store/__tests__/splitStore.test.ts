@@ -1012,4 +1012,38 @@ describe('splitStore — 数据模型与基础操作', () => {
       expect(leafAFound!.leaf.tabs.some((t) => t.id === '/a/s1')).toBe(true);
     });
   });
+
+  describe('updateTabTitle（OSC 0 标题变化同步 tab 标题）', () => {
+    it('更新 session tab 的 title（不动 name）', () => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      getState().updateTabTitle('/a/s1', '⠋ π - dir-a');
+      const tab = getAllTabs(getState())[0];
+      expect(tab.title).toBe('⠋ π - dir-a');
+      // name（会话真名）不受影响
+      expect((tab as SessionTab).name).toBe('sess-a');
+    });
+
+    it('更新 integrated-terminal tab 的 title', () => {
+      getState().openTerminal('term-1', '/a', 'Terminal');
+      getState().updateTabTitle('term-1', 'zsh - /a');
+      const tab = getAllTabs(getState())[0];
+      expect(tab.title).toBe('zsh - /a');
+      expect(tab.kind).toBe('integrated-terminal');
+    });
+
+    it('不存在的 tab id 无副作用', () => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      getState().updateTabTitle('no-such-tab', 'x');
+      const tab = getAllTabs(getState())[0];
+      expect(tab.title).toBe('sess-a');
+    });
+
+    it('相同 title 不触发 store 更新（无新对象引用）', () => {
+      getState().openSession({ key: '/a/s1', cwd: '/a', name: 'sess-a' });
+      const before = getAllTabs(getState())[0];
+      getState().updateTabTitle('/a/s1', 'sess-a');
+      const after = getAllTabs(getState())[0];
+      expect(after).toBe(before);
+    });
+  });
 });

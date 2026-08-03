@@ -47,6 +47,11 @@ export function SessionPane({ sessionKey, active }: Props) {
       const fileName = path.split(/[\\/]/).filter(Boolean).pop() || path;
       useTabStore.getState().openPreview('', path, fileName);
     };
+    // 终端标题变化（OSC 0 序列，pi 扩展的 spinner 标题帧）：同步更新 tab 标题。
+    // 标题更新是渲染端纯本地状态（splitStore），直接调 store action，无需 IPC 往返。
+    term.onTitleChange = (title) => {
+      useTabStore.getState().updateTabTitle(sessionKey, title);
+    };
     // 仅当当前就是 active 才立即 open；非 active 时实例已建但等待 setActive(true) 时 open。
     if (active) mountPane(sessionKey, host);
     return () => {

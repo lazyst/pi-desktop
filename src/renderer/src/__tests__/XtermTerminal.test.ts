@@ -381,6 +381,27 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
+  // 终端标题变化（OSC 0 序列）：xterm 解析 \x1b]0;title\x07 后触发 onTitleChange 回调，
+  // 并经 getTitle() 可查询最近标题。这是 pi 扩展 spinner 标题帧在 tab 上可见的前提
+  // （渲染端必须订阅 onTitleChange，见 pi-desktop-sync-source）。
+  it('fires onTitleChange and exposes getTitle() when OSC 0 title arrives', async () => {
+    const api = makeApi();
+    const titles: string[] = [];
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    t.onTitleChange = (title) => titles.push(title);
+    const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
+    // OSC 0 标题序列（pi 扩展写入的格式：spinner 帧 + π 前缀 + 目录名）
+    onData('k', '\x1b]0;⠋ π - my-project\x07');
+    await vi.waitFor(() => expect(titles.length).toBeGreaterThanOrEqual(1));
+    expect(titles[0]).toBe('⠋ π - my-project');
+    // 空闲标题更新后 getTitle 跟随
+    expect(t.getTitle()).toBe('⠋ π - my-project');
+    onData('k', '\x1b]0;π - my-project\x07');
+    await vi.waitFor(() => expect(t.getTitle()).toBe('π - my-project'));
+    t.unmount();
+  });
+
   // 背压回传（对齐 VS Code AckDataBufferer）：累积消费字符数达 CharCountAckSize(5000)
   // 才发一次 acknowledgeDataEvent IPC，减少高频小段 write 下的通信量。
   it('batches ack via AckDataBufferer, sending every 5000 chars (aligned with VS Code)', async () => {
