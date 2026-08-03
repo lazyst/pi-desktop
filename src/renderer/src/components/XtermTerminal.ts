@@ -87,6 +87,7 @@ import {
   syncTerminalScrollIntentFromViewport,
   enforceTerminalCurrentScrollIntent,
 } from '../lib/terminal/scroll-intent';
+import { TerminalStructuralReplayCoordinator } from '../lib/terminal/structural-replay-coordinator';
 
 // 终端字体栈：对齐 VS Code 默认（等宽优先）。鉴于已加载 Unicode11Addon 处理宽字符度量，
 // 不再需要此前「含 CJK 的等宽字体栈」hack——VS Code 同样不靠字体栈兜底 CJK 度量，而是交给
@@ -374,6 +375,9 @@ export class XtermTerminal implements LiveTerminal {
   // 不可在物理滚轮检测时自动覆盖。默认 false（不启用平滑滚动）。
   private _smoothScrolling = false;
 
+  // 结构重放协调器：清屏/重放时保护滚动意图，确保视口位置精确恢复到用户阅读位置。
+  private replayCoordinator: TerminalStructuralReplayCoordinator | null = null;
+
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
@@ -384,6 +388,9 @@ export class XtermTerminal implements LiveTerminal {
     // (getPathForFile)、写后背压回传(acknowledgeDataEvent)。所有 PTY 输入/输出/退出/resize
     // 数据通信均改走 this.channel（见 terminalChannel.ts）。
     this.pi = opts.pi;
+
+    // 创建结构重放协调器（terminal 引用在 _initXterm 中设置）
+    this.replayCoordinator = new TerminalStructuralReplayCoordinator();
   }
 
   /**
@@ -516,6 +523,10 @@ export class XtermTerminal implements LiveTerminal {
       const gl = (canvas?.getContext('webgl2') ?? canvas?.getContext('webgl')) as WebGLRenderingContext | null;
       gl?.getExtension('WEBGL_lose_context')?.loseContext();
     }
+    // 释放结构重放协调器：中断正在执行的任务并清空队列
+    this.replayCoordinator?.dispose();
+    this.replayCoordinator = null;
+
     // 丢弃飞行中 ACK 信用：确保在 dispose 前释放所有未解析的写 ACK，
     // 避免因回调永不触发而泄漏主进程的背压窗口。
     if (this.term) {
@@ -588,7 +599,10 @@ export class XtermTerminal implements LiveTerminal {
    */
   resetSameFrame(): void {
     if (!this.term || this.disposed) return;
-    this.term.write('\x1bc');
+    // 通过结构重放协调器执行清屏，确保清屏后滚动意图被保持
+    this.replayCoordinator?.run(() => {
+      this.term?.write('\x1bc');
+    }).catch(() => { /* fire-and-forget：清屏失败不影响主流程 */ });
   }
 
   /** 强制重绘：清空 WebGL 纹理图集并触发一次完整重绘（对齐 VS Code forceRedraw/clearTextureAtlas）。
@@ -1008,11 +1022,15 @@ export class XtermTerminal implements LiveTerminal {
    * 把 serializeScrollback 产出的 VT 数据流重新写回终端。仅在 mount 后、首次数据到达前调用。 */
   restoreScrollback(data: string): void {
     if (!data || this.disposed || !this.term) return;
-    try {
-      this.term.write(data);
-    } catch {
-      /* 还原失败忽略 */
-    }
+    // 通过结构重放协调器执行重放，确保重放后滚动意图被保持
+    this.replayCoordinator?.run(() => {
+      if (!this.term || this.disposed) return;
+      try {
+        this.term.write(data);
+      } catch {
+        /* 还原失败忽略 */
+      }
+    }).catch(() => { /* fire-and-forget：重放失败不影响主流程 */ });
   }
 
   /** 加载 WebLinksAddon（@xterm/addon-web-links）：检测终端输出中的 URL 并使其可点击。
@@ -1204,6 +1222,9 @@ export class XtermTerminal implements LiveTerminal {
     term.loadAddon(fit);
     this.term = term;
     this.fit = fit;
+
+    // 设置结构重放协调器的 terminal 引用
+    this.replayCoordinator?.setTerminal(term);
 
     // Unicode11Addon：宽字符 / CJK 度量由 xterm 原生处理（对齐 VS Code _updateUnicodeVersion），
     // 从源头消除中英混排度量漂移，替代此前含 CJK 的字体栈 hack。
