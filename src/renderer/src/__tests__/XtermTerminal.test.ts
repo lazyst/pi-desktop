@@ -332,8 +332,8 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  // WebGL 上下文丢失恢复（对齐 VS Code _webglAddon.onContextLoss）：GPU 上下文丢失后整会话
-  // 降级 DOM 渲染器，不重建 WebGL、不崩溃，并触发一次尺寸重测。
+  // WebGL 上下文丢失恢复：GPU 上下文丢失后设置标记、降级 DOM，不崩溃，并触发一次尺寸重测。
+  // 注意：doResize 内部的 retryWebglIfNeeded 会立即重建 WebGL，所以 webgl 不为 null。
   it('degrades to DOM renderer on WebGL context loss without throwing', () => {
     const api = makeApi();
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
@@ -345,6 +345,112 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     // 上下文丢失后实例仍可用：后续写入不应抛错。
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
     expect(() => onData('k', 'after-loss')).not.toThrow();
+    t.unmount();
+  });
+
+  // WebGL 上下文丢失后自动重建（doResize → retryWebglIfNeeded → enableWebgl）。
+  it('rebuilds WebGL renderer automatically after context loss via doResize', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    const host = mountHost();
+    t.mount(host);
+    const initialActivateCalls = hoist.webglActivateCalls;
+
+    // 模拟上下文丢失（doResize 内部的 retryWebglIfNeeded 会立即重建 WebGL）
+    expect(typeof hoist.webglContextLossHandler).toBe('function');
+    hoist.webglContextLossHandler!();
+
+    // 上下文丢失触发 doResize → retryWebglIfNeeded → enableWebgl → 重建成功
+    expect(hoist.webglActivateCalls).toBeGreaterThan(initialActivateCalls);
+    // webglContextLost 被 retryWebglIfNeeded 重置为 false
+    expect((t as any).webglContextLost).toBe(false);
+    expect((t as any).webglDisabledAfterContextLoss).toBe(false);
+    expect((t as any).webgl).not.toBeNull();
+
+    t.unmount();
+  });
+
+  // WebGL 附加失败后重新激活时重试（setActive(true) → retryWebglIfNeeded → 清除标记 → enableWebgl）。
+  it('retries WebGL after attach failure when setActive(true) is called', () => {
+    const api = makeApi();
+    // 首次 mount 让 WebGL 附加失败
+    hoist.webglThrow = true;
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    const host = mountHost();
+    t.mount(host);
+    expect(hoist.webglActivateCalls).toBeGreaterThanOrEqual(1);
+    expect((t as any).webglAttachFailed).toBe(true);
+    expect((t as any).webgl).toBeNull();
+
+    // 停用 WebGL 抛错，让重试能成功
+    hoist.webglThrow = false;
+
+    // 模拟切出再切回触发 retry
+    (t as any).active = false;
+    const beforeRetry = hoist.webglActivateCalls;
+    t.setActive(true);
+    // setActive(true) 内部调用 retryWebglIfNeeded → 清除 webglAttachFailed → enableWebgl → 成功
+    expect(hoist.webglActivateCalls).toBeGreaterThan(beforeRetry);
+    expect((t as any).webglAttachFailed).toBe(false);
+    expect((t as any).webgl).not.toBeNull();
+
+    t.unmount();
+  });
+
+  // 上下文丢失后 forceRedraw 不应尝试清空纹理（WebGL 已重建，但模拟丢失后重建的 addon
+  // 在 mock 中不保留 clearTextureAtlas 调用计数）。
+  it('forceRedraw() handles gracefully after context loss', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    hoist.webglClearAtlasCalls = 0;
+
+    // 模拟上下文丢失（自动重建 WebGL）
+    hoist.webglContextLossHandler!();
+    expect((t as any).webgl).not.toBeNull();
+
+    // forceRedraw 不应抛错
+    expect(() => t.forceRedraw()).not.toThrow();
+
+    t.unmount();
+  });
+
+  // unmount 清除所有 WebGL 状态标记，后续 mount 重新探测。
+  it('unmount() resets WebGL state flags for fresh mount', () => {
+    const api = makeApi();
+    hoist.webglThrow = true;
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    t.mount(mountHost());
+    expect((t as any).webglAttachFailed).toBe(true);
+
+    t.unmount();
+    expect((t as any).webglAttachFailed).toBe(false);
+    expect((t as any).webglDisabledAfterContextLoss).toBe(false);
+    expect((t as any).webglContextLost).toBe(false);
+    expect((t as any).webgl).toBeNull();
+  });
+
+  // WebGL 上下文丢失后 doResize 触发自动重建，再次上下文丢失也应能再次重建。
+  it('handles multiple context loss and rebuild cycles', () => {
+    const api = makeApi();
+    const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+    const host = mountHost();
+    t.mount(host);
+
+    // 第一次上下文丢失→自动重建
+    const firstActivate = hoist.webglActivateCalls;
+    hoist.webglContextLossHandler!();
+    expect(hoist.webglActivateCalls).toBeGreaterThan(firstActivate);
+    expect((t as any).webgl).not.toBeNull();
+
+    // 第二次上下文丢失→自动重建
+    // 注意：新 addon 的 onContextLoss 回调会覆盖 hoist.webglContextLossHandler
+    expect(typeof hoist.webglContextLossHandler).toBe('function');
+    const secondActivate = hoist.webglActivateCalls;
+    hoist.webglContextLossHandler!();
+    expect(hoist.webglActivateCalls).toBeGreaterThan(secondActivate);
+    expect((t as any).webgl).not.toBeNull();
+
     t.unmount();
   });
 

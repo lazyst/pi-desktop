@@ -8,8 +8,8 @@
 //
 // 与 VS Code 集成终端对齐的装配点：
 //   - 渲染器：open 之后装载 WebGL（对齐 VS Code XtermTerminal.attachToElement 的「TODO: Move
-//     before open」之前的原生顺序），但会话内恒定锁定、绝不中途切换（rendererLocked）。上下文
-//     丢失后整会话降级 DOM，不重建 WebGL（对齐 VS Code _webglAddon.onContextLoss 的精神）。
+//     before open」之前的原生顺序），上下文丢失后可重试（不再永久锁定）。上下文
+//     丢失后降级 DOM，下次可见时由 retryWebglIfNeeded 尝试重建 WebGL。
 //   - 数据缓冲：直接订阅 channel.onData，由主进程 emitData 5ms 聚合（等效 VS Code pty host
 //     端 TerminalDataBufferer，减少 IPC 消息量），渲染端不再做二次聚合。
 //     对齐 VS Code 渲染端：直接 _onProcessData → _writeProcessData，无额外聚合层。
@@ -270,15 +270,19 @@ export class XtermTerminal implements LiveTerminal {
   private opened = false;
   private mounted = false; // 是否已完成首次 mount（keep-alive 下不再重建）
   private active = false; // keep-alive：当前是否可见（对齐 VS Code setVisible）
-  private rendererLocked = false; // 本实例是否已锁定渲染器（open 后不再中途切换）
   private disposed = false;
   private host: HTMLElement | null = null;
   // 当前装载的 WebGL addon 实例引用（open 后锁定、会话内恒定；上下文丢失时置回退）。
   private webgl: WebglAddon | null = null;
   // WebGL 上下文是否丢失（丢失后整会话降级 DOM，待下次可见/resize 触发重建尝试）。
   private webglContextLost = false;
+  // WebGL 上下文丢失标记：上下文丢失后设置，由 retryWebglIfNeeded 在可见时尝试重建。
+  // 与 webglContextLost 的区别：webglContextLost 用于 forceRedraw 等跳过守卫；
+  // webglDisabledAfterContextLoss 是 retry 触发器，重建成功后清除。
+  private webglDisabledAfterContextLoss = false;
   // WebGL 附加失败锁：首次 new WebglAddon() 失败后 latch，避免后续反复重试（如 title 变化触发
-  // 重新 attach 时再次失败，浪费 CPU 并产生 console 噪音）。unmount 时清除。
+  // 重新 attach 时再次失败，浪费 CPU 并产生 console 噪音）。
+  // 由 retryWebglIfNeeded 在可见时显式清除后重试，或 unmount 时清除。
   private webglAttachFailed = false;
 
   // —— 数据写通道订阅（直接订阅 channel.onData，不再经过 TerminalDataBufferer）——
@@ -423,6 +427,8 @@ export class XtermTerminal implements LiveTerminal {
     if (this.active === active) return;
     this.active = active;
     if (active && this.host && this.term && !this.disposed) {
+      // 可见时尝试重建 WebGL 渲染器（上下文丢失或此前附加失败后）
+      this.retryWebglIfNeeded();
       // 同步校准尺寸（即使 RenderService 暂停，resize 记录 _needsFullRefresh 标记，
       // 由后续 flush 后的 refresh/forceRepaint 一次性绘制，无副作用）
       this.resizeDebouncer?.flush();
@@ -482,6 +488,7 @@ export class XtermTerminal implements LiveTerminal {
     this.resizeDebouncer?.dispose();
     this.resizeDebouncer = null;
     this.webglContextLost = false;
+    this.webglDisabledAfterContextLoss = false;
     this.webglAttachFailed = false;
     this.webgl = null;
     this.decorationAddon?.dispose();
@@ -524,12 +531,9 @@ export class XtermTerminal implements LiveTerminal {
     // @xterm/addon-webgl 的 dispose() 不调用 WEBGL_lose_context.loseContext()，导致浏览器
     // WebGL context 上限（~16）到达后，新实例 new WebglAddon() 创建失败、降级为 DOM 渲染器；
     // 而 .xterm-viewport 在 DOM 模式下 overflow-y:hidden 禁用了滚动 → “不能滚动”。
-    // 在 term.dispose() 前从宿主 canvas 取回 context 并 loseContext（term.element 仍有效）。
-    if (this.term?.element) {
-      const canvas = this.term.element.querySelector('canvas');
-      const gl = (canvas?.getContext('webgl2') ?? canvas?.getContext('webgl')) as WebGLRenderingContext | null;
-      gl?.getExtension('WEBGL_lose_context')?.loseContext();
-    }
+    // 使用 releaseWebglContext 通过内部渲染器获取 context 并 loseContext，同时将 canvas
+    // 尺寸设为 0 确保 ANGLE 驱动层释放。
+    this.releaseWebglContext();
     // 释放结构重放协调器：中断正在执行的任务并清空队列
     this.replayCoordinator?.dispose();
     this.replayCoordinator = null;
@@ -1285,7 +1289,6 @@ export class XtermTerminal implements LiveTerminal {
 
     // 渲染器策略（S1）：open 之后探测 WebGL 可用性并锁定（会话内恒定、不中途切换）。
     // 对齐 VS Code attachToElement 的原生顺序（VS Code 自身也标注「TODO: Move before open」），
-    // 但本项目保留 rendererLocked，避免「open 后加载 → 中途切换」的度量跳变风险。
     this.enableWebgl();
 
     // 查找 addon（对齐 VS Code SearchAddon 装载）：预装载以便 Ctrl+F 即用。
@@ -1506,31 +1509,29 @@ export class XtermTerminal implements LiveTerminal {
     this.doResize(true);
   }
 
-  /** 渲染器策略（S1）：open 之后探测 WebGL 可用性并锁定，会话内恒定、绝不中途切换。
+  /** 渲染器策略（S1）：open 之后探测 WebGL 可用性并装载，可重试（不再永久锁定）。
    * 可用环境变量 PI_DESKTOP_RENDERER 强制渲染器，用于排查「WebGL cell 度量跳变导致编辑器漂移」：
    *   - 未设置 / 'auto'：探测 WebGL，可用则 GPU，否则 DOM
    *   - 'webgl'：强制 WebGL（不可用则警告并回退 DOM）
    *   - 'dom'：强制 DOM 渲染器（绕过 WebGL，验证是否 WebGL 度量问题）
    *
-   * 对齐 VS Code _enableWebglRenderer：注册 onContextLoss，GPU 上下文丢失时不闪退、整会话降级
-   * DOM 渲染器（rendererLocked 仍恒定，不切回 WebGL 以免度量再跳变），并在后续 resize/可见时用
-   * requestRefreshDimensions 触发一次重新测量（此处由 doResize(true) 承担）。
+   * 对齐 VS Code _enableWebglRenderer：注册 onContextLoss，GPU 上下文丢失时降级 DOM 但不永久锁定；
+   * 下次可见时由 retryWebglIfNeeded 尝试重建 WebGL。
    *
-   * auto 决策委托给 webgl-auto-policy.ts 的 getTerminalWebglAutoDecision 模块。 */
+   * auto 决策委托给 webgl-auto-policy.ts 的 getTerminalWebglAutoDecision 模块。
+   *
+   * 注意：不再设置 rendererLocked 永久锁。已装载 WebGL（this.webgl != null）时跳过。
+   * webglAttachFailed 标记由 retryWebglIfNeeded 在可见时清除后重试。 */
   private enableWebgl(): void {
     const term = this.term;
-    if (!term || this.rendererLocked) return;
-    // WebGL 附加失败锁：首次 new WebglAddon() 失败后 latch 住，后续不再重试
+    if (!term || this.webgl) return;
+    // WebGL 附加失败锁：首次 new WebglAddon() 失败后暂时跳过
     // （避免每次 title 变化/重新 attach 时都尝试 new WebglAddon() 失败并打印警告）。
-    // unmount 时清除，下次 mount 重新探测。
-    if (this.webglAttachFailed) {
-      this.rendererLocked = true;
-      return;
-    }
-    this.rendererLocked = true;
+    // 由 retryWebglIfNeeded 在可见时清除后重试。
+    if (this.webglAttachFailed) return;
     const forced = (import.meta.env?.VITE_PI_DESKTOP_RENDERER ?? '').toLowerCase();
     if (forced === 'dom') {
-      console.info('[terminal] 渲染器已按 PI_DESKTOP_RENDERER=dom 强制锁定为 DOM 渲染器。');
+      console.info('[terminal] 渲染器已按 PI_DESKTOP_RENDERER=dom 强制使用 DOM 渲染器。');
       return;
     }
     // auto 决策：委托给 webgl-auto-policy.ts 模块
@@ -1539,33 +1540,80 @@ export class XtermTerminal implements LiveTerminal {
       const decision = getTerminalWebglAutoDecision();
       if (!decision.allowWebgl) {
         console.info(
-          `[terminal] WebGL 已按 auto 策略禁用（${decision.reason}），锁定为 DOM 渲染器。`,
+          `[terminal] WebGL 已按 auto 策略禁用（${decision.reason}），使用 DOM 渲染器。`,
         );
         return;
       }
     }
     try {
       const addon = new WebglAddon();
-      // 上下文丢失恢复（对齐 VS Code _webglAddon.onContextLoss）：整会话降级 DOM，不重建 WebGL，
-      // 避免「丢失→重建→度量跳变」的闪烁链。下次 resize/可见时 doResize(true) 重新校准尺寸。
+      // 上下文丢失回调：设置标记、释放 WebGL 资源，但不永久禁止重试。
+      // 下次可见时由 retryWebglIfNeeded 尝试重建。
       addon.onContextLoss(() => {
         this.webglContextLost = true;
-        this.webgl?.dispose();
+        this.webglDisabledAfterContextLoss = true;
+        this.releaseWebglContext();
         this.webgl = null;
-        console.warn('[terminal] WebGL 上下文丢失，整会话降级为 DOM 渲染器（不重建 WebGL）。');
+        console.warn('[terminal] WebGL 上下文丢失，降级为 DOM 渲染器（下次可见时尝试重建）。');
         // 上下文丢失后 cell 度量由 WebGL 变 DOM，强制一次整屏重测，避免尺寸错位。
         if (this.active && this.host && !this.disposed) this.doResize(true);
       });
       term.loadAddon(addon); // open 后 load：与 VS Code attachToElement 顺序一致
       this.webgl = addon;
-      console.info('[terminal] WebGL 渲染器已锁定（open 后启用，会话内不切换）。');
+      this.webglDisabledAfterContextLoss = false;
+      console.info('[terminal] WebGL 渲染器已启用。');
     } catch (e) {
       this.webglAttachFailed = true;
       console.warn(
-        '[terminal] WebGL 渲染器不可用，已锁定为 DOM 渲染器（会话内不切换）。\n' +
+        '[terminal] WebGL 渲染器不可用，降级为 DOM 渲染器（下次可见时重试）。\n' +
           '若环境无硬件 GPU，请确认主进程已设置 --enable-unsafe-swiftshader 以启用软件 WebGL。',
         e,
       );
+    }
+  }
+
+  /** 在可见时尝试重建 WebGL 渲染器。
+   * 由 setActive(true) 和 doResize() 调用，覆盖以下场景：
+   *   - 上下文丢失后（webglDisabledAfterContextLoss === true）→ 清除标记并调用 enableWebgl
+   *   - 附加失败后（webglAttachFailed === true）→ 清除标记并调用 enableWebgl
+   * 仅当 active === true 且未 disposed 时执行。 */
+  private retryWebglIfNeeded(): void {
+    if (this.disposed || !this.active || !this.term || !this.host) return;
+    // 已拥有 WebGL，无需重试
+    if (this.webgl) return;
+
+    if (this.webglDisabledAfterContextLoss) {
+      this.webglDisabledAfterContextLoss = false;
+      this.webglContextLost = false;
+      this.enableWebgl();
+      return;
+    }
+
+    if (this.webglAttachFailed) {
+      this.webglAttachFailed = false;
+      this.enableWebgl();
+    }
+  }
+
+  /** 显式释放 WebGL 上下文，避免 context 泄露达到浏览器上限导致新终端无法使用 GPU 渲染。
+   * 通过内部渲染器获取 WebGL context 并调用 loseContext，同时将 canvas 尺寸设为 0
+   * 确保 ANGLE 驱动层释放。
+   * 在 unmount() 和上下文丢失时调用。 */
+  private releaseWebglContext(): void {
+    try {
+      // 优先通过 addon 内部渲染器获取 context（比 DOM querySelector 更可靠）
+      const gl = (this.webgl as any)?._renderer?._gl as WebGLRenderingContext | undefined;
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      // 将 canvas 尺寸设为 0，确保 ANGLE 驱动层释放 GPU 资源
+      if (this.term?.element) {
+        const canvas = this.term.element.querySelector('canvas');
+        if (canvas) {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      }
+    } catch {
+      // WebGL context 释放失败不影响主流程
     }
   }
 
@@ -1993,6 +2041,8 @@ export class XtermTerminal implements LiveTerminal {
    * ResizeObserver 或下一次调度用真实尺寸校准。 */
   private doResize(force = false): void {
     if (this.disposed || !this.fit || !this.term || !this.host) return;
+    // resize 时尝试重建 WebGL 渲染器（上下文丢失或此前附加失败后）
+    this.retryWebglIfNeeded();
     const proposed = this.fit.proposeDimensions();
     if (!proposed) return;
     // 零尺寸守卫：Chromium 布局未就绪时返回 2×1 最小值，跳过避免缓冲截断
