@@ -379,6 +379,30 @@ export function restoreTerminalStructuralScrollIntent(
  * 强制执行终端当前的滚动意图。
  * 读取已存储的意图或即时捕获，然后恢复之。
  */
+/**
+ * 从快照强制执行滚动意图，跳过 revision 检查。
+ * 用于 buffer 重建场景：begin 时捕获的快照在 end 时恢复，
+ * 即使重建期间意图被覆盖也能正确恢复。
+ *
+ * @param terminal 终端目标
+ * @param snapshot begin 时捕获的结构快照
+ * @param options 恢复选项
+ */
+export function forceRestoreTerminalScrollIntent(
+  terminal: TerminalScrollIntentTarget,
+  snapshot: TerminalStructuralScrollIntentSnapshot,
+  options: TerminalScrollIntentEnforceOptions = {},
+): void {
+  // 将快照数据写回存储的意图（创建新修订号，绕过 revision 检查）
+  writeIntentSnapshot(terminal, snapshot.kind, snapshot)
+  // 然后强制执行
+  enforceTerminalCurrentScrollIntent(terminal)
+}
+
+/**
+ * 强制执行终端当前的滚动意图。
+ * 读取已存储的意图或即时捕获，然后恢复之。
+ */
 export function enforceTerminalCurrentScrollIntent(
   terminal: TerminalScrollIntentTarget,
 ): void {

@@ -83,6 +83,10 @@ import {
   releaseScrollStateMarker,
 } from '../lib/terminal/scroll';
 import type { ScrollState } from '../lib/terminal/scroll';
+import {
+  syncTerminalScrollIntentFromViewport,
+  enforceTerminalCurrentScrollIntent,
+} from '../lib/terminal/scroll-intent';
 
 // 终端字体栈：对齐 VS Code 默认（等宽优先）。鉴于已加载 Unicode11Addon 处理宽字符度量，
 // 不再需要此前「含 CJK 的等宽字体栈」hack——VS Code 同样不靠字体栈兜底 CJK 度量，而是交给
@@ -415,6 +419,8 @@ export class XtermTerminal implements LiveTerminal {
       // 异步等待所有 pending 的 term.write() 被解析完成，再执行渲染。
       // 这样隐藏期间累积的写入数据在可见时正确渲染，避免"旧帧残留"。
       this._flushAndRender().catch(() => { /* fire-and-forget */ });
+      // 强制执行当前滚动意图，确保切回可见时视口位置正确
+      enforceTerminalCurrentScrollIntent(this.term);
     }
   }
 
@@ -1652,6 +1658,12 @@ export class XtermTerminal implements LiveTerminal {
           // 对齐 VS Code _onData：写解析完毕后通知外部消费者
           this.onData?.(data);
         });
+
+        runGuardedWriteCompletionStep('sync-scroll-intent', () => {
+          // 从当前视口位置同步滚动意图
+          // 确保新数据写入后视口意图反映真实状态
+          syncTerminalScrollIntentFromViewport(term);
+        });
       });
     } catch {
       /* 终端已销毁等边界 */
@@ -1717,6 +1729,12 @@ export class XtermTerminal implements LiveTerminal {
           // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
           this.restoreScrollState(savedState);
         });
+
+        runGuardedWriteCompletionStep('sync-scroll-intent', () => {
+          // 从当前视口位置同步滚动意图
+          // 确保新数据写入后视口意图反映真实状态
+          syncTerminalScrollIntentFromViewport(term);
+        });
       });
     } catch {
       /* 终端已销毁等边界 */
@@ -1747,6 +1765,7 @@ export class XtermTerminal implements LiveTerminal {
     if (savedState) {
       restoreScrollStateModule(this.term, savedState);
     }
+    syncTerminalScrollIntentFromViewport(this.term);
     forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
@@ -1766,6 +1785,7 @@ export class XtermTerminal implements LiveTerminal {
     if (savedState) {
       restoreScrollStateModule(this.term, savedState);
     }
+    syncTerminalScrollIntentFromViewport(this.term);
     forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
@@ -1787,6 +1807,7 @@ export class XtermTerminal implements LiveTerminal {
     if (savedState) {
       restoreScrollStateModule(this.term, savedState);
     }
+    syncTerminalScrollIntentFromViewport(this.term);
     forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
