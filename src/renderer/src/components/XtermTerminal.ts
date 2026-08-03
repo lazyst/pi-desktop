@@ -71,6 +71,7 @@ import { discardInFlightTerminalOutputAckCredits } from '../lib/terminal/ack-cre
 import { forceTerminalViewportScrollbarSync } from '../lib/terminal/scrollbar-sync';
 import { forceRepaintThroughRenderPause } from '../lib/terminal/render-pause-release';
 import { getTerminalWebglAutoDecision } from '../lib/terminal/webgl-auto-policy';
+import { DesyncDetector } from '../lib/terminal/desync-detector';
 import {
   registerUndeliverableWriteHandler,
 } from '../lib/terminal/write-pipeline-health';
@@ -395,6 +396,9 @@ export class XtermTerminal implements LiveTerminal {
   // DOM 事件驱动的滚动意图跟踪的反注册函数（在 _initXterm 末尾挂载，unmount 时释放）。
   private _scrollIntentTrackingDisposable: { dispose: () => void } | null = null;
 
+  // —— WebGL 渲染去同步检测器（可选，issue 06）——
+  private _desyncDetector: DesyncDetector | null = null;
+
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
@@ -501,6 +505,7 @@ export class XtermTerminal implements LiveTerminal {
     this.webglContextLost = false;
     this.webglDisabledAfterContextLoss = false;
     this.webglAttachFailed = false;
+    this._stopDesyncDetector();
     this.webgl = null;
     this.decorationAddon?.dispose();
     this.decorationAddon = null;
@@ -1302,6 +1307,10 @@ export class XtermTerminal implements LiveTerminal {
     // 对齐 VS Code attachToElement 的原生顺序（VS Code 自身也标注「TODO: Move before open」），
     this.enableWebgl();
 
+    // 启动 WebGL 渲染去同步检测器（issue 06）：仅当 WebGL 启用时有效，
+    // 检测器内部守卫 this.webgl 和 this.active，非 WebGL 模式静默跳过。
+    this._startDesyncDetector();
+
     // 查找 addon（对齐 VS Code SearchAddon 装载）：预装载以便 Ctrl+F 即用。
     try {
       this.searchAddon = new SearchAddon();
@@ -1563,6 +1572,7 @@ export class XtermTerminal implements LiveTerminal {
         this.webglContextLost = true;
         this.webglDisabledAfterContextLoss = true;
         this.releaseWebglContext();
+        this._stopDesyncDetector();
         this.webgl = null;
         console.warn('[terminal] WebGL 上下文丢失，降级为 DOM 渲染器（下次可见时尝试重建）。');
         // 上下文丢失后 cell 度量由 WebGL 变 DOM，强制一次整屏重测，避免尺寸错位。
@@ -1625,6 +1635,28 @@ export class XtermTerminal implements LiveTerminal {
     } catch {
       // WebGL context 释放失败不影响主流程
     }
+  }
+
+  /** 启动 WebGL 渲染去同步检测器。仅当 WebGL 启用时有效。
+   * 检测器内部守卫 this.webgl 和 this.active，非 WebGL 模式静默跳过。
+   * 在 _initXterm 末尾（enableWebgl 之后）调用。 */
+  private _startDesyncDetector(): void {
+    if (!this.term || !this.webgl || !this.host) return;
+    if (this._desyncDetector) return; // 已启动，幂等
+    this._desyncDetector = new DesyncDetector();
+    this._desyncDetector.start({
+      term: this.term,
+      webgl: this.webgl,
+      host: this.host,
+      isActive: () => this.active,
+    });
+  }
+
+  /** 停止 WebGL 渲染去同步检测器并释放资源。
+   * 在 unmount、WebGL 上下文丢失、或非 WebGL 模式时调用。 */
+  private _stopDesyncDetector(): void {
+    this._desyncDetector?.stop();
+    this._desyncDetector = null;
   }
 
 
