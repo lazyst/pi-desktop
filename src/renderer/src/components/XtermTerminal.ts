@@ -272,6 +272,9 @@ export class XtermTerminal implements LiveTerminal {
   private webgl: WebglAddon | null = null;
   // WebGL 上下文是否丢失（丢失后整会话降级 DOM，待下次可见/resize 触发重建尝试）。
   private webglContextLost = false;
+  // WebGL 附加失败锁：首次 new WebglAddon() 失败后 latch，避免后续反复重试（如 title 变化触发
+  // 重新 attach 时再次失败，浪费 CPU 并产生 console 噪音）。unmount 时清除。
+  private webglAttachFailed = false;
 
   // —— 数据写通道订阅（直接订阅 channel.onData，不再经过 TerminalDataBufferer）——
   // 主进程 emitData 的 5ms 聚合（等效 VS Code pty host 端 TerminalDataBufferer）已减少 IPC 消息量；
@@ -463,6 +466,7 @@ export class XtermTerminal implements LiveTerminal {
     this.resizeDebouncer?.dispose();
     this.resizeDebouncer = null;
     this.webglContextLost = false;
+    this.webglAttachFailed = false;
     this.webgl = null;
     this.decorationAddon?.dispose();
     this.decorationAddon = null;
@@ -1545,6 +1549,13 @@ export class XtermTerminal implements LiveTerminal {
   private enableWebgl(): void {
     const term = this.term;
     if (!term || this.rendererLocked) return;
+    // WebGL 附加失败锁：首次 new WebglAddon() 失败后 latch 住，后续不再重试
+    // （避免每次 title 变化/重新 attach 时都尝试 new WebglAddon() 失败并打印警告）。
+    // unmount 时清除，下次 mount 重新探测。
+    if (this.webglAttachFailed) {
+      this.rendererLocked = true;
+      return;
+    }
     this.rendererLocked = true;
     const forced = (import.meta.env?.VITE_PI_DESKTOP_RENDERER ?? '').toLowerCase();
     if (forced === 'dom') {
@@ -1578,6 +1589,7 @@ export class XtermTerminal implements LiveTerminal {
       this.webgl = addon;
       console.info('[terminal] WebGL 渲染器已锁定（open 后启用，会话内不切换）。');
     } catch (e) {
+      this.webglAttachFailed = true;
       console.warn(
         '[terminal] WebGL 渲染器不可用，已锁定为 DOM 渲染器（会话内不切换）。\n' +
           '若环境无硬件 GPU，请确认主进程已设置 --enable-unsafe-swiftshader 以启用软件 WebGL。',
