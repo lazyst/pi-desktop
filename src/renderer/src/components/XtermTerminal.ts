@@ -10,9 +10,9 @@
 //   - 渲染器：open 之后装载 WebGL（对齐 VS Code XtermTerminal.attachToElement 的「TODO: Move
 //     before open」之前的原生顺序），上下文丢失后可重试（不再永久锁定）。上下文
 //     丢失后降级 DOM，下次可见时由 retryWebglIfNeeded 尝试重建 WebGL。
-//   - 数据缓冲：直接订阅 channel.onData，由主进程 emitData 5ms 聚合（等效 VS Code pty host
-//     端 TerminalDataBufferer，减少 IPC 消息量），渲染端不再做二次聚合。
-//     对齐 VS Code 渲染端：直接 _onProcessData → _writeProcessData，无额外聚合层。
+//   - 数据缓冲：直接订阅 channel.onData，由主进程 emitData 5ms 聚合 + 渲染端二次聚合
+//     （5ms 时间窗 + 64KB 上限），双层减少 IPC 消息量和 term.write() 调用次数。
+//     聚合后统一 _segmentByShellIntegration → _writeProcessData。
 //   - 命令级分段：对齐 VS Code TerminalInstance._onProcessData，按 OSC 633（C/D）序列把数据切成
 //     语义段，各段按序 term.write，使命令边界成为独立写入单元、且可被装饰层差分解析。
 //   - 写后背压：term.write 回调里调 pi.acknowledgeDataEvent(key, len)（对齐 VS Code
@@ -96,8 +96,8 @@ import { attachTerminalScrollIntentTracking } from '../lib/terminal/scroll-inten
 // 可变宽 CJK 字体：它们会让 WebGL 渲染器在 CJK 占比变化的帧间出现 cell 度量跳变（全屏 TUI
 // 差分重绘时表现为整屏上下抖动）。CJK 兜底交由 xterm 的 generic monospace fallback +
 // Unicode11Addon 处理，纯 DOM 渲染器路径仍由 CSS 兜底覆盖。
-// 主进程 emitData 的 5ms 聚合（等效 VS Code pty host 端 TerminalDataBufferer）已减少 IPC 消息量；
-// 渲染端不再做二次聚合（对齐 VS Code 渲染端无 TerminalDataBufferer 的设计）。
+// 主进程 emitData 的 5ms 聚合 + 渲染端二次聚合（5ms 时间窗 + 64KB 上限），
+// 双层减少 IPC 消息量和 term.write() 调用次数。
 // xterm.js 内部有 write 缓冲，短时间内大量 write() 调用会自动合并渲染。
 
 /** 从主进程注入的初始配置读取 scrollback 值，进程内恒定（不热更新）。
@@ -285,9 +285,18 @@ export class XtermTerminal implements LiveTerminal {
   // 由 retryWebglIfNeeded 在可见时显式清除后重试，或 unmount 时清除。
   private webglAttachFailed = false;
 
-  // —— 数据写通道订阅（直接订阅 channel.onData，不再经过 TerminalDataBufferer）——
-  // 主进程 emitData 的 5ms 聚合（等效 VS Code pty host 端 TerminalDataBufferer）已减少 IPC 消息量；
-  // 渲染端无二次聚合（对齐 VS Code 渲染端设计）。
+  // —— 渲染端二次聚合 ——
+  // 在主进程 5ms 聚合的基础上，渲染端再增加一层聚合：高频小段 IPC 消息在 5ms 时间窗内聚合，
+  // 达到 64KB 上限时立即 flush。聚合后一次性调用 _segmentByShellIntegration 和 _writeProcessData，
+  // 减少 term.write() 调用次数。
+  private static readonly AGGREGATE_WINDOW_MS = 5;
+  private static readonly AGGREGATE_MAX_SIZE = 64 * 1024;
+  private _aggregateBuffer = '';
+  private _aggregateSize = 0;
+  private _aggregateTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // —— 数据写通道订阅（直接订阅 channel.onData）——
+  // 主进程 emitData 的 5ms 聚合 + 渲染端二次聚合，双层减少 IPC 消息量和 term.write() 调用次数。
   private stopBuffering: (() => void) | null = null;
 
   // —— resize 分轴防抖（对齐 VS Code TerminalResizeDebouncer）——
@@ -472,6 +481,8 @@ export class XtermTerminal implements LiveTerminal {
    * 对齐 VS Code clearUnacknowledgedChars + dispose 语义：
    * 先 flush 剩余 ack，再 dispose ackBufferer（强制 resume PTY 避免 inflight 不归零）。 */
   unmount(): void {
+    // 先 flush 聚合数据（需要 this.term 仍有效），再标记 disposed
+    this._flushAggregatedData();
     this.disposed = true;
     // 侧效果处理器：先 flush 尾部侧效果（标题/铃声/状态回调不丢失），再销毁。
     this.outputProcessor?.dispose();
@@ -1448,9 +1459,8 @@ export class XtermTerminal implements LiveTerminal {
       this.channel.send(d);
     });
 
-    // 输出：主进程 pty 数据（经主进程 emitData 5ms 聚合，等效 VS Code pty host 端
-    // TerminalDataBufferer 用于减少 IPC 消息量）→ IPC → 直接订阅 channel.onData → handleProcessData。
-    // 渲染端不再做二次聚合（对齐 VS Code 渲染端设计：无 TerminalDataBufferer）。
+    // 输出：主进程 pty 数据（经主进程 emitData 5ms 聚合）→ IPC → 渲染端二次聚合（5ms 时间窗 + 64KB 上限）
+    // → 聚合后统一 _segmentByShellIntegration → _writeProcessData。双层聚合减少 term.write() 调用次数。
     this.stopBuffering = this.channel.onData((data) => this.handleProcessData(this.sessionKey, data));
 
     // 背压累积缓冲（对齐 VS Code AckDataBufferer 独立类）：
@@ -1618,12 +1628,14 @@ export class XtermTerminal implements LiveTerminal {
   }
 
 
-  /** （对齐 VS Code TerminalInstance._onProcessData）：
-   * 按 shell integration 的 OSC 633 序列（命令开始/结束）做语义切分，各段按序 term.write，
-   * 使命令边界成为独立写入单元。xterm 原生处理 ?2026 同步输出序列（DEC 同步输出），会自行
-   * 合并未闭合的同步帧再呈现，故无需自研同步帧切分。
-   * 写后回传 acknowledgeDataEvent（对齐 VS Code _writeProcessData 的背压流控）。
+  /** 渲染端二次聚合 + 按 OSC 633 切分写入。
    *
+   * 高频小段 IPC 消息在 5ms 时间窗内聚合（64KB 上限），聚合后一次性调用
+   * _segmentByShellIntegration 和 _writeProcessData，减少 term.write() 调用次数。
+   *
+   * 聚合后（而非聚合前）执行 OSC 633 分段，确保跨 IPC 消息的 OSC 序列能被正确识别。
+   *
+   * 写后回传 acknowledgeDataEvent（对齐 VS Code _writeProcessData 的背压流控）。
    * 优化：对齐 VS Code TerminalInstance._onProcessData，仅最后一段数据跟踪 commit。
    * 前导段（OSC 633 标记）使用 _writeProcessDataUnsafe（无 trackCommit，不创建 writePromise），
    * 最后一段使用 _writeProcessData（带 trackCommit 写完成 Promise）。
@@ -1638,6 +1650,40 @@ export class XtermTerminal implements LiveTerminal {
    * 而不必等待 OSC 标记这种零输出的写完成确认。 */
   private handleProcessData(id: string, data: string): void {
     if (id !== this.sessionKey || !this.term) return;
+
+    // 渲染端二次聚合：将高频小段 IPC 消息聚合后一次性处理
+    this._aggregateBuffer += data;
+    this._aggregateSize += data.length;
+
+    // 超过最大尺寸立即 flush
+    if (this._aggregateSize >= XtermTerminal.AGGREGATE_MAX_SIZE) {
+      this._flushAggregatedData();
+      return;
+    }
+
+    // 重启定时器：5ms 内无新数据到达时 flush
+    if (this._aggregateTimer !== null) {
+      clearTimeout(this._aggregateTimer);
+    }
+    this._aggregateTimer = setTimeout(() => {
+      this._aggregateTimer = null;
+      this._flushAggregatedData();
+    }, XtermTerminal.AGGREGATE_WINDOW_MS);
+  }
+
+  /** Flush 聚合缓冲区：按 OSC 633 分段后写入 xterm。
+   * 分段在聚合后执行，确保跨 IPC 消息的 OSC 序列能被正确识别。 */
+  private _flushAggregatedData(): void {
+    if (this._aggregateTimer !== null) {
+      clearTimeout(this._aggregateTimer);
+      this._aggregateTimer = null;
+    }
+    const data = this._aggregateBuffer;
+    this._aggregateBuffer = '';
+    this._aggregateSize = 0;
+    if (!data || !this.term) return;
+
+    // 分段在聚合后执行，确保 OSC 633 序列能在聚合后的数据块上正确切分
     const segments = this._segmentByShellIntegration(data);
     if (segments.length <= 1) {
       // 无 OSC 序列：单段，正常跟踪 ack + trackCommit
@@ -1650,8 +1696,6 @@ export class XtermTerminal implements LiveTerminal {
       }
       this._writeProcessData(segments[segments.length - 1], true);
     }
-    // 注意：不再需要空闲 flush 定时器。AckDataBufferer 的累积机制已足够；
-    // VS Code 也没有空闲 flush。ack 在 unmount/flush 时刷出。
   }
 
   /** 按 shell integration 的 OSC 序列切分输入为语义段（对齐 VS Code TerminalInstance._onProcessData）。

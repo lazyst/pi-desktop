@@ -602,7 +602,7 @@ export function writeTerminalOutput(
       options?.beforeWrite?.(data)
       terminal.write(
         data,
-        composeParsedCallback(terminal, options?.onParsed, ackCreditsParsed, undefined),
+        composeParsedCallback(terminal, options?.onParsed, ackCreditsParsed, makeParseClockPacer()),
       )
     } catch {
       ackCreditsParsed?.()

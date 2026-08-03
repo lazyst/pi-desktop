@@ -461,4 +461,73 @@ describe('output-scheduler 基于优先级的终端输出写调度器', () => {
       expect(hasTerminalParseProgressSince(terminal, generation)).toBe(false)
     })
   })
+
+  describe('parse-clock pacer（前台立即写入完成后触发 drain）', () => {
+    it('前台立即写入完成后，pacer 调度高优先级 backlog 的 drain', async () => {
+      const { writeTerminalOutput } = await loadScheduler()
+      const immediateTerminal = createTerminal()
+      const queuedTerminal = createTerminal()
+
+      // 记录前台写入的 parsed callback 何时触发
+      let parsedCallback: (() => void) | undefined
+      immediateTerminal.write.mockImplementation(
+        (_data: string, callback?: () => void) => {
+          parsedCallback = callback
+        },
+      )
+
+      // 先写入后台队列（制造高优先级 backlog）
+      writeTerminalOutput(queuedTerminal, 'backlog-data', {
+        foreground: true,
+        latencySensitive: false,
+      })
+
+      // 前台立即写入（触发 pacer）
+      writeTerminalOutput(immediateTerminal, 'immediate', {
+        foreground: true,
+      })
+
+      expect(immediateTerminal.write).toHaveBeenCalledWith(
+        'immediate',
+        expect.any(Function),
+      )
+
+      // 后台队列尚未 drain
+      expect(queuedTerminal.write).not.toHaveBeenCalled()
+
+      // 模拟 xterm 解析完成，触发 pacer（应调度 drain 0ms）
+      parsedCallback?.()
+
+      // pacer 调度了 drain，后台数据应被写入
+      vi.advanceTimersByTime(0)
+      expect(queuedTerminal.write).toHaveBeenCalledWith(
+        'backlog-data',
+        expect.any(Function),
+      )
+    })
+
+    it('前台立即写入完成后，无高优先级 backlog 时不调度 drain', async () => {
+      const { writeTerminalOutput } = await loadScheduler()
+      const terminal = createTerminal()
+
+      let parsedCallback: (() => void) | undefined
+      terminal.write.mockImplementation(
+        (_data: string, callback?: () => void) => {
+          parsedCallback = callback
+        },
+      )
+
+      // 前台立即写入（无 backlog）
+      writeTerminalOutput(terminal, 'only', {
+        foreground: true,
+      })
+
+      // 模拟 xterm 解析完成
+      parsedCallback?.()
+
+      // 不应有新的 drain 调度（无 backlog 可 drain）
+      // 验证：没有更多 write 调用
+      expect(terminal.write).toHaveBeenCalledTimes(1)
+    })
+  })
 })
