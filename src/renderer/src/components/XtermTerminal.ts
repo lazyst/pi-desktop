@@ -87,7 +87,8 @@ import {
   syncTerminalScrollIntentFromViewport,
   enforceTerminalCurrentScrollIntent,
 } from '../lib/terminal/scroll-intent';
-import { TerminalStructuralReplayCoordinator } from '../lib/terminal/structural-replay-coordinator';
+import { TerminalStructuralReplayCoordinator } from '../lib/terminal/structural-replay-coordinator'
+import { attachTerminalScrollIntentTracking } from '../lib/terminal/scroll-intent-dom-tracking';
 
 // 终端字体栈：对齐 VS Code 默认（等宽优先）。鉴于已加载 Unicode11Addon 处理宽字符度量，
 // 不再需要此前「含 CJK 的等宽字体栈」hack——VS Code 同样不靠字体栈兜底 CJK 度量，而是交给
@@ -378,6 +379,9 @@ export class XtermTerminal implements LiveTerminal {
   // 结构重放协调器：清屏/重放时保护滚动意图，确保视口位置精确恢复到用户阅读位置。
   private replayCoordinator: TerminalStructuralReplayCoordinator | null = null;
 
+  // DOM 事件驱动的滚动意图跟踪的反注册函数（在 _initXterm 末尾挂载，unmount 时释放）。
+  private _scrollIntentTrackingDisposable: { dispose: () => void } | null = null;
+
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
@@ -513,6 +517,9 @@ export class XtermTerminal implements LiveTerminal {
       this.term.element.removeEventListener('wheel', this._wheelHandler);
       this._wheelHandler = null;
     }
+    // 释放 DOM 事件驱动的滚动意图跟踪
+    this._scrollIntentTrackingDisposable?.dispose();
+    this._scrollIntentTrackingDisposable = null;
     // 治本：显式释放 WebGL context，避免关闭 tab 卸载实例时 context 泄漏累积。
     // @xterm/addon-webgl 的 dispose() 不调用 WEBGL_lose_context.loseContext()，导致浏览器
     // WebGL context 上限（~16）到达后，新实例 new WebglAddon() 创建失败、降级为 DOM 渲染器；
@@ -1483,6 +1490,18 @@ export class XtermTerminal implements LiveTerminal {
 
     // 拖拽文件到终端：拖入即插入绝对路径（对齐 VS Code 拖拽文件语义）。
     this.bindDragAndDrop(host);
+
+    // 挂载 DOM 事件驱动的滚动意图跟踪
+    // 监听滚轮、滚动条拖拽、键盘输入、鼠标报告等事件，自动标记滚动意图
+    try {
+      this._scrollIntentTrackingDisposable = attachTerminalScrollIntentTracking(
+        term,
+        host,
+        { intentKey: this.sessionKey },
+      );
+    } catch {
+      /* 跟踪挂载失败不影响核心功能 */
+    }
 
     this.doResize(true);
   }
