@@ -58,8 +58,7 @@ import {
   CommandDetectionCapability,
   CwdDetectionCapability,
 } from './terminalCapabilities';
-import { extractTerminalFileLinks, resolveTerminalFileLink } from '../lib/terminal/terminal-links';
-import type { ParsedTerminalFileLink } from '../lib/terminal/terminal-links';
+import { WebLinksAddon } from '@xterm/addon-web-links';
 import { MouseWheelClassifier } from './mouseWheelClassifier';
 import { PI_FILE_DRAG_MIME } from './FileTree';
 import '@xterm/xterm/css/xterm.css';
@@ -76,7 +75,7 @@ import {
   registerUndeliverableWriteHandler,
 } from '../lib/terminal/write-pipeline-health';
 import { configureTerminalOutputBacklogCap } from '../lib/terminal/output-scheduler';
-import { guardLinkProvider, installGuardedLinkProviderRegistration } from '../lib/terminal/link-provider-guard';
+import { installGuardedLinkProviderRegistration } from '../lib/terminal/link-provider-guard';
 import { installTerminalLinkifierHoverResetOnWrite } from '../lib/terminal/linkifier-hover-reset-on-write';
 import {
   captureScrollState as captureScrollStateModule,
@@ -1010,85 +1009,13 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /** 注册终端内链接 provider（对齐 VS Code TerminalLinkManager.registerLinkProvider）。
-   * 使用 orca 移植的 terminal-links 模块检测文件链接，保守精确，避免误判。
-   * URL 链接由 xterm 内置的 web-links addon 处理，本 provider 不检测 URL。
-   * 点击 file 链接 → pi.fsOpenWithSystem + onOpenFile 回调。
+  /** 加载 WebLinksAddon（@xterm/addon-web-links）：检测终端输出中的 URL 并使其可点击。
+   * 鼠标悬停时显示下划线，Ctrl+click 在系统浏览器中打开。
    * 返回反注册函数（unmount 时调用）。 */
-  private _registerTerminalLinkProvider(term: Terminal): { dispose: () => void } {
-    const provider = {
-      provideLinks: (bufferLineNumber: number, cb: (links: any[] | undefined) => void) => {
-        if (this.disposed || !term.buffer) {
-          cb(undefined);
-          return;
-        }
-        const line = term.buffer.active.getLine(bufferLineNumber - 1);
-        const text = line?.translateToString(true) ?? '';
-        const fileLinks = extractTerminalFileLinks(text);
-        if (!fileLinks.length) {
-          cb(undefined);
-          return;
-        }
-        // 相对路径解析：用当前 cwd（来自 CwdDetectionCapability）补全。
-        const cwd = this.caps?.get<CwdDetectionCapability>(TerminalCapability.CwdDetection)?.cwd;
-        const links = fileLinks.map((m: ParsedTerminalFileLink) => {
-          const resolved = cwd ? resolveTerminalFileLink(m, cwd) : null;
-          const path = resolved?.absolutePath ?? m.pathText;
-          const lineNum = m.line ?? undefined;
-          const colNum = m.column ?? undefined;
-          return {
-            range: {
-              start: { x: m.startIndex + 1, y: bufferLineNumber },
-              end: { x: m.endIndex + 1, y: bufferLineNumber },
-            },
-            text: m.displayText,
-            decorations: { pointerCursor: true, underline: true },
-            activate: (event?: MouseEvent) => {
-              if (!event || !(event.ctrlKey || event.metaKey)) return;
-              if (this.onOpenFile) {
-                this.onOpenFile(path, lineNum, colNum);
-              } else {
-                this.pi.fsOpenWithSystem?.(path).catch(() => {});
-              }
-            },
-            hover: (event: MouseEvent) => {
-              const doc = document;
-              const existing = doc.querySelector('.terminal-link-tooltip');
-              if (existing) existing.remove();
-              const tooltipEl = doc.createElement('div');
-              tooltipEl.className = 'terminal-link-tooltip';
-              tooltipEl.textContent = 'Ctrl+click 打开链接';
-              tooltipEl.style.cssText = `
-                position: fixed;
-                left: ${event.clientX}px;
-                top: ${event.clientY - 28}px;
-                background: var(--bg-over, #2d2d2d);
-                color: var(--text, #fff);
-                padding: 2px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                pointer-events: none;
-                z-index: 1000;
-                white-space: nowrap;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-                opacity: 0;
-                transition: opacity 0.15s ease;
-              `;
-              doc.body.appendChild(tooltipEl);
-              requestAnimationFrame(() => {
-                if (tooltipEl) tooltipEl.style.opacity = '1';
-              });
-            },
-            leave: () => {
-              const el = document.querySelector('.terminal-link-tooltip');
-              el?.remove();
-            },
-          };
-        });
-        cb(links);
-      },
-    };
-    return term.registerLinkProvider(guardLinkProvider(provider as any, 'pi-desktop-links'));
+  private _loadWebLinksAddon(term: Terminal): { dispose: () => void } {
+    const addon = new WebLinksAddon();
+    term.loadAddon(addon);
+    return addon;
   }
 
   /** 当前视口是否贴底（对齐 VS Code：viewportY >= baseY 即贴底）。xterm 6 WebGL 下
@@ -1357,12 +1284,10 @@ export class XtermTerminal implements LiveTerminal {
       this.linkifierHoverResetDisposable = null;
     }
 
-    // 终端内链接 provider（对齐 VS Code TerminalLinkManager 的 registerLinkProvider）：
-    // 识别 file/url 链接，file → onOpenFile（编辑器），url → window.open（保留用户手势，
-    // 经 setWindowOpenHandler → shell.openExternal 打开）。
-    // 并回传 onOpenFile 供文件树定位。
+    // 加载 WebLinksAddon（@xterm/addon-web-links）：检测终端输出中的 URL 并使其可点击。
+    // 替换了此前自定义的 terminal-links 文件路径链接检测。
     try {
-      this.linkProviderDisposable = this._registerTerminalLinkProvider(term);
+      this.linkProviderDisposable = this._loadWebLinksAddon(term);
     } catch {
       this.linkProviderDisposable = null;
     }

@@ -29,6 +29,15 @@ import { getPiDesktopSyncExtensionSource, PI_DESKTOP_SYNC_FILE } from './pi-desk
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
+// 静默忽略 EPIPE 错误：当父进程（pi）关闭 stdout/stderr 管道后，
+// console.log/warn/error 写入时不会崩溃弹窗。
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    console.error('[stream]', err);
+  });
+}
+
 // 配置存储（主进程唯一真源，见 docs/adr/0001）。纯函数（默认 / 解析 / 合并）在 ./config，
 // 便于在无 Electron 环境下单测；此处负责带防抖写盘的实例化与 IPC 暴露。
 import { defaultConfig, parseConfig, mergeConfig } from './config';
