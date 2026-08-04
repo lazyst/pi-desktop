@@ -4,6 +4,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { TitleBar } from './components/TitleBar';
 import { SettingsPanel } from './components/SettingsPanel';
 import { WindowResizeZones } from './components/WindowResizeZones';
+import { ToastProvider } from './components/Toast';
 import { CenterPane } from './components/CenterPane';
 import { RightPanel } from './components/RightPanel';
 import { pi } from './ipc';
@@ -417,6 +418,7 @@ export default function App() {
   }, []);
 
   return (
+    <ToastProvider>
     <div className="app">
       <TitleBar
         onOpenSettings={() => setSettingsOpen(true)}
@@ -500,5 +502,6 @@ export default function App() {
       <WindowResizeZones />
       {settingsOpen && <SettingsPanel onClose={() => setSettingsOpen(false)} />}
     </div>
+    </ToastProvider>
   );
 }

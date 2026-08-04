@@ -13,6 +13,7 @@
 // - 通过 DragContext 将 leaf items 动态传递给 TabBar
 
 import { useRef, useMemo, useEffect, useCallback, useState, createContext, useContext } from 'react';
+import { useToast } from './Toast';
 import {
   DndContext,
   DragOverlay,
@@ -476,6 +477,7 @@ function SplitPaneLeaf({
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
   const setActiveLeaf = useSplitStore((s) => s.setActiveLeaf);
   const closeCenterTab = useSplitStore((s) => s.closeCenterTab);
+  const { toast } = useToast();
 
   // 从 DragContext 获取 leaf 的动态 items
   const { leafItems, hoveredLeafId, canDrop } = useDragContext();
@@ -569,11 +571,35 @@ function SplitPaneLeaf({
           }
           if (t.kind === 'session-content') {
             const sc = t as SessionContentTab;
+            // 从会话文件路径中提取文件名（不含 .jsonl 后缀）作为会话 ID
+            const sessionId = sc.sessionKey.split(/[\\/]/).filter(Boolean).pop()?.replace(/\.jsonl$/, '') ?? sc.sessionKey;
+            const handleCopyPath = (e: React.MouseEvent) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(sc.sessionKey).then(() => toast('已复制文件路径')).catch(() => {});
+            };
+            const handleCopyId = (e: React.MouseEvent) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(sessionId).then(() => toast('已复制会话 ID')).catch(() => {});
+            };
             return (
               <div key={t.id} className={cls}>
                 <div className="session-content-tab-header">
                   <span className="session-content-tab-title">💬 {sc.sessionName}</span>
                   <div className="session-content-tab-actions">
+                    <button
+                      className="session-content-tab-btn"
+                      title="复制会话文件路径到剪贴板"
+                      onClick={handleCopyPath}
+                    >
+                      复制文件路径
+                    </button>
+                    <button
+                      className="session-content-tab-btn"
+                      title="复制会话 ID 到剪贴板"
+                      onClick={handleCopyId}
+                    >
+                      复制会话id
+                    </button>
                     <button
                       className="session-content-tab-btn"
                       title="启动会话"
