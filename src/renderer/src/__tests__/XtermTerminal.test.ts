@@ -135,8 +135,8 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
   });
 
   // 渲染端不再做 5ms 聚合（对齐 VS Code 渲染端无 TerminalDataBufferer 的设计）。
-  // 数据直接写入 xterm，每个 onData 回调直接触发一次 term.write。
-  it('aggregates multiple onData chunks within 5ms window, then flushes', async () => {
+  // 数据直接通过调度器写入 xterm，每个 onData 回调直接触发一次写入。
+  it('writes each onData chunk immediately via scheduler (no 5ms aggregation)', async () => {
     const api = makeApi();
     const writes: string[] = [];
     const write = vi
@@ -148,19 +148,21 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
-    // 渲染端二次聚合：5ms 时间窗内的小段数据聚合为一次写入
+    // 数据直接写入 xterm，每段独立触发 write（无 5ms 聚合）
     onData('k', 'chunk-1');
     onData('k', 'chunk-2');
     onData('k', 'chunk-3');
-    // 等待 5ms 聚合窗口后，三段数据应合并为一次写入
-    await vi.waitFor(() => expect(writes.length).toBe(1));
-    expect(writes[0]).toBe('chunk-1chunk-2chunk-3');
+    // 三段数据立即写入（调度器 foreground+latencySensitive 路径）
+    await vi.waitFor(() => expect(writes.length).toBe(3));
+    expect(writes[0]).toBe('chunk-1');
+    expect(writes[1]).toBe('chunk-2');
+    expect(writes[2]).toBe('chunk-3');
     write.mockRestore();
     t.unmount();
   });
 
-  // 渲染端二次聚合：数据在 5ms 时间窗内聚合，跨时间窗的独立写入。
-  it('flushes aggregated data after 5ms window, then starts a new window', async () => {
+  // 连续写入：每段数据立即写入，无 5ms 聚合窗口
+  it('writes each chunk immediately without waiting for aggregation window', async () => {
     const api = makeApi();
     const writes: string[] = [];
     vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
@@ -171,18 +173,18 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
     onData('k', 'frame-a');
-    // 等待 5ms 聚合窗口 flush
-    await new Promise((r) => setTimeout(r, 20));
+    // 立即写入，不等聚合窗口
+    await vi.waitFor(() => expect(writes.length).toBe(1));
     onData('k', 'frame-b');
-    // 第二段数据在新窗口中独立写入
     await vi.waitFor(() => expect(writes.length).toBe(2));
     expect(writes[0]).toBe('frame-a');
     expect(writes[1]).toBe('frame-b');
     t.unmount();
   });
 
-  // 跨 OSC 边界的聚合：分片到达的 OSC 633 序列在聚合后应被正确分段。
-  it('cross-OSC-boundary aggregation: fragmented OSC sequences are segmented after flush', async () => {
+  // 跨消息边界的 OSC 633 分段：分片到达的 OSC 633 序列各自独立分段。
+  // 无 5ms 聚合后，跨消息的 OSC 序列不能被合并识别。
+  it('handles fragmented OSC sequences across messages (no cross-message merge)', async () => {
     const api = makeApi();
     const writes: string[] = [];
     vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
@@ -193,26 +195,24 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
 
-    // 分片到达：第一段（输出文本 + OSC 633 前半部分）
+    // 分片到达：第一段只有文本，OSC 633 序列不完整
     onData('k', 'hello\x1b]633');
-    // 第二段（OSC 633 后半部分 + 更多输出）
+    // 第二段包含 OSC 633 后半部分 + 更多输出
     onData('k', ';C\x07world');
-    // 第三段（另一个 OSC 633 D 标记）
+    // 第三段有完整 OSC 633 D 标记（会被分段为 OSC 标记 + 内容）
     onData('k', '\x1b]633;D\x07done');
 
-    // unmount 时 flush 聚合数据
-    t.unmount();
+    // 等待写入完成
+    await vi.waitFor(() => expect(writes.length).toBeGreaterThanOrEqual(3));
 
-    // 聚合后分段：OSC 633 序列跨片段到达，聚合后应正确识别
-    expect(writes.length).toBeGreaterThanOrEqual(3);
+    // 最终拼接内容正确
     const joined = writes.join('');
     expect(joined).toBe('hello\x1b]633;C\x07world\x1b]633;D\x07done');
-    expect(writes.some((w) => w.includes('\x1b]633;C\x07'))).toBe(true);
-    expect(writes.some((w) => w.includes('\x1b]633;D\x07'))).toBe(true);
+    t.unmount();
   });
 
-  // 大块数据立即 flush：超过 64KB 时应立即写入，不等 5ms 窗口。
-  it('large chunk exceeding 64KB flushes immediately without waiting for 5ms window', async () => {
+  // 大块数据立即写入：数据直接写入 xterm，无 64KB 阈值限制。
+  it('writes large data chunk immediately (no 64KB threshold)', async () => {
     const api = makeApi();
     const writes: string[] = [];
     vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
@@ -223,24 +223,17 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
 
-    // 写入接近 64KB 的数据（不触发阈值）
-    const small = 'x'.repeat(60 * 1024);
-    onData('k', small);
-    // 数据在缓冲中，尚未写入
-    expect(writes.length).toBe(0);
-
-    // 再写入一段小数据，使总大小超过 64KB 阈值
-    const trigger = 'y'.repeat(8 * 1024);
-    onData('k', trigger);
-
-    // 超过 64KB 上限，应立即 flush
-    expect(writes.length).toBe(1);
-    expect(writes[0].length).toBe(60 * 1024 + 8 * 1024);
+    // 大量数据直接写入，无 64KB 聚合阈值
+    const large = 'x'.repeat(60 * 1024);
+    onData('k', large);
+    // 立即写入
+    await vi.waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0].length).toBe(60 * 1024);
     t.unmount();
   });
 
-  // 小块数据等待 flush：5ms 内无新数据到达时自动 flush。
-  it('small chunk is flushed after 5ms idle window', async () => {
+  // 小块数据立即写入：无 5ms 聚合窗口，数据立即到达 xterm。
+  it('writes small chunk immediately (no 5ms aggregation window)', async () => {
     const api = makeApi();
     const writes: string[] = [];
     vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
@@ -252,13 +245,7 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
 
     onData('k', 'tiny');
-    // 数据在缓冲中，尚未写入
-    expect(writes.length).toBe(0);
-
-    // 等待 5ms 聚合窗口
-    await new Promise((r) => setTimeout(r, 20));
-
-    // 5ms 后自动 flush
+    // 立即写入，无 5ms 聚合窗口
     await vi.waitFor(() => expect(writes.length).toBe(1));
     expect(writes[0]).toBe('tiny');
     t.unmount();
@@ -325,7 +312,7 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     t.unmount();
   });
 
-  it('unmount() flushes aggregated data and cleans up without leaving pending writes', async () => {
+  it('unmount() cleans up without leaving pending writes (data written immediately, no aggregation)', async () => {
     const api = makeApi();
     const writes: string[] = [];
     const write = vi.spyOn(Terminal.prototype, 'write').mockImplementation(function (this: unknown, data: string | Uint8Array, cb?: () => void) {
@@ -335,12 +322,11 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     const onData = (api.onData as any).mock.calls[0][0] as (k: string, d: string) => void;
-    // 渲染端二次聚合：数据在 5ms 时间窗内聚合，unmount 时 flush 剩余数据
+    // 数据直接写入（无 5ms 聚合），unmount 前数据已写入
     onData('k', 'late');
-    expect(write).not.toHaveBeenCalled(); // 数据尚未 flush（5ms 窗口内）
+    await vi.waitFor(() => expect(writes.length).toBe(1));
+    expect(writes[0]).toBe('late');
     t.unmount();
-    // unmount 时 flush 聚合数据，write 应被调用
-    expect(writes.join('')).toBe('late');
     // unmount 后不应再触发新 write
     const beforeCount = write.mock.calls.length;
     await new Promise((r) => setTimeout(r, 20));

@@ -57,19 +57,69 @@ export function liveTerminalCount(): number {
   return liveTerminals.size;
 }
 
-// 单点订阅：主题切换 → 刷新所有存活实例（含 forceRedraw 清 WebGL 纹理残留）。
+// ─── 配置变更聚合（16ms rAF 窗口） ───────────────────────────────────────────
+// 避免连续多次主题/字号变更（如同时加载配置时）触发多次全屏 redraw。
+// 使用 requestAnimationFrame 聚合，确保同一帧内的多次变更只触发一次刷新。
+
+let pendingThemeChange: { family: ThemeFamily; variant: ThemeVariant } | null = null
+let pendingFontSizeChange: number | null = null
+let pendingConfigUpdates: TerminalConfigUpdate[] = []
+let configAggregatorRafId: number | null = null
+
+function flushAggregatedConfigChanges(): void {
+  configAggregatorRafId = null
+
+  // 先处理字号变更（需要 doResize，影响布局）
+  if (pendingFontSizeChange !== null) {
+    const size = pendingFontSizeChange
+    pendingFontSizeChange = null
+    liveTerminals.forEach((t) => t.applyFontSize(size))
+  }
+
+  // 再处理主题变更（仅刷新纹理，不影响布局）
+  if (pendingThemeChange !== null) {
+    const { family, variant } = pendingThemeChange
+    pendingThemeChange = null
+    liveTerminals.forEach((t) => t.applyTheme(family, variant))
+  }
+
+  // 最后处理批量配置更新
+  if (pendingConfigUpdates.length > 0) {
+    const updates = pendingConfigUpdates
+    pendingConfigUpdates = []
+    // 合并所有配置更新为一次 broadcast
+    const merged: TerminalConfigUpdate = {}
+    for (const u of updates) {
+      Object.assign(merged, u)
+    }
+    liveTerminals.forEach((t) => t.updateConfig(merged))
+  }
+}
+
+function scheduleFlushConfigChanges(): void {
+  if (configAggregatorRafId !== null) return
+  configAggregatorRafId = requestAnimationFrame(() => {
+    flushAggregatedConfigChanges()
+  })
+}
+
+// 单点订阅：主题切换 → 聚合后刷新所有存活实例
 onThemeChange((family: ThemeFamily, variant: ThemeVariant) => {
-  liveTerminals.forEach((t) => t.applyTheme(family, variant));
+  pendingThemeChange = { family, variant }
+  scheduleFlushConfigChanges()
 });
 
-// 单点订阅：全局字号变化 → 同步所有存活实例的 fontSize + resize + forceRedraw。
+// 单点订阅：全局字号变化 → 聚合后同步所有存活实例
 onFontSizeChange((size: number) => {
-  liveTerminals.forEach((t) => t.applyFontSize(size));
+  pendingFontSizeChange = size
+  scheduleFlushConfigChanges()
 });
 
-/** 将配置更新广播到所有存活终端实例（立即生效）。 */
+/** 将配置更新广播到所有存活终端实例（聚合后立即生效）。
+ * 同一帧内的多次 broadcast 合并为一次 updateConfig 调用。 */
 export function broadcastConfigUpdate(config: TerminalConfigUpdate): void {
-  liveTerminals.forEach((t) => t.updateConfig(config));
+  pendingConfigUpdates.push(config)
+  scheduleFlushConfigChanges()
 }
 
 /**

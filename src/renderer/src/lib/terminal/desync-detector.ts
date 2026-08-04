@@ -43,10 +43,12 @@ export interface DesyncDetectorOptions {
   minTextCells?: number;
 }
 
-const DEFAULT_INTERVAL = 5000;
+// 间隔从 5000ms 降到 3000ms：更早检测到 desync，减少用户感知延迟
+const DEFAULT_INTERVAL = 3000;
 const DEFAULT_THRESHOLD = 0.1;
 const DEFAULT_COLOR_TOLERANCE = 30;
-const DEFAULT_PERSISTENT_SAMPLES = 2;
+// 从 2 次连续采样提高到 3 次：减少误报，避免因瞬态渲染异常触发不必要的 atlas 恢复
+const DEFAULT_PERSISTENT_SAMPLES = 3;
 const DEFAULT_MIN_TEXT_CELLS = 100;
 
 /** 两个缺失 cell 集合被判定为「重叠」的最小交集比率。 */
@@ -248,13 +250,28 @@ export class DesyncDetector {
     this._triggerRecovery(webgl, term, rows);
   }
 
-  /** 触发恢复：清空纹理图集 + 刷新视口。 */
+  /** 触发恢复：清空纹理图集，双 rAF settle 后刷新视口。
+   * 使用双 rAF settle 避免 clearTextureAtlas + 立即 refresh 导致的同帧闪烁。
+   * 第一帧等待纹理重建，第二帧刷新确保新纹理已就绪。
+   * 当 requestAnimationFrame 不可用时（如测试环境），同步执行 refresh。 */
   private _triggerRecovery(webgl: WebglAddon, term: Terminal, rows: number): void {
     try {
       webgl.clearTextureAtlas();
-      term.refresh(0, rows - 1);
       this._totalRecoveries++;
       this._lastRecoveryTime = Date.now();
+      if (typeof requestAnimationFrame === 'function') {
+        // 双 rAF settle：第一帧等待纹理重建，第二帧刷新
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            try {
+              term.refresh(0, rows - 1);
+            } catch { /* 刷新失败时忽略 */ }
+          });
+        });
+      } else {
+        // 无 rAF 环境（如测试）：同步刷新
+        term.refresh(0, rows - 1);
+      }
     } catch {
       // 恢复失败静默忽略（如渲染器已失效）
     }

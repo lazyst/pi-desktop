@@ -13,7 +13,6 @@ import {
   captureLogicalLineAnchor,
   resolveLogicalCellOffsetLine,
 } from './reflow-scroll-anchor'
-import { forceTerminalViewportScrollbarSync } from './scrollbar-sync'
 import { safeTerminalScrollCall } from './scroll-buffer-snapshot'
 
 // ===========================================================================
@@ -401,7 +400,6 @@ function restoreScrollStateNow(terminal: Terminal, state: ScrollState): ScrollRe
   // 静默处理，等待下一次 visibility 切换后重新恢复。
   if (state.wasAtBottom) {
     if (safeTerminalScrollCall(() => terminal.scrollToBottom())) {
-      forceTerminalViewportScrollbarSync(terminal)
       return 'restored'
     }
     return 'retry'
@@ -436,7 +434,6 @@ function restoreScrollStateNow(terminal: Terminal, state: ScrollState): ScrollRe
   state.viewportY = targetLine
 
   if (safeTerminalScrollCall(() => terminal.scrollToLine(targetLine))) {
-    forceTerminalViewportScrollbarSync(terminal)
     return 'restored'
   }
 

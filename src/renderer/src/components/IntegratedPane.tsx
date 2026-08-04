@@ -10,8 +10,10 @@ import {
   scrollPaneToBottom,
   paneHandleContextMenu,
   releasePane,
+  fitAllPanes,
 } from './paneManager';
 import type { XtermTerminal } from './XtermTerminal';
+import { SYNC_FIT_PANES_EVENT } from '../constants/terminal';
 
 interface Props {
   // 终端实例 id，形如 'term-<uuid>'。同时作为 XtermTerminal 的 sessionKey（仅作标识），
@@ -107,6 +109,14 @@ export function IntegratedPane({ terminalId, active }: Props) {
     ro.observe(host);
     return () => ro.disconnect();
   }, [terminalId]);
+
+  // 同步预绘制 fit：监听 SYNC_FIT_PANES_EVENT，在浏览器绘制前同步 fit 所有终端面板。
+  // 用于侧边栏开/关等瞬时宽度变化，消除 ~16ms 的"旧列宽+新容器宽"闪烁。
+  useEffect(() => {
+    const onSyncFit = () => fitAllPanes();
+    window.addEventListener(SYNC_FIT_PANES_EVENT, onSyncFit);
+    return () => window.removeEventListener(SYNC_FIT_PANES_EVENT, onSyncFit);
+  }, []);
 
   // 终端内查找：Ctrl/Cmd+F 打开查找面板，Esc 关闭，Enter/Shift+Enter 前/后查找。
   const runFind = useCallback((backward: boolean) => {

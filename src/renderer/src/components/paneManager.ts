@@ -160,3 +160,10 @@ export function resetPanes(): void {
   for (const term of panes.values()) term.unmount();
   panes.clear();
 }
+
+/** 同步 fit 所有存活终端实例（由 SYNC_FIT_PANES_EVENT 触发）。
+ * 跳过防抖，立即执行 fit + PTY 通知，确保终端在浏览器绘制前同步到新容器尺寸。
+ * 连续拖拽（侧边栏拖宽、分栏拖拽）走独立的 ResizeObserver + 防抖路径。 */
+export function fitAllPanes(): void {
+  panes.forEach((term) => term.fitImmediate());
+}

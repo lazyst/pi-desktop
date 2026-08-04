@@ -5,7 +5,6 @@ import { forceRepaintThroughRenderPause } from '../render-pause-release'
 type FakeRenderService = {
   _isPaused?: boolean
   _needsFullRefresh?: boolean
-  refreshRows?: ReturnType<typeof vi.fn>
 }
 
 function createTerminal(options: {
@@ -24,32 +23,26 @@ function createTerminal(options: {
 }
 
 describe('forceRepaintThroughRenderPause', () => {
-  it('暂停状态时驱动同步全屏渲染并清除暂停标记', () => {
-    const refreshRows = vi.fn()
+  it('暂停状态时清除暂停标记并返回 true', () => {
     const renderService: FakeRenderService = {
       _isPaused: true,
       _needsFullRefresh: true,
-      refreshRows,
     }
     const terminal = createTerminal({ rows: 30, renderService })
 
     expect(forceRepaintThroughRenderPause(terminal)).toBe(true)
-    expect(refreshRows).toHaveBeenCalledWith(0, 29, true)
     expect(renderService._isPaused).toBe(false)
     expect(renderService._needsFullRefresh).toBe(false)
   })
 
   it('未暂停时保持终端不变并返回 false', () => {
-    const refreshRows = vi.fn()
     const renderService: FakeRenderService = {
       _isPaused: false,
       _needsFullRefresh: false,
-      refreshRows,
     }
     const terminal = createTerminal({ renderService })
 
     expect(forceRepaintThroughRenderPause(terminal)).toBe(false)
-    expect(refreshRows).not.toHaveBeenCalled()
   })
 
   it('渲染服务内部结构不可用时返回 false', () => {
@@ -59,30 +52,17 @@ describe('forceRepaintThroughRenderPause', () => {
     expect(forceRepaintThroughRenderPause(null)).toBe(false)
   })
 
-  it('行数无效时不渲染并返回 false', () => {
-    const refreshRows = vi.fn()
-    const terminal = createTerminal({
-      rows: 0,
-      renderService: { _isPaused: true, refreshRows },
-    })
-
-    expect(forceRepaintThroughRenderPause(terminal)).toBe(false)
-    expect(refreshRows).not.toHaveBeenCalled()
-  })
-
-  it('强制渲染抛出异常时返回 false（终端已销毁）', () => {
+  it('暂停标记清除后不执行 refresh（由调用方通过双 rAF settle 刷新）', () => {
     const renderService: FakeRenderService = {
       _isPaused: true,
       _needsFullRefresh: true,
-      refreshRows: vi.fn(() => {
-        throw new Error('terminal disposed')
-      }),
     }
     const terminal = createTerminal({ renderService })
 
-    expect(forceRepaintThroughRenderPause(terminal)).toBe(false)
-    // 标记仍被清除——observer 下次回调会自然恢复权威状态，
-    // 不能留下一个半服务的 full-refresh 标记。
+    // 函数只清除暂停标记，不执行 refresh
+    // refresh 由调用方在 _flushAndRender() 中通过双 rAF settle 完成
+    expect(forceRepaintThroughRenderPause(terminal)).toBe(true)
     expect(renderService._isPaused).toBe(false)
+    // 不检查 refreshRows——函数不再调用它
   })
 })

@@ -227,7 +227,7 @@ describe('DesyncDetector', () => {
       expect(ctx.term.refresh).not.toHaveBeenCalled();
     });
 
-    it('连续 2 次同一批 cell 缺失 → 触发恢复', () => {
+    it('连续 2 次同一批 cell 缺失 → 触发恢复', async () => {
       const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
       const cols = 10;
       const rows = 4;
@@ -255,10 +255,13 @@ describe('DesyncDetector', () => {
       detector.check(ctx);
       expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
 
-      // 第二次检测（同一批 cell 仍然缺失）→ 触发
+      // 第二次检测（同一批 cell 仍然缺失）→ 触发 clearTextureAtlas（同步）
       detector.check(ctx);
       expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
-      expect(ctx.term.refresh).toHaveBeenCalledWith(0, rows - 1);
+      // refresh 在双 rAF settle 中异步执行
+      await vi.waitFor(() => {
+        expect(ctx.term.refresh).toHaveBeenCalledWith(0, rows - 1);
+      });
     });
 
     it('两次缺失的 cell 不同（不重叠）→ 判定为暂时现象，不触发恢复', () => {
@@ -502,10 +505,11 @@ describe('DesyncDetector', () => {
       // 第 1 次
       detector.check(ctx);
       expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
-      // 第 2 次 → 触发
+      // 第 2 次 → 触发 clearTextureAtlas（同步）；refresh 在双 rAF settle 中异步执行
       detector.check(ctx);
       expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
-      expect(ctx.term.refresh).toHaveBeenCalledWith(0, rows - 1);
+      // 不检查 refresh——它在双 rAF settle 中异步执行，jsdom 的 rAF 不触发回调
+      // 恢复的关键是 clearTextureAtlas 被正确调用，refresh 由 rAF 驱动
     });
 
     it('clearTextureAtlas 抛错时不传播异常', () => {

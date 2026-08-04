@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { defaultConfig } from '../../../main/config';
 import { pi } from '../ipc';
+import { SYNC_FIT_PANES_EVENT } from '../constants/terminal';
 
 /**
  * 面板布局状态 hook：管理侧边栏和右栏的宽度与折叠状态。
@@ -41,6 +42,9 @@ export function usePanelLayout() {
     setSidebarCollapsed((prev) => {
       const next = !prev;
       pi.setConfig({ sidebarCollapsed: next }).catch(() => {});
+      // 派发同步 fit 事件，使终端在下一帧绘制前同步到新尺寸
+      // 消除侧边栏开关时的 ~16ms 尺寸跳变闪烁
+      window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT));
       return next;
     });
   }, []);
@@ -50,6 +54,8 @@ export function usePanelLayout() {
     setRightPanelCollapsed((prev) => {
       const next = !prev;
       pi.setConfig({ rightPanelCollapsed: next }).catch(() => {});
+      // 派发同步 fit 事件，使终端在下一帧绘制前同步到新尺寸
+      window.dispatchEvent(new CustomEvent(SYNC_FIT_PANES_EVENT));
       return next;
     });
   }, []);

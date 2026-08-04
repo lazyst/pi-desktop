@@ -21,11 +21,24 @@ import {
   isTerminalWritePipelineCertifiedDead,
   failTerminalWriteStallWatch,
 } from './write-pipeline-health'
+import { writeForegroundTerminalChunk } from './foreground-render-settle'
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
 export type TerminalOutputTarget = {
   write(data: string, callback?: () => void): void
+  buffer?: {
+    active?: {
+      cursorY?: number
+      baseY?: number
+      viewportY?: number
+    }
+  }
+  rows?: number
+  _core?: {
+    refresh?(start: number, end: number, sync?: boolean): void
+  }
+  refresh?(start: number, end: number): void
 }
 
 export type WriteTerminalOutputOptions = {
@@ -39,6 +52,10 @@ export type WriteTerminalOutputOptions = {
   onParsed?: () => void
   /** ACK 信用：当 xterm 解析完这批字节后回调 */
   ackCredit?: () => void
+  /** 强制写后刷新视口（用于前台写入后的渲染 settle）。默认 true。 */
+  forceForegroundRefresh?: boolean
+  /** 是否始终调度 followup viewport settle。默认 false。 */
+  followupForegroundRefresh?: boolean
 }
 
 /** 队列中的单个数据块 */
@@ -590,21 +607,46 @@ export function writeTerminalOutput(
   const latencySensitive = options?.latencySensitive !== false // 默认 true
 
   if (foreground && latencySensitive) {
-    // ─── 前台立即写入 ──────────────────────────────────────────────────
-    const ackCreditsParsed = registerTerminalOutputAckCredits(
-      terminal,
-      options?.ackCredit ? [options.ackCredit] : [],
-    )
+    // ─── 前台立即写入（含渲染 settle） ─────────────────────────────────
+    const ackCredits = options?.ackCredit ? [options.ackCredit] : []
+    const ackCreditsParsed = registerTerminalOutputAckCredits(terminal, ackCredits)
     armTerminalWriteStallWatch(terminal, {
       onCertifiedDead: () => discardQueuedOutput(terminal),
     })
-    try {
-      options?.beforeWrite?.(data)
-      terminal.write(
-        data,
-        composeParsedCallback(terminal, options?.onParsed, ackCreditsParsed, makeParseClockPacer()),
-      )
-    } catch {
+
+    // 使用 writeForegroundTerminalChunk 确保写后渲染 settle
+    const forceRefresh = options?.forceForegroundRefresh !== false // 默认 true
+    const followupRefresh = options?.followupForegroundRefresh === true
+    const pacer = makeParseClockPacer()
+
+    const accepted = writeForegroundTerminalChunk(
+      terminal,
+      data,
+      {
+        forceViewportRefresh: forceRefresh,
+        followupViewportRefresh: followupRefresh,
+        onParsed: () => {
+          try {
+            options?.onParsed?.()
+            ackCreditsParsed?.()
+            pacer?.()
+            settleTerminalWriteStallWatch(terminal)
+          } catch {
+            // 安全运行在 xterm 回调链中，必须不抛异常
+          }
+        },
+        onWriteFailure: () => {
+          try {
+            ackCreditsParsed?.()
+          } finally {
+            failTerminalWriteStallWatch(terminal)
+          }
+        },
+      },
+    )
+
+    if (!accepted) {
+      // 写入被拒绝：释放信用
       ackCreditsParsed?.()
       cancelTerminalWriteStallWatch(terminal)
     }

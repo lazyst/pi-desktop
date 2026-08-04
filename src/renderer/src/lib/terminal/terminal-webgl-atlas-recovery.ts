@@ -12,8 +12,8 @@
  *
  * 图集恢复流程：
  *   1. clearTextureAtlas() — 清空 WebGL 纹理图集
- *   2. requestAnimationFrame() — 等待一帧确保图集已清空
- *   3. refreshAllPanes() — 触发所有终端重绘，重建图集
+ *   2. 双 requestAnimationFrame — 第一帧等待布局稳定，第二帧执行一次 refresh
+ *      （而非此前 3×250ms 间隔重复刷新导致的频闪效果）
  *
  * 恢复调用带防抖，避免高频触发（如连续粘贴时）。
  */
@@ -29,12 +29,6 @@ const PASTE_RECOVERY_DEBOUNCE_MS = 300
 /** Tab 显示后恢复的延时（毫秒）：切 Tab 后等待布局稳定再重置。 */
 const TAB_REVEAL_RECOVERY_DEBOUNCE_MS = 100
 
-/** 恢复后重绘的帧数（每次 clearTextureAtlas 后刷新 N 次，确保纹理完全重建）。 */
-const REFRESH_FRAME_COUNT = 3
-
-/** 帧间间隔（毫秒）。 */
-const REFRESH_FRAME_INTERVAL_MS = 250
-
 // ─── 模块级状态 ────────────────────────────────────────────────────────────
 
 let outputRecoveryTimer: ReturnType<typeof setTimeout> | null = null
@@ -44,8 +38,14 @@ let tabRevealRecoveryTimer: ReturnType<typeof setTimeout> | null = null
 // ─── 内部实现 ──────────────────────────────────────────────────────────────
 
 /**
- * 执行一次图集恢复：清空纹理图集 → 等待一帧 → 重复刷新多次。
- * 使用 requestAnimationFrame 确保在浏览器渲染帧中执行。
+ * 执行一次图集恢复：清空纹理图集 → 双 rAF settle → 单次 refresh。
+ *
+ * 使用双 requestAnimationFrame 确保：
+ *  - 第一帧：等待浏览器布局稳定
+ *  - 第二帧：执行 clearTextureAtlas() + refresh()，确保纹理完全重建
+ *
+ * 对比此前 3×250ms 间隔重复刷新的方案，双 rAF settle 避免了 750ms 内的频闪效果，
+ * 同时在一次刷新中完成图集重建，不需要多次重复。
  */
 // 模块级引用：由 initWebglAtlasRecovery 设置，避免循环依赖 require
 let _resetAndRefreshAtlases: (() => void) | null = null
@@ -63,22 +63,13 @@ export function initWebglAtlasRecovery(
 function clearAndRefreshAtlases(): void {
   const resetFn = _resetAndRefreshAtlases
   if (!resetFn) return
-  resetFn()
 
-  // 在后续帧中重复刷新，确保纹理完全重建
-  let frameCount = 1
-  function scheduleNextFrame(): void {
-    if (frameCount >= REFRESH_FRAME_COUNT) return
-    frameCount++
+  // 双 rAF settle：第一帧等待布局稳定，第二帧执行恢复
+  // 避免此前 3×250ms 间隔重复刷新导致的 750ms 频闪
+  requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       resetFn()
-      setTimeout(scheduleNextFrame, REFRESH_FRAME_INTERVAL_MS)
     })
-  }
-  // 第一帧恢复
-  requestAnimationFrame(() => {
-    resetFn()
-    setTimeout(scheduleNextFrame, REFRESH_FRAME_INTERVAL_MS)
   })
 }
 

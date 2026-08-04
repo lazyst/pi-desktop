@@ -68,16 +68,14 @@ import { isXtermInstanceDisposed } from '../lib/terminal/instance-disposed';
 import { PtyOutputProcessor } from '../lib/terminal/pty-output-processor';
 import { runGuardedWriteCompletionStep } from '../lib/terminal/write-callback-guard';
 import { discardInFlightTerminalOutputAckCredits } from '../lib/terminal/ack-credit';
-import { forceTerminalViewportScrollbarSync } from '../lib/terminal/scrollbar-sync';
 import { forceRepaintThroughRenderPause } from '../lib/terminal/render-pause-release';
 import { getTerminalWebglAutoDecision } from '../lib/terminal/webgl-auto-policy';
 import { DesyncDetector } from '../lib/terminal/desync-detector';
 import { CURSOR_RESET_MINIMAL } from '../lib/terminal/replay-cursor-reset';
-import { scheduleTabRevealWebglAtlasRecovery } from '../lib/terminal/terminal-webgl-atlas-recovery';
 import {
   registerUndeliverableWriteHandler,
 } from '../lib/terminal/write-pipeline-health';
-import { configureTerminalOutputBacklogCap } from '../lib/terminal/output-scheduler';
+import { configureTerminalOutputBacklogCap, writeTerminalOutput, discardQueuedOutput } from '../lib/terminal/output-scheduler';
 import { installGuardedLinkProviderRegistration } from '../lib/terminal/link-provider-guard';
 import { installTerminalLinkifierHoverResetOnWrite } from '../lib/terminal/linkifier-hover-reset-on-write';
 import {
@@ -288,15 +286,10 @@ export class XtermTerminal implements LiveTerminal {
   // 由 retryWebglIfNeeded 在可见时显式清除后重试，或 unmount 时清除。
   private webglAttachFailed = false;
 
-  // —— 渲染端二次聚合 ——
-  // 在主进程 5ms 聚合的基础上，渲染端再增加一层聚合：高频小段 IPC 消息在 5ms 时间窗内聚合，
-  // 达到 64KB 上限时立即 flush。聚合后一次性调用 _segmentByShellIntegration 和 _writeProcessData，
-  // 减少 term.write() 调用次数。
-  private static readonly AGGREGATE_WINDOW_MS = 5;
-  private static readonly AGGREGATE_MAX_SIZE = 64 * 1024;
-  private _aggregateBuffer = '';
-  private _aggregateSize = 0;
-  private _aggregateTimer: ReturnType<typeof setTimeout> | null = null;
+  // —— 写入调度器（output-scheduler.ts）——
+  // 使用基于优先级的调度器替代 5ms 聚合定时器。调度器提供 parse-clock pacer、
+  // 前台/后台优先级队列、drain 时间预算和 backlog 上限，避免 5ms 定时器导致的
+  // 脉冲式输出写入和渲染帧率波动。
 
   // —— 数据写通道订阅（直接订阅 channel.onData）——
   // 主进程 emitData 的 5ms 聚合 + 渲染端二次聚合，双层减少 IPC 消息量和 term.write() 调用次数。
@@ -456,8 +449,9 @@ export class XtermTerminal implements LiveTerminal {
       this._flushAndRender().catch(() => { /* fire-and-forget */ });
       // 强制执行当前滚动意图，确保切回可见时视口位置正确
       enforceTerminalCurrentScrollIntent(this.term);
-      // 调度 Tab 显示后 WebGL 图集恢复（防抖），防止切 Tab 回来后图集过期
-      scheduleTabRevealWebglAtlasRecovery();
+      // 注意：不再调度图集恢复（此前由 scheduleTabRevealWebglAtlasRecovery 触发）。
+      // _flushAndRender() 已通过 refresh + forceRepaintThroughRenderPause 完成全屏刷新，
+      // 在此之上再触发一次 atlas clear + refresh 会导致 100ms 内的双重全屏闪烁。
     }
   }
 
@@ -481,10 +475,18 @@ export class XtermTerminal implements LiveTerminal {
     // 2. 再次检查生命周期状态（flush 期间可能被 unmount 或切走）
     if (this.disposed || !this.active || !this.term || !this.host) return;
 
-    // 3. 强制全屏刷新和渲染暂停穿透（flush 后缓冲区已包含最新数据，
-    //    但 RenderService 可能仍处于暂停状态，需 forceRepaint 确保绘制）
-    try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
+    // 3. 清除 RenderService 暂停状态（flush 后缓冲区已包含最新数据，
+    //    但 RenderService 可能仍处于暂停状态，需先清除暂停标记）
     forceRepaintThroughRenderPause(this.term);
+
+    // 4. 双 rAF settle 刷新：第一帧等待布局稳定，第二帧执行 refresh。
+    //    避免同步刷新导致的同帧全屏闪烁。
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (this.disposed || !this.term) return;
+        try { this.term.refresh(0, this.term.rows - 1); } catch { /* 渲染器未就绪边界 */ }
+      });
+    });
   }
 
   /** 非 active / 卸载时销毁终端，释放所有监听与定时器。
@@ -492,8 +494,10 @@ export class XtermTerminal implements LiveTerminal {
    * 对齐 VS Code clearUnacknowledgedChars + dispose 语义：
    * 先 flush 剩余 ack，再 dispose ackBufferer（强制 resume PTY 避免 inflight 不归零）。 */
   unmount(): void {
-    // 先 flush 聚合数据（需要 this.term 仍有效），再标记 disposed
-    this._flushAggregatedData();
+    // 丢弃调度器中待处理的输出（需要 this.term 仍有效），再标记 disposed
+    if (this.term) {
+      discardQueuedOutput(this.term);
+    }
     this.disposed = true;
     // 侧效果处理器：先 flush 尾部侧效果（标题/铃声/状态回调不丢失），再销毁。
     this.outputProcessor?.dispose();
@@ -646,7 +650,12 @@ export class XtermTerminal implements LiveTerminal {
   }
 
   /** 强制重绘：清空 WebGL 纹理图集并触发一次完整重绘（对齐 VS Code forceRedraw/clearTextureAtlas）。
-   * 主题切换 / 字体变更后调用，避免 WebGL 下纹理残留导致旧配色/旧字形闪留。无 WebGL 时静默跳过。 */
+   * 主题切换 / 字体变更后调用，避免 WebGL 下纹理残留导致旧配色/旧字形闪留。无 WebGL 时静默跳过。
+   *
+   * 使用双 rAF settle：第一帧清 atlas，第二帧 refresh。
+   * 避免此前「清 atlas + 立即 refresh」导致的同帧全屏闪烁——
+   * 清 atlas 后立即 refresh 会导致所有 glyph 消失再重新出现，产生可见闪烁。
+   * 双 rAF 让浏览器在清 atlas 后有一帧的缓冲时间重建纹理，再 refresh 时已有缓存。 */
   forceRedraw(): void {
     if (!this.term || this.disposed || this.webglContextLost) return;
     try {
@@ -654,28 +663,37 @@ export class XtermTerminal implements LiveTerminal {
     } catch {
       /* DOM 渲染器或无纹理图集时忽略 */
     }
+    // 双 rAF settle：第一帧等待纹理重建，第二帧刷新确保新纹理已就绪
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!this.term || this.disposed) return;
+        try {
+          this.term.refresh(0, this.term.rows - 1);
+        } catch { /* 刷新失败时静默忽略 */ }
+      });
+    });
   }
 
   /**
    * 主题切换刷新（由 lib/terminal-registry 单点订阅 onThemeChange 后统一调用）。
    * 运行时重新构造 xterm 主题（背景/前景取当前容器 --bg-app / --text），再 forceRedraw 清
    * WebGL 纹理残留，避免旧配色闪留、确保与容器背景严格一致（对齐 VS Code getBackgroundColor）。
+   *
+   * 注意：不在此处直接 refresh——forceRedraw 已通过双 rAF settle 处理刷新。
+   * 直接 refresh 会在清 atlas 后立即触发全屏闪烁，双 rAF 让浏览器有一帧缓冲。
    */
   applyTheme(family: ThemeFamily, variant: ThemeVariant): void {
     if (!this.term || this.disposed) return;
     this.term.options.theme = getTermTheme(family, variant);
     this.forceRedraw();
-    // 强制刷新整个视口，使新主题立即在屏幕上呈现。
-    // xterm 的 options.theme 设置后不会自动触发渲染循环，
-    // 需要显式调用 refresh 来触发重绘（对齐 VS Code 做法）。
-    try {
-      this.term.refresh(0, this.term.rows - 1);
-    } catch { /* 刷新失败时静默忽略 */ }
   }
 
   /**
    * 全局字号变化刷新（由 lib/terminal-registry 单点订阅 onFontSizeChange 后统一调用）。
    * 同步 fontSize + resize（cell 度量变化必须重建渲染纹理）+ forceRedraw。
+   *
+   * 先 resize 再 forceRedraw（双 rAF settle），避免 resize + atlas clear 交织
+   * 导致的多次重排和全屏闪烁。
    */
   applyFontSize(size: number): void {
     if (!this.term || this.disposed) return;
@@ -961,6 +979,13 @@ export class XtermTerminal implements LiveTerminal {
     if (proposed.cols <= 2 && proposed.rows <= 1) return;
     const smallBuffer = this._isSmallBuffer();
     this.resizeDebouncer?.resize(proposed.cols, proposed.rows, false, smallBuffer);
+  }
+
+  /** 立即 fit（同步预绘制路径）：跳过防抖，直接执行 fit + PTY 通知。
+   * 由 SYNC_FIT_PANES_EVENT 的监听器在 useLayoutEffect 中调用，
+   * 确保终端在浏览器绘制前同步到新容器尺寸，消除 ~16ms 尺寸跳变闪烁。 */
+  fitImmediate(): void {
+    this.doResize(true);
   }
 
   // —— 装饰 / 导航（对齐 VS Code DecorationAddon / MarkNavigationAddon）——
@@ -1555,7 +1580,10 @@ export class XtermTerminal implements LiveTerminal {
    * auto 决策委托给 webgl-auto-policy.ts 的 getTerminalWebglAutoDecision 模块。
    *
    * 注意：不再设置 rendererLocked 永久锁。已装载 WebGL（this.webgl != null）时跳过。
-   * webglAttachFailed 标记由 retryWebglIfNeeded 在可见时清除后重试。 */
+   * webglAttachFailed 标记由 retryWebglIfNeeded 在可见时清除后重试。
+   *
+   * 平滑切换：加载 WebGL 前先 refresh() 确保 DOM 渲染器准备好，
+   * 加载后通过 rAF 等待一帧再 refresh() 确保新渲染器立即呈现。 */
   private enableWebgl(): void {
     const term = this.term;
     if (!term || this.webgl) return;
@@ -1593,10 +1621,19 @@ export class XtermTerminal implements LiveTerminal {
         // 上下文丢失后 cell 度量由 WebGL 变 DOM，强制一次整屏重测，避免尺寸错位。
         if (this.active && this.host && !this.disposed) this.doResize(true);
       });
+      // 加载前先 refresh 确保 DOM 渲染器准备好，避免 canvas 替换闪烁
+      try { term.refresh(0, term.rows - 1); } catch { /* 忽略 */ }
+
       term.loadAddon(addon); // open 后 load：与 VS Code attachToElement 顺序一致
       this.webgl = addon;
       this.webglDisabledAfterContextLoss = false;
       console.info('[terminal] WebGL 渲染器已启用。');
+
+      // 加载后通过 rAF 等待一帧再 refresh，确保新渲染器立即呈现
+      requestAnimationFrame(() => {
+        if (!this.term || this.disposed) return;
+        try { this.term.refresh(0, this.term.rows - 1); } catch { /* 忽略 */ }
+      });
     } catch (e) {
       this.webglAttachFailed = true;
       console.warn(
@@ -1675,73 +1712,101 @@ export class XtermTerminal implements LiveTerminal {
   }
 
 
-  /** 渲染端二次聚合 + 按 OSC 633 切分写入。
+  /** 处理 PTY 输出数据：按 OSC 633 切分后通过调度器写入 xterm。
    *
-   * 高频小段 IPC 消息在 5ms 时间窗内聚合（64KB 上限），聚合后一次性调用
-   * _segmentByShellIntegration 和 _writeProcessData，减少 term.write() 调用次数。
+   * 使用 output-scheduler 的 writeTerminalOutput 替代此前的 5ms 聚合定时器。
+   * 调度器提供 parse-clock pacer（xterm 解析完成后立即触发下一次 drain）、
+   * 前台/后台优先级队列和 drain 时间预算，避免 5ms 定时器导致的脉冲式输出。
    *
-   * 聚合后（而非聚合前）执行 OSC 633 分段，确保跨 IPC 消息的 OSC 序列能被正确识别。
-   *
-   * 写后回传 acknowledgeDataEvent（对齐 VS Code _writeProcessData 的背压流控）。
-   * 优化：对齐 VS Code TerminalInstance._onProcessData，仅最后一段数据跟踪 commit。
-   * 前导段（OSC 633 标记）使用 _writeProcessDataUnsafe（无 trackCommit，不创建 writePromise），
-   * 最后一段使用 _writeProcessData（带 trackCommit 写完成 Promise）。
-   * 所有段（含前导 OSC 标记）都调 ackBufferer.ack 确保背压水位准确，
-   * 仅 trackCommit 不同（是否跟踪写完成确认）。
-   * 实际输出的背压准确。
+   * 分段在写入前执行，确保跨 IPC 消息的 OSC 序列能被正确识别。
+   * 前导段（OSC 633 标记）使用 ackCredit 回传背压但不创建 writePromise；
+   * 最后一段使用 ackCredit + 完整 onParsed 回调写入确认。
    *
    * 与 VS Code 对齐的 IProcessDataEvent 契约：
    *   - 前导段: { data, trackCommit: false }
-   *   - 最后一段: { data, trackCommit: true, writePromise }
-   * writePromise 使调用方（如 flush()）可 await 实际输出的写完成，
-   * 而不必等待 OSC 标记这种零输出的写完成确认。 */
+   *   - 最后一段: { data, trackCommit: true, writePromise } */
   private handleProcessData(id: string, data: string): void {
     if (id !== this.sessionKey || !this.term) return;
 
-    // 渲染端二次聚合：将高频小段 IPC 消息聚合后一次性处理
-    this._aggregateBuffer += data;
-    this._aggregateSize += data.length;
+    // 先按 OSC 633 切分数据（确保跨消息的 OSC 序列能被正确识别）
+    const segments = this._segmentByShellIntegration(data);
 
-    // 超过最大尺寸立即 flush
-    if (this._aggregateSize >= XtermTerminal.AGGREGATE_MAX_SIZE) {
-      this._flushAggregatedData();
-      return;
+    if (segments.length <= 1) {
+      // 无 OSC 序列：单段，通过调度器写入
+      this._writeProcessDataViaScheduler(data, true);
+    } else {
+      // 对齐 VS Code：前导段（OSC 633 标记）不用 trackCommit，仅最后一段追踪
+      for (let i = 0; i < segments.length - 1; i++) {
+        this._writeProcessDataViaScheduler(segments[i], false);
+      }
+      this._writeProcessDataViaScheduler(segments[segments.length - 1], true);
     }
-
-    // 重启定时器：5ms 内无新数据到达时 flush
-    if (this._aggregateTimer !== null) {
-      clearTimeout(this._aggregateTimer);
-    }
-    this._aggregateTimer = setTimeout(() => {
-      this._aggregateTimer = null;
-      this._flushAggregatedData();
-    }, XtermTerminal.AGGREGATE_WINDOW_MS);
   }
 
-  /** Flush 聚合缓冲区：按 OSC 633 分段后写入 xterm。
-   * 分段在聚合后执行，确保跨 IPC 消息的 OSC 序列能被正确识别。 */
-  private _flushAggregatedData(): void {
-    if (this._aggregateTimer !== null) {
-      clearTimeout(this._aggregateTimer);
-      this._aggregateTimer = null;
-    }
-    const data = this._aggregateBuffer;
-    this._aggregateBuffer = '';
-    this._aggregateSize = 0;
-    if (!data || !this.term) return;
+  /** 通过调度器写入一段数据，处理背压 ack 和渲染 settle。
+   * 替代此前的 _writeProcessData/_writeProcessDataUnsafe 直接写路径。
+   * 调度器内部处理前台立即写入（含渲染 settle）和后台排队写入。
+   *
+   * @param data 要写入的数据
+   * @param trackCommit 是否跟踪写入完成确认（供 flush() await） */
+  private _writeProcessDataViaScheduler(data: string, trackCommit: boolean): void {
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
 
-    // 分段在聚合后执行，确保 OSC 633 序列能在聚合后的数据块上正确切分
-    const segments = this._segmentByShellIntegration(data);
-    if (segments.length <= 1) {
-      // 无 OSC 序列：单段，正常跟踪 ack + trackCommit
-      this._writeProcessData(data, true);
-    } else {
-      // 对齐 VS Code：前导段（OSC 633 标记）trackCommit=false（无 writePromise），仅最后一段
-      // trackCommit=true（有 writePromise），但所有段都调 ackBufferer.ack 确保背压水位准确
-      for (let i = 0; i < segments.length - 1; i++) {
-        this._writeProcessDataUnsafe(segments[i]);
-      }
-      this._writeProcessData(segments[segments.length - 1], true);
+    const term = this.term;
+    const seq = ++this._latestWriteSeq;
+
+    // 对齐 VS Code _onWillData：写前通知外部消费者
+    this.onWillData?.(data);
+
+    // 对齐 VS Code：写前保存滚动位置
+    const savedState = this.captureScrollState();
+
+    // 当 trackCommit=true 时记录 writePromise 供 flush() 等待
+    let resolveWrite: (() => void) | null = null;
+    const writePromise = trackCommit ? new Promise<void>((r) => { resolveWrite = r; }) : undefined;
+
+    writeTerminalOutput(
+      term,
+      data,
+      {
+        foreground: true,
+        latencySensitive: true,
+        forceForegroundRefresh: true,
+        onParsed: () => {
+          runGuardedWriteCompletionStep('write-parsed', () => {
+            this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
+          });
+
+          runGuardedWriteCompletionStep('ack', () => {
+            // 背压回传：通过 ackBufferer 累积到阈值后发 IPC
+            // 对齐 VS Code AckDataBufferer 的 CharCountAckSize=5000 累积策略
+            this.ackBufferer?.ack(data.length);
+          });
+
+          runGuardedWriteCompletionStep('resolve-write', () => {
+            resolveWrite?.();
+          });
+
+          runGuardedWriteCompletionStep('on-data', () => {
+            this.onData?.(data);
+          });
+
+          runGuardedWriteCompletionStep('restore-scroll', () => {
+            this.restoreScrollState(savedState);
+          });
+
+          runGuardedWriteCompletionStep('sync-scroll-intent', () => {
+            syncTerminalScrollIntentFromViewport(term);
+          });
+        },
+        // ackCredit 不传——调度器内部的 ACK 信用追踪由 onParsed 回调中的
+        // ackBufferer.ack 处理，不需要额外 ackCredit 回调（避免双重 ack）
+      },
+    )
+
+    // 对齐 VS Code：将 writePromise 挂载到 _pendingWritePromise 私有字段上
+    if (trackCommit && writePromise) {
+      this._pendingWritePromise = writePromise;
     }
   }
 
@@ -1945,7 +2010,6 @@ export class XtermTerminal implements LiveTerminal {
       restoreScrollStateModule(this.term, savedState);
     }
     syncTerminalScrollIntentFromViewport(this.term);
-    forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
 
@@ -1965,7 +2029,6 @@ export class XtermTerminal implements LiveTerminal {
       restoreScrollStateModule(this.term, savedState);
     }
     syncTerminalScrollIntentFromViewport(this.term);
-    forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
 
@@ -1987,7 +2050,6 @@ export class XtermTerminal implements LiveTerminal {
       restoreScrollStateModule(this.term, savedState);
     }
     syncTerminalScrollIntentFromViewport(this.term);
-    forceTerminalViewportScrollbarSync(this.term);
     this._notifyPtyIfChanged();
   }
 
