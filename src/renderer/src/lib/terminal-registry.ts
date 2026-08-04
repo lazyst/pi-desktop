@@ -36,6 +36,8 @@ export interface LiveTerminal {
   applyFontSize(size: number): void;
   /** 运行时批量更新终端配置（对齐 VS Code updateConfig）。 */
   updateConfig(config: TerminalConfigUpdate): void;
+  /** 强制重绘：清空 WebGL 纹理图集并触发一次完整重绘。 */
+  forceRedraw(): void;
 }
 
 const liveTerminals = new Set<LiveTerminal>();
@@ -69,3 +71,15 @@ onFontSizeChange((size: number) => {
 export function broadcastConfigUpdate(config: TerminalConfigUpdate): void {
   liveTerminals.forEach((t) => t.updateConfig(config));
 }
+
+/**
+ * 重置所有存活终端的 WebGL 纹理图集并触发重绘。
+ * 用于 WebGL 去同步恢复、粘贴图片后、Tab 切回时等场景。
+ */
+export function resetAndRefreshAllTerminalWebglAtlases(): void {
+  liveTerminals.forEach((t) => t.forceRedraw());
+}
+
+// 初始化 WebGL 图集恢复模块（避免循环依赖）
+import { initWebglAtlasRecovery } from './terminal/terminal-webgl-atlas-recovery';
+initWebglAtlasRecovery(resetAndRefreshAllTerminalWebglAtlases);

@@ -385,7 +385,9 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
     const t = new XtermTerminal({ sessionKey: 'k', pi: api });
     t.mount(mountHost());
     t.resetSameFrame();
-    expect(writes).toContain('\x1bc');
+    // 现在 resetSameFrame 在清屏后追加光标重置序列（CURSOR_RESET_MINIMAL）
+    expect(writes.length).toBeGreaterThanOrEqual(1);
+    expect(writes[0]).toBe('\x1bc\x1b[0 q\x1b[?25h');
     t.unmount();
   });
 

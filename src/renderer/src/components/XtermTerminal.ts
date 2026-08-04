@@ -72,6 +72,8 @@ import { forceTerminalViewportScrollbarSync } from '../lib/terminal/scrollbar-sy
 import { forceRepaintThroughRenderPause } from '../lib/terminal/render-pause-release';
 import { getTerminalWebglAutoDecision } from '../lib/terminal/webgl-auto-policy';
 import { DesyncDetector } from '../lib/terminal/desync-detector';
+import { CURSOR_RESET_MINIMAL } from '../lib/terminal/replay-cursor-reset';
+import { scheduleTabRevealWebglAtlasRecovery } from '../lib/terminal/terminal-webgl-atlas-recovery';
 import {
   registerUndeliverableWriteHandler,
 } from '../lib/terminal/write-pipeline-health';
@@ -393,6 +395,9 @@ export class XtermTerminal implements LiveTerminal {
   // 结构重放协调器：清屏/重放时保护滚动意图，确保视口位置精确恢复到用户阅读位置。
   private replayCoordinator: TerminalStructuralReplayCoordinator | null = null;
 
+  // 打字时隐藏鼠标的 disposable（在 _initXterm 中安装，unmount 时释放）。
+  private _mouseHideDisposable: { dispose: () => void } | null = null;
+
   // DOM 事件驱动的滚动意图跟踪的反注册函数（在 _initXterm 末尾挂载，unmount 时释放）。
   private _scrollIntentTrackingDisposable: { dispose: () => void } | null = null;
 
@@ -451,6 +456,8 @@ export class XtermTerminal implements LiveTerminal {
       this._flushAndRender().catch(() => { /* fire-and-forget */ });
       // 强制执行当前滚动意图，确保切回可见时视口位置正确
       enforceTerminalCurrentScrollIntent(this.term);
+      // 调度 Tab 显示后 WebGL 图集恢复（防抖），防止切 Tab 回来后图集过期
+      scheduleTabRevealWebglAtlasRecovery();
     }
   }
 
@@ -550,6 +557,10 @@ export class XtermTerminal implements LiveTerminal {
     // 使用 releaseWebglContext 通过内部渲染器获取 context 并 loseContext，同时将 canvas
     // 尺寸设为 0 确保 ANGLE 驱动层释放。
     this.releaseWebglContext();
+    // 释放打字时隐藏鼠标的监听器
+    this._mouseHideDisposable?.dispose();
+    this._mouseHideDisposable = null;
+
     // 释放结构重放协调器：中断正在执行的任务并清空队列
     this.replayCoordinator?.dispose();
     this.replayCoordinator = null;
@@ -628,7 +639,9 @@ export class XtermTerminal implements LiveTerminal {
     if (!this.term || this.disposed) return;
     // 通过结构重放协调器执行清屏，确保清屏后滚动意图被保持
     this.replayCoordinator?.run(() => {
-      this.term?.write('\x1bc');
+      if (!this.term) return;
+      // 清屏（RIS）后立即重置光标样式和可见性，避免 TUI 残留的 DECSCUSR/DECTCEM 污染
+      this.term.write('\x1bc' + CURSOR_RESET_MINIMAL);
     }).catch(() => { /* fire-and-forget：清屏失败不影响主流程 */ });
   }
 
@@ -1053,7 +1066,9 @@ export class XtermTerminal implements LiveTerminal {
     this.replayCoordinator?.run(() => {
       if (!this.term || this.disposed) return;
       try {
-        this.term.write(data);
+        // 在重放数据后追加光标重置序列，确保 scrollback 中 TUI 残留的
+        // DECSCUSR 光标样式覆盖（如 \x1b[2 q）和 \x1b[?25l 光标隐藏被清除。
+        this.term.write(data + CURSOR_RESET_MINIMAL);
       } catch {
         /* 还原失败忽略 */
       }

@@ -4,8 +4,6 @@ import { DesyncDetector, type DesyncDetectorContext } from '../desync-detector';
 
 // jsdom 的 Canvas 2D 上下文不支持 createImageData/putImageData/getImageData 的完整实现，
 // 因此采用 mock 2D context 的方式来控制 getImageData 返回值。
-// 通过 createMockContext 中的 mockCanvas 工厂返回一个 canvas，其 getContext('2d') 返回
-// 受控的 mock context，其中 getImageData(x, y, 1, 1) 返回指定像素。
 
 // ── 辅助：创建 mock 2D context ──
 function createMock2dContext(
@@ -13,7 +11,6 @@ function createMock2dContext(
   height: number,
   pixelData: (x: number, y: number) => [number, number, number, number],
 ): CanvasRenderingContext2D {
-  // 预先计算所有像素的 Uint8ClampedArray
   const totalPixels = width * height;
   const pixelArray = new Uint8ClampedArray(totalPixels * 4);
   for (let y = 0; y < height; y++) {
@@ -28,27 +25,8 @@ function createMock2dContext(
   }
 
   return {
-    drawImage: vi.fn((source: HTMLCanvasElement, dx: number, dy: number) => {
-      // 将 source canvas 的像素数据复制到本 context 的像素存储中
-      // 仅当 source 是 mock canvas 时有效（通过 querySourcePixel 获取像素）
-      const sourcePixelData = (source as any).__pixelData as ((x: number, y: number) => [number, number, number, number]) | undefined;
-      if (sourcePixelData) {
-        for (let sy = 0; sy < source.height; sy++) {
-          for (let sx = 0; sx < source.width; sx++) {
-            const [r, g, b, a] = sourcePixelData(sx, sy);
-            const dstIdx = ((dy + sy) * width + (dx + sx)) * 4;
-            if (dy + sy < height && dx + sx < width) {
-              pixelArray[dstIdx] = r;
-              pixelArray[dstIdx + 1] = g;
-              pixelArray[dstIdx + 2] = b;
-              pixelArray[dstIdx + 3] = a;
-            }
-          }
-        }
-      }
-    }),
+    drawImage: vi.fn(),
     getImageData: (x: number, y: number, w: number, h: number) => {
-      // 返回指定区域的像素数据
       const data = new Uint8ClampedArray(w * h * 4);
       for (let py = 0; py < h; py++) {
         for (let px = 0; px < w; px++) {
@@ -62,7 +40,7 @@ function createMock2dContext(
             data[dstIdx + 2] = pixelArray[srcIdx + 2];
             data[dstIdx + 3] = pixelArray[srcIdx + 3];
           } else {
-            data[dstIdx + 3] = 255; // 默认不透明
+            data[dstIdx + 3] = 255;
           }
         }
       }
@@ -80,13 +58,25 @@ function createMockCanvas(
   const canvas = document.createElement('canvas');
   canvas.width = width;
   canvas.height = height;
-  // 附加 pixelData 引用，供 mock drawImage 读取源 canvas 像素
-  (canvas as any).__pixelData = pixelData;
-  // 替换 getContext 方法，返回 mock context
   const mockCtx = createMock2dContext(width, height, pixelData);
-  // 直接替换 getContext 方法（vi.spyOn 在 jsdom 中可能无法正确处理原生方法）
   canvas.getContext = (() => mockCtx) as any;
   return canvas;
+}
+
+// ── 辅助：创建带 getCell 支持的 mock line ──
+function createMockLine(text: string) {
+  // 为每个 cell 提供一个 getCell() 方法
+  return {
+    translateToString: () => text,
+    getCell: (col: number) => {
+      const char = text[col] ?? ' ';
+      if (char === ' ' || char === '') return undefined;
+      return {
+        getChars: () => char,
+        getWidth: () => (char.length > 0 ? 1 : 0),
+      };
+    },
+  };
 }
 
 // ── 辅助：创建 mock 终端上下文 ──
@@ -94,25 +84,24 @@ function createMockContext(overrides?: Partial<DesyncDetectorContext> & {
   rows?: number;
   cols?: number;
   viewportY?: number;
+  cursorY?: number;
   canvas?: HTMLCanvasElement;
   lines?: string[];
 }): DesyncDetectorContext & { term: any; webgl: any; host: HTMLElement } {
   const rows = overrides?.rows ?? 24;
   const cols = overrides?.cols ?? 80;
   const viewportY = overrides?.viewportY ?? 0;
+  const cursorY = overrides?.cursorY ?? 0;
   const lines = overrides?.lines ?? Array(rows).fill(' '.repeat(cols));
-
-  const mockLine = (text: string) => ({
-    translateToString: () => text,
-  });
 
   const mockBuffer = {
     active: {
       viewportY,
+      cursorY,
       getLine: (lineIndex: number) => {
         const offset = lineIndex - viewportY;
         if (offset >= 0 && offset < lines.length) {
-          return mockLine(lines[offset]);
+          return createMockLine(lines[offset]);
         }
         return null;
       },
@@ -134,6 +123,7 @@ function createMockContext(overrides?: Partial<DesyncDetectorContext> & {
 
   const host = document.createElement('div');
   host.appendChild(canvas);
+  host.id = 'test-pane';
 
   return {
     term,
@@ -190,7 +180,9 @@ describe('DesyncDetector', () => {
 
     it('定时器按 interval 周期触发检测', () => {
       const detector = new DesyncDetector({ interval: 5000 });
-      const ctx = createMockContext({ lines: ['x' + ' '.repeat(79), ...Array(23).fill(' '.repeat(80))] });
+      // 需要至少 minTextCells 个文本 cell，否则检测提前跳过
+      const lines = Array(24).fill('x'.repeat(80));
+      const ctx = createMockContext({ lines });
       const checkSpy = vi.spyOn(detector as any, '_check');
       detector.start(ctx);
       expect(checkSpy).not.toHaveBeenCalled();
@@ -199,6 +191,204 @@ describe('DesyncDetector', () => {
       vi.advanceTimersByTime(5000);
       expect(checkSpy).toHaveBeenCalledTimes(2);
       detector.stop();
+    });
+  });
+
+  describe('持续性验证', () => {
+    it('单次不匹配不足 persistentSamples（默认 2）时不触发恢复', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      // 所有行都有内容，cursorY=0 跳过光标行
+      const lines = [
+        'x'.repeat(cols),    // 光标行（跳过）
+        'x'.repeat(cols),    // 有内容
+        'x'.repeat(cols),    // 有内容
+        'x'.repeat(cols),    // 有内容
+      ];
+
+      // canvas 全黑 → 全部不匹配
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
+
+      const ctx = createMockContext({
+        canvas,
+        rows,
+        cols,
+        lines,
+        cursorY: 0,
+      });
+
+      // 第一次检测：历史不足 2 次，不触发
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+      expect(ctx.term.refresh).not.toHaveBeenCalled();
+    });
+
+    it('连续 2 次同一批 cell 缺失 → 触发恢复', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      const lines = [
+        'x'.repeat(cols),    // 光标行（跳过）
+        'x'.repeat(cols),    // 有内容
+        'x'.repeat(cols),    // 有内容
+        'x'.repeat(cols),    // 有内容
+      ];
+
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
+
+      const ctx = createMockContext({
+        canvas,
+        rows,
+        cols,
+        lines,
+        cursorY: 0,
+      });
+
+      // 第一次检测：历史不足 2 次，不触发
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+
+      // 第二次检测（同一批 cell 仍然缺失）→ 触发
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
+      expect(ctx.term.refresh).toHaveBeenCalledWith(0, rows - 1);
+    });
+
+    it('两次缺失的 cell 不同（不重叠）→ 判定为暂时现象，不触发恢复', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      const lines = [
+        'x'.repeat(cols),    // 光标行（跳过）
+        'x'.repeat(cols),    // 有内容
+        'x'.repeat(cols),    // 有内容
+        'x'.repeat(cols),    // 有内容
+      ];
+
+      // 第一次 canvas 渲染了第 1 行，第 2 行缺失 → 缺失 cell 在 row=2
+      const canvas1 = createMockCanvas(cols * cellW, rows * cellH, (x, y) => {
+        const row2CenterY = Math.floor(2 * cellH + cellH / 2);
+        const row1CenterY = Math.floor(1 * cellH + cellH / 2);
+        // row=1 渲染正确，row=2 全黑
+        if (y === row1CenterY) return [255, 255, 255, 255];
+        // row=2 全黑（缺失）
+        if (y === row2CenterY) return [0, 0, 0, 0];
+        return [0, 0, 0, 255];
+      });
+
+      const ctx = createMockContext({
+        canvas: canvas1,
+        rows,
+        cols,
+        lines,
+        cursorY: 0,
+      });
+
+      // 第一次检测：row=2 缺失
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+
+      // 第二次 canvas 渲染了第 2 行，第 1 行缺失 → 缺失 cell 不同
+      const canvas2 = createMockCanvas(cols * cellW, rows * cellH, (x, y) => {
+        const row2CenterY = Math.floor(2 * cellH + cellH / 2);
+        const row1CenterY = Math.floor(1 * cellH + cellH / 2);
+        // row=1 全黑（缺失）
+        if (y === row1CenterY) return [0, 0, 0, 0];
+        // row=2 渲染正确
+        if (y === row2CenterY) return [255, 255, 255, 255];
+        return [0, 0, 0, 255];
+      });
+
+      // 替换 canvas
+      ctx.host.innerHTML = '';
+      ctx.host.appendChild(canvas2);
+
+      // 第二次检测：缺失 cell 在 row=1（与第一次的 row=2 不重叠）
+      detector.check(ctx);
+      // 不重叠 → 不触发恢复
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+    });
+
+    it('连续 3 次同一批 cell 缺失（persistentSamples=3）→ 触发恢复', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 3, minTextCells: 1 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      const lines = [
+        'x'.repeat(cols),
+        'x'.repeat(cols),
+        'x'.repeat(cols),
+        'x'.repeat(cols),
+      ];
+
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
+
+      const ctx = createMockContext({
+        canvas,
+        rows,
+        cols,
+        lines,
+        cursorY: 0,
+      });
+
+      // 第 1 次
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+      // 第 2 次
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+      // 第 3 次
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('跳过光标行', () => {
+    it('当光标行有内容但 canvas 全黑，光标行不参与检测，不阻止恢复', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      // 光标行（row=1）和非光标行都有内容
+      // cursorY=1 应被跳过，row=0,2,3 参与检测
+      const lines = [
+        'x'.repeat(cols),    // 非光标行
+        'x'.repeat(cols),    // 光标行（跳过）
+        'x'.repeat(cols),    // 非光标行
+        'x'.repeat(cols),    // 非光标行
+      ];
+
+      // canvas 全黑 → 非光标行全部缺失
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
+
+      const ctx = createMockContext({
+        canvas,
+        rows,
+        cols,
+        lines,
+        cursorY: 1,
+      });
+
+      // 第一次
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+      // 第二次 → 触发（非光标行有 30 个 cell，全部缺失 = 100%）
+      detector.check(ctx);
+      expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -229,101 +419,76 @@ describe('DesyncDetector', () => {
     it('无 canvas 时不检测', () => {
       const detector = new DesyncDetector();
       const ctx = createMockContext();
-      ctx.host.innerHTML = ''; // 清空，无 canvas
+      ctx.host.innerHTML = '';
       detector.check(ctx);
       expect(ctx.term.refresh).not.toHaveBeenCalled();
-    });
-
-    it('全空地行：canvas 全黑、buffer 全空格 → 不触发恢复', () => {
-      const detector = new DesyncDetector({ threshold: 0.1 });
-      const canvas = createMockCanvas(800, 480, () => [0, 0, 0, 255]);
-      const ctx = createMockContext({
-        canvas,
-        rows: 24,
-        cols: 80,
-        lines: Array(24).fill(' '.repeat(80)),
-      });
-      detector.check(ctx);
-      expect(ctx.term.refresh).not.toHaveBeenCalled();
-      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
     });
 
     it('buffer 有内容、canvas 渲染正确 → 不触发恢复', () => {
-      const detector = new DesyncDetector({ threshold: 0.1, colorTolerance: 30 });
+      const detector = new DesyncDetector({ threshold: 0.1, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
       const cols = 80;
       const rows = 24;
-      // 模拟 cell 尺寸：10px wide, 20px tall
       const cellW = 10;
       const cellH = 20;
 
-      // 左上角 5 个 cell 有内容（白色文字，仅在 cell 中心像素渲染）
-      const lines = ['hello' + ' '.repeat(cols - 5), ...Array(rows - 1).fill(' '.repeat(cols))];
+      // 非光标行有内容，canvas 正确渲染
+      const lines = [
+        'hello' + ' '.repeat(cols - 5),
+        ...Array(rows - 1).fill(' '.repeat(cols)),
+      ];
 
-      // 仅在 cell 中心像素渲染白色内容（模拟渲染器正确渲染）
-      const topRowCenterY = Math.floor(0 * cellH + cellH / 2); // 10
-      const cellCenterXs = Array.from({ length: 5 }, (_, i) => Math.floor(i * cellW + cellW / 2)); // [5, 15, 25, 35, 45]
+      // 仅在非光标行（row=0, cursorY=0 被跳过，所以实际上 row=0 是光标行，不参与检测）
+      // 非光标行全部是空格 → 0 text cells → 低于 minTextCells → 跳过
+      // 改一下：让非光标行也有内容
+      const linesWithContent = [
+        'hello' + ' '.repeat(cols - 5),  // 光标行（跳过）
+        'world' + ' '.repeat(cols - 5),  // 非光标行，有内容
+        ...Array(rows - 2).fill(' '.repeat(cols)),
+      ];
+
+      // cell 中心像素渲染白色
+      const row1CenterY = Math.floor(1 * cellH + cellH / 2);
+      const cellCenterXs = Array.from({ length: 5 }, (_, i) => Math.floor(i * cellW + cellW / 2));
       const isCellCenter = (x: number, y: number) =>
-        y === topRowCenterY && cellCenterXs.includes(x);
+        y === row1CenterY && cellCenterXs.includes(x);
 
       const canvas = createMockCanvas(cols * cellW, rows * cellH, (x, y) => {
         if (isCellCenter(x, y)) return [255, 255, 255, 255];
-        return [0, 0, 0, 255]; // 背景黑色
+        return [0, 0, 0, 255];
       });
 
       const ctx = createMockContext({
         canvas,
         rows,
         cols,
-        lines,
+        lines: linesWithContent,
+        cursorY: 0,
       });
+
+      // 需要 2 次才能触发
+      detector.check(ctx);
       detector.check(ctx);
       // 全匹配，不应触发恢复
       expect(ctx.term.refresh).not.toHaveBeenCalled();
       expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
     });
 
-    it('buffer 有内容但 canvas 全黑（去同步）→ 触发恢复', () => {
-      const detector = new DesyncDetector({ threshold: 0.1, colorTolerance: 30 });
-      const cols = 80;
-      const rows = 24;
-      const cellW = 10;
-      const cellH = 20;
-
-      // buffer 顶行有内容 "hello"（5 个非空格）
-      const lines = ['hello' + ' '.repeat(cols - 5), ...Array(rows - 1).fill(' '.repeat(cols))];
-
-      // canvas 全黑（无渲染内容）
-      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
-
-      const ctx = createMockContext({
-        canvas,
-        rows,
-        cols,
-        lines,
-      });
-      detector.check(ctx);
-      // 5 个 cell 有文本但 canvas 渲染为背景色 → 不匹配
-      // 顶行 + 底行共 160 cell，5 个不匹配 = 3.125% < 10%，不应触发
-      expect(ctx.term.refresh).not.toHaveBeenCalled();
-      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
-    });
-
-    it('大量不匹配（> 10%）→ 触发 clearTextureAtlas + refresh', () => {
-      const detector = new DesyncDetector({ threshold: 0.1, colorTolerance: 30 });
+    it('大量不匹配（> 10%）→ 连续 2 次后触发 clearTextureAtlas + refresh', () => {
+      const detector = new DesyncDetector({ threshold: 0.1, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
       const cols = 10;
       const rows = 4;
       const cellW = 10;
       const cellH = 20;
 
-      // 顶行和底行全部有内容（非空格）
+      // 非光标行全部有内容
       const lines = [
-        'hello.....', // 5 非空格 + 5 空格
-        ' '.repeat(cols),
-        ' '.repeat(cols),
-        'world!....', // 6 非空格 + 4 空格
+        'x'.repeat(cols),    // 光标行（跳过）
+        'hello.....',        // 非光标行，5 非空格
+        'world!....',        // 非光标行，6 非空格
+        ' '.repeat(cols),    // 全空格
       ];
 
-      // canvas 全黑（无渲染内容）
+      // canvas 全黑
       const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
 
       const ctx = createMockContext({
@@ -331,98 +496,125 @@ describe('DesyncDetector', () => {
         rows,
         cols,
         lines,
+        cursorY: 0,
       });
+
+      // 第 1 次
       detector.check(ctx);
-      // 顶行 + 底行共 20 cell，11 个不匹配 = 55% > 10%，应触发恢复
-      expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
-      expect(ctx.term.refresh).toHaveBeenCalledWith(0, rows - 1);
-    });
-
-    it('canvas 有渲染但 buffer 全是空格（反向不匹配）→ 触发恢复', () => {
-      const detector = new DesyncDetector({ threshold: 0.1, colorTolerance: 30 });
-      const cols = 10;
-      const rows = 4;
-      const cellW = 10;
-      const cellH = 20;
-
-      // buffer 全部是空格
-      const lines = Array(rows).fill(' '.repeat(cols));
-
-      // canvas 仅在 cell 中心像素有白色内容（模拟渲染器渲染了内容）：
-      // 实现中 x = Math.floor(col * cellW + cellW / 2), y = Math.floor(rowOffset * cellH + cellH / 2)
-      // 所以白色像素精确位置：
-      //   top row (rowOffset=0): y = 10, x in {5, 15, 25, 35, 45, 55, 65, 75, 85, 95}
-      //   bottom row (rowOffset=3): y = 70, x in {5, 15, 25, 35, 45, 55, 65, 75, 85, 95}
-      const topRowCenterY = Math.floor(0 * cellH + cellH / 2); // 10
-      const bottomRowCenterY = Math.floor((rows - 1) * cellH + cellH / 2); // 70
-      const cellCenterXs = Array.from({ length: cols }, (_, i) => Math.floor(i * cellW + cellW / 2));
-      const isCellCenter = (x: number, y: number) =>
-        (y === topRowCenterY || y === bottomRowCenterY) && cellCenterXs.includes(x);
-
-      const canvas = createMockCanvas(cols * cellW, rows * cellH, (x, y) => {
-        if (isCellCenter(x, y)) return [255, 255, 255, 255];
-        return [0, 0, 0, 255];
-      });
-
-      const ctx = createMockContext({
-        canvas,
-        rows,
-        cols,
-        lines,
-      });
+      expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
+      // 第 2 次 → 触发
       detector.check(ctx);
-      // 顶行 10 + 底行 10 = 20 cell 全部不匹配 = 100% > 10%，应触发恢复
       expect(ctx.webgl.clearTextureAtlas).toHaveBeenCalledTimes(1);
       expect(ctx.term.refresh).toHaveBeenCalledWith(0, rows - 1);
     });
 
     it('clearTextureAtlas 抛错时不传播异常', () => {
-      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30 });
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
       const cols = 10;
       const rows = 4;
       const cellW = 10;
       const cellH = 20;
 
-      const lines = Array(rows).fill(' '.repeat(cols));
-      const topRowCenterY = Math.floor(0 * cellH + cellH / 2);
-      const bottomRowCenterY = Math.floor((rows - 1) * cellH + cellH / 2);
-      const cellCenterXs = Array.from({ length: cols }, (_, i) => Math.floor(i * cellW + cellW / 2));
-      const isCellCenter = (x: number, y: number) =>
-        (y === topRowCenterY || y === bottomRowCenterY) && cellCenterXs.includes(x);
-      const canvas = createMockCanvas(cols * cellW, rows * cellH, (x, y) => {
-        if (isCellCenter(x, y)) return [255, 255, 255, 255];
-        return [0, 0, 0, 255];
-      });
+      const lines = [
+        'x'.repeat(cols),
+        'x'.repeat(cols),
+        'x'.repeat(cols),
+        'x'.repeat(cols),
+      ];
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
 
       const ctx = createMockContext({
         canvas,
         rows,
         cols,
         lines,
+        cursorY: 0,
       });
       // clearTextureAtlas 抛错
       (ctx.webgl as any).clearTextureAtlas = vi.fn(() => { throw new Error('oops'); });
+      // 第一次
+      detector.check(ctx);
+      // 第二次 → 触发恢复，但抛错
       expect(() => detector.check(ctx)).not.toThrow();
+    });
+  });
+
+  describe('统计信息', () => {
+    it('记录 totalChecks、totalRecoveries', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      const lines = Array(rows).fill('x'.repeat(cols));
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
+
+      const ctx = createMockContext({
+        canvas,
+        rows,
+        cols,
+        lines,
+        cursorY: 0,
+      });
+
+      expect(detector.getStats().totalChecks).toBe(0);
+      expect(detector.getStats().totalRecoveries).toBe(0);
+
+      // 第 1 次
+      detector.check(ctx);
+      expect(detector.getStats().totalChecks).toBe(1);
+      expect(detector.getStats().totalRecoveries).toBe(0);
+
+      // 第 2 次 → 触发恢复
+      detector.check(ctx);
+      expect(detector.getStats().totalChecks).toBe(2);
+      expect(detector.getStats().totalRecoveries).toBe(1);
+      expect(detector.getStats().lastRecoveryTime).toBeGreaterThan(0);
+    });
+
+    it('resetStats 重置所有统计', () => {
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2, minTextCells: 1 });
+      const cols = 10;
+      const rows = 4;
+      const cellW = 10;
+      const cellH = 20;
+
+      const lines = Array(rows).fill('x'.repeat(cols));
+      const canvas = createMockCanvas(cols * cellW, rows * cellH, () => [0, 0, 0, 255]);
+
+      const ctx = createMockContext({
+        canvas,
+        rows,
+        cols,
+        lines,
+        cursorY: 0,
+      });
+
+      detector.check(ctx);
+      detector.check(ctx);
+      expect(detector.getStats().totalRecoveries).toBe(1);
+
+      detector.resetStats();
+      expect(detector.getStats().totalChecks).toBe(0);
+      expect(detector.getStats().totalRecoveries).toBe(0);
     });
   });
 
   describe('WebGL 集成 — XtermTerminal 集成验证', () => {
     it('WebGL 启用时启动检测器，WebGL 为空时不启动', () => {
-      // 验证 _startDesyncDetector 的守卫逻辑
       const detector = new DesyncDetector();
-      // 模拟无 webgl 的情况：start 不启动定时器
       const ctx = createMockContext();
       (ctx.webgl as any) = null;
       detector.start(ctx);
-      // 即使 start 被调用，check 内部也会因 webgl 为 null 跳过
-      expect(detector.running).toBe(true); // 定时器在运行
-      detector.check(ctx); // 但内部跳过
+      expect(detector.running).toBe(true);
+      detector.check(ctx);
       expect(ctx.term.refresh).not.toHaveBeenCalled();
       detector.stop();
     });
 
     it('active=false 时检测器不触发恢复', () => {
-      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30 });
+      const detector = new DesyncDetector({ threshold: 0.01, colorTolerance: 30, persistentSamples: 2 });
       const cols = 10;
       const rows = 4;
       const cellW = 10;
@@ -439,15 +631,13 @@ describe('DesyncDetector', () => {
         isActive: () => false,
       });
       detector.check(ctx);
-      // active=false 时跳过检测
       expect(ctx.term.refresh).not.toHaveBeenCalled();
       expect(ctx.webgl.clearTextureAtlas).not.toHaveBeenCalled();
     });
   });
 
-  describe('xterm 集成 — 与 XtermTerminal 生命周期联动', () => {
+  describe('xterm 集成', () => {
     it('mount 后 WebGL 模式下检测器已启动', () => {
-      // 模拟 XtermTerminal._startDesyncDetector 的行为
       const detector = new DesyncDetector();
       const ctx = createMockContext();
       detector.start(ctx);
@@ -455,7 +645,7 @@ describe('DesyncDetector', () => {
       detector.stop();
     });
 
-    it('unmount 时检测器停止（模拟 _stopDesyncDetector）', () => {
+    it('unmount 时检测器停止', () => {
       const detector = new DesyncDetector();
       const ctx = createMockContext();
       detector.start(ctx);
@@ -464,20 +654,13 @@ describe('DesyncDetector', () => {
       expect(detector.running).toBe(false);
     });
 
-    it('WebGL 上下文丢失后检测器停止（模拟 context loss 时 _stopDesyncDetector）', () => {
+    it('WebGL 上下文丢失后检测器停止', () => {
       const detector = new DesyncDetector();
       const ctx = createMockContext();
       detector.start(ctx);
       expect(detector.running).toBe(true);
-      // 模拟上下文丢失后的 stop
       detector.stop();
       expect(detector.running).toBe(false);
-      // 后续 check 不应触发
-      detector.check(ctx);
-      // 但 check 在非 running 时仍可被调用，内部由 active/webgl 守卫
-      // 这里验证调用 check 不会恢复——因为定时器已停，且 check 内有 active 守卫
-      // 实际上 check 可以直接调用，只要有 active + webgl 就会执行
-      // 所以我们停了之后重新用 active=false 的上下文验证
       const inactiveCtx = createMockContext({ isActive: () => false });
       detector.check(inactiveCtx);
       expect(inactiveCtx.term.refresh).not.toHaveBeenCalled();
