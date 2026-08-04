@@ -19,6 +19,7 @@
  */
 
 import { runGuardedWriteCompletionStep } from './write-callback-guard'
+import { forceRepaintThroughRenderPause } from './render-pause-release'
 
 /** 前台终端输出目标（xterm Terminal 的子集，便于测试 mock）。 */
 export type ForegroundTerminalOutputTarget = {
@@ -41,7 +42,9 @@ export type ForegroundTerminalOutputTarget = {
 export type ForegroundTerminalWriteOptions = {
   /** 是否强制写后刷新视口（捕获快照 → 比较 → settle）。默认 true（前台写入时启用）。 */
   forceViewportRefresh?: boolean
-  /** 是否始终调度 followup viewport settle（即使视口未变化）。默认 false。 */
+  /** 是否始终调度 followup viewport settle（即使视口未变化）。默认 true。
+   * 在高频输出场景下，单次 refresh 可能被后续写覆盖，followup settle
+   * 确保视口在 rAF 后能得到第二次刷新机会。 */
   followupViewportRefresh?: boolean
   /** 同步刷新视口的条件判断函数。默认始终同步。 */
   shouldRefreshViewportSynchronously?: () => boolean
@@ -166,19 +169,61 @@ function scheduleViewportSettleRefresh(
 
 function settleForegroundRender(
   terminal: ForegroundTerminalOutputTarget,
-  beforeWriteViewport: ViewportSnapshot,
+  beforeWriteViewport: ViewportSnapshot | null,
   options: ForegroundTerminalWriteOptions,
 ): void {
-  // 写后立即刷新可见行
+  // 1. 强制穿透 RenderService 暂停状态
+  //    tab 切换后 RenderService._isPaused 可能仍为 true，导致 refresh() 被吞掉
+  forceRepaintThroughRenderPause(terminal)
+
+  // 2. 写后立即刷新可见行
   refreshVisibleRows(terminal, options.shouldRefreshViewportSynchronously?.() ?? true)
 
-  // 如果视口在写期间滚动，调度一次 rAF settle 刷新
-  // 这确保 Chromium 在渲染"freshly scrolled top row"时不会落后一帧
+  // 3. 如果视口在底部，立即 scrollToBottom 确保贴底
+  //    防止中间行写入时视口被推离底部
+  if (beforeWriteViewport && isViewportAtBottom(beforeWriteViewport)) {
+    safeTerminalScrollCall(() => {
+      if (typeof (terminal as any).scrollToBottom === 'function') {
+        (terminal as any).scrollToBottom()
+      }
+    })
+  }
+
+  // 4. 如果视口在写期间滚动，调度一次 rAF settle 刷新
+  //    这确保 Chromium 在渲染"freshly scrolled top row"时不会落后一帧
   if (
     options.followupViewportRefresh ||
-    viewportChangedDuringWrite(terminal, beforeWriteViewport)
+    (beforeWriteViewport !== null && viewportChangedDuringWrite(terminal, beforeWriteViewport))
   ) {
     scheduleViewportSettleRefresh(terminal, options.shouldRefreshViewportSynchronously)
+  }
+}
+
+/**
+ * 检查视口是否在底部（基于写前快照）。
+ */
+function isViewportAtBottom(snapshot: ViewportSnapshot): boolean {
+  return (
+    snapshot.baseY !== null &&
+    snapshot.viewportY !== null &&
+    snapshot.viewportY >= snapshot.baseY
+  )
+}
+
+/**
+ * 安全地执行终端滚动调用，捕获 TypeError: dimensions 异常。
+ * WebGL 拆卸期间 xterm 渲染器可能暂时不可用。
+ */
+function safeTerminalScrollCall(fn: () => void): boolean {
+  try {
+    fn()
+    return true
+  } catch (err) {
+    // 静默处理 xterm 渲染器未就绪的 TypeError
+    if (err instanceof TypeError && /dimensions/.test(err.message)) {
+      return false
+    }
+    throw err
   }
 }
 
@@ -209,6 +254,11 @@ export function writeForegroundTerminalChunk(
     if (beforeWriteViewport) {
       runGuardedWriteCompletionStep('foreground-render-settle', () =>
         settleForegroundRender(terminal, beforeWriteViewport, options),
+      )
+    } else {
+      // 即使没有写前快照，也强制穿透 RenderService 暂停状态
+      runGuardedWriteCompletionStep('foreground-render-settle-force-repaint', () =>
+        forceRepaintThroughRenderPause(terminal),
       )
     }
     if (options.onParsed) {

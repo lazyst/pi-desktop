@@ -12,7 +12,9 @@
 import type { Terminal } from '@xterm/xterm'
 import {
   captureTerminalStructuralScrollIntent,
+  forceRestoreTerminalScrollIntent,
   type TerminalScrollIntentTarget,
+  type TerminalStructuralScrollIntentSnapshot,
 } from './scroll-intent'
 import { beginTerminalScrollIntentBufferRebuild, endTerminalScrollIntentBufferRebuild } from './scroll-intent-rebuild'
 import { cancelDeferredScrollRestore } from './scroll'
@@ -161,8 +163,9 @@ export class TerminalStructuralReplayCoordinator {
       }
 
       // 1. capture 重建前意图
+      let intentSnapshot: TerminalStructuralScrollIntentSnapshot | null = null
       if (terminal) {
-        captureTerminalStructuralScrollIntent(terminal)
+        intentSnapshot = captureTerminalStructuralScrollIntent(terminal)
       }
 
       // 2. cancel 挂起恢复（来自 scroll.ts 的延迟恢复）
@@ -181,8 +184,13 @@ export class TerminalStructuralReplayCoordinator {
         taskError = e as Error
       }
 
-      // 5. end 重建标记（自动触发 restore）
+      // 5. end 重建标记
       endTerminalScrollIntentBufferRebuild(terminal ?? {} as TerminalScrollIntentTarget)
+
+      // 5b. 恢复重建前意图（如果存在且未过期）
+      if (intentSnapshot && terminal) {
+        forceRestoreTerminalScrollIntent(terminal, intentSnapshot)
+      }
 
       // 6. afterRestore 回调
       afterRestore?.()

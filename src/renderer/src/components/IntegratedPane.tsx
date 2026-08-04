@@ -14,6 +14,10 @@ import {
 } from './paneManager';
 import type { XtermTerminal } from './XtermTerminal';
 import { SYNC_FIT_PANES_EVENT } from '../constants/terminal';
+import {
+  scheduleFollowOutputIfNeeded,
+  rememberVisibleScrollSnapshot,
+} from '../lib/terminal/scroll-visibility-memory';
 
 interface Props {
   // 终端实例 id，形如 'term-<uuid>'。同时作为 XtermTerminal 的 sessionKey（仅作标识），
@@ -91,12 +95,19 @@ export function IntegratedPane({ terminalId, active }: Props) {
   }, [terminalId]);
 
   // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时校准尺寸。
-  // 滚动位置保存/恢复由 CenterPane 在 activeCwd 切换前完成（对齐 Orca captureScrollState）。
+  // 滚动位置保存/恢复：隐藏前保存快照，恢复时调度 followOutput 检查。
   useEffect(() => {
     if (active) {
       mountPane(terminalId, hostRef.current!); // 幂等：已挂载则直接 return
       setPaneActive(terminalId, true);         // 切回：flush + 强制 resize 校准尺寸
+      // 调度 followOutput 检查：如果隐藏期间有新输出且意图是 followOutput，scrollToBottom
+      scheduleFollowOutputIfNeeded(terminalId);
     } else {
+      // 隐藏前保存当前滚动快照，供恢复时判断是否需要 followOutput
+      const term = termRef.current;
+      if (term?.rawTerminal) {
+        rememberVisibleScrollSnapshot(terminalId, term.rawTerminal);
+      }
       setPaneActive(terminalId, false);
     }
   }, [active, terminalId]);

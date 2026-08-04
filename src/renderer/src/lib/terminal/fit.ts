@@ -24,6 +24,7 @@ import {
   resumePendingFitScrollRestoreAfterFit,
   type ScrollState,
 } from './scroll'
+import { deferTerminalGeometryMutationDuringRebuild } from './scroll-intent-rebuild'
 
 // ─── 公开类型 ──────────────────────────────────────────────────────────────
 
@@ -112,6 +113,14 @@ function canMeasurePaneForFit(pane: ManagedPane): boolean {
  * @returns true fit 成功执行，false 因尺寸不足或异常跳过
  */
 function performSafeFit(pane: ManagedPane, preserveScroll: boolean): boolean {
+  // 重建期间延期 fit 操作，避免在 buffer 重建过程中因瞬时 0 尺寸
+  // 导致 PTY 锁定在极小尺寸
+  if (deferTerminalGeometryMutationDuringRebuild(pane.terminal, 'safe-fit', () => {
+    safeFit(pane)
+  })) {
+    return false
+  }
+
   if (!canMeasurePaneForFit(pane)) {
     return false
   }

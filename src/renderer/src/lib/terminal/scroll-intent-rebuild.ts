@@ -1,97 +1,143 @@
 /**
- * scroll-intent-rebuild
+ * scroll-intent-rebuild —— 滚动意图 buffer 重建协调
  *
- * 终端 buffer 重建期间的滚动意图保护机制。
- * 使用计数器模式支持嵌套 begin/end：每次 begin 递增计数器，end 递减计数器，
- * 归零时自动触发滚动意图恢复。
+ * 移植自 Orca 的 terminal-scroll-intent-rebuild.ts
  *
- * 在 buffer 重建（snapshot replay、remount、clear）期间，xterm 的 buffer 被清空
- * 并重新填充，此时视口位置会丢失。本模块在重建期间临时保护意图不被覆盖，
- * 并在重建完成后按存储的意图自动恢复视口位置。
+ * ## 为什么需要
+ *
+ * 当终端的 buffer 被重建（snapshot replay、scrollback restore、eager buffer flush）时：
+ * - 旧 buffer 的绝对行号全部失效
+ * - 正在进行的 fit 操作应延期到重建完成
+ * - 重建完成后应恢复滚动意图
+ *
+ * 本模块提供 begin/end 生命周期标记，fit 操作在重建期间被延期，
+ * 重建完成后按注册顺序执行。DOM 事件跟踪器在重建完成后自动同步滚动意图。
  */
 
-import {
-  forceRestoreTerminalScrollIntent,
-  captureTerminalStructuralScrollIntent,
-  type TerminalScrollIntentTarget,
-  type TerminalStructuralScrollIntentSnapshot,
-} from './scroll-intent'
+// ─── 类型 ──────────────────────────────────────────────────────────────────
+
+type RebuildState = {
+  inFlight: boolean
+  completeCallbacks: ((completed: boolean) => void)[]
+  pendingFitOperations: (() => void)[]
+}
 
 // ─── 内部状态 ──────────────────────────────────────────────────────────────
 
-/** 每个终端的重建嵌套计数器。 */
-const rebuildCounters = new WeakMap<TerminalScrollIntentTarget, number>()
-
-/** 每个终端在 begin 时捕获的意图快照，用于 end 时恢复。 */
-const rebuildSnapshots = new WeakMap<
-  TerminalScrollIntentTarget,
-  TerminalStructuralScrollIntentSnapshot
->()
+const rebuildStates = new WeakMap<object, RebuildState>()
 
 // ─── 公开 API ──────────────────────────────────────────────────────────────
 
 /**
- * 开始 buffer 重建，递增计数器。
- * 首次调用时捕获当前滚动意图快照，用于后续恢复。
- * 后续嵌套调用仅递增计数器，不重复捕获。
+ * 标记 buffer 重建开始。
+ * 期间 fit 操作将被延期并排队。
  *
- * @param terminal 终端目标
+ * @param terminal - xterm Terminal 实例（或任何可作 WeakMap key 的对象）
  */
-export function beginTerminalScrollIntentBufferRebuild(
-  terminal: TerminalScrollIntentTarget,
-): void {
-  const current = rebuildCounters.get(terminal) ?? 0
-  if (current === 0) {
-    // 首次 begin：捕获意图快照
-    const snapshot = captureTerminalStructuralScrollIntent(terminal)
-    if (snapshot) {
-      rebuildSnapshots.set(terminal, snapshot)
-    }
-  }
-  rebuildCounters.set(terminal, current + 1)
+export function beginTerminalScrollIntentBufferRebuild(terminal: object): void {
+  rebuildStates.set(terminal, {
+    inFlight: true,
+    completeCallbacks: [],
+    pendingFitOperations: [],
+  })
 }
 
 /**
- * 结束 buffer 重建，递减计数器。
- * 计数器归零时触发滚动意图恢复（使用 begin 时捕获的快照）。
- * 无匹配的 begin 调用时静默无操作。
+ * 标记 buffer 重建完成。
+ * 执行所有挂起的完成回调和延期 fit 操作。
  *
- * @param terminal 终端目标
+ * @param terminal - 之前传入 beginTerminalScrollIntentBufferRebuild 的同一对象
+ * @param completed - 重建是否成功完成
  */
 export function endTerminalScrollIntentBufferRebuild(
-  terminal: TerminalScrollIntentTarget,
+  terminal: object,
+  completed = true,
 ): void {
-  const current = rebuildCounters.get(terminal)
-  if (current === undefined || current <= 0) {
-    // 无匹配的 begin 调用，静默返回
-    return
+  const state = rebuildStates.get(terminal)
+  if (!state) return
+
+  state.inFlight = false
+  rebuildStates.delete(terminal)
+
+  // 执行延期的 fit 操作
+  for (const fit of state.pendingFitOperations) {
+    try {
+      fit()
+    } catch {
+      /* 单个 fit 失败不影响其他操作 */
+    }
   }
 
-  const next = current - 1
-  if (next === 0) {
-    // 计数器归零：清除计数器并触发恢复
-    rebuildCounters.delete(terminal)
-    const snapshot = rebuildSnapshots.get(terminal)
-    rebuildSnapshots.delete(terminal)
-    if (snapshot) {
-      // 使用 begin 时捕获的快照恢复滚动意图
-      // 采用 forceRestoreTerminalScrollIntent 跳过 revision 检查，
-      // 确保重建期间意图被覆盖时也能正确恢复
-      forceRestoreTerminalScrollIntent(terminal, snapshot)
+  // 通知完成回调
+  for (const cb of state.completeCallbacks) {
+    try {
+      cb(completed)
+    } catch {
+      /* 单个回调失败不影响其他回调 */
     }
-  } else {
-    rebuildCounters.set(terminal, next)
   }
 }
 
 /**
- * 查询终端是否正在 buffer 重建中。
+ * 检查是否正在进行 buffer 重建。
  *
- * @param terminal 终端目标
- * @returns true 表示有正在进行的重建（计数器 > 0）
+ * @param terminal - xterm Terminal 实例
+ * @returns true 表示正在重建中
  */
-export function isTerminalScrollIntentRebuildInFlight(
-  terminal: TerminalScrollIntentTarget,
+export function isTerminalScrollIntentRebuildInFlight(terminal: object): boolean {
+  return rebuildStates.get(terminal)?.inFlight === true
+}
+
+/**
+ * 在重建期间延期一个几何操作（如 fit）。
+ * 返回 true 表示操作被延期，false 表示立即执行。
+ *
+ * @param terminal - xterm Terminal 实例
+ * @param label - 操作标识（仅用于日志，当前未使用）
+ * @param fn - 要延期或立即执行的函数
+ * @returns true 表示操作被延期（将在重建完成后执行）
+ */
+export function deferTerminalGeometryMutationDuringRebuild(
+  terminal: object,
+  _label: string,
+  fn: () => void,
 ): boolean {
-  return (rebuildCounters.get(terminal) ?? 0) > 0
+  const state = rebuildStates.get(terminal)
+  if (!state?.inFlight) return false
+
+  state.pendingFitOperations.push(fn)
+  return true
+}
+
+/**
+ * 注册 buffer 重建完成回调。
+ * 如果不在重建中，立即执行回调。
+ * 返回取消函数（在回调执行前调用可取消注册）。
+ *
+ * @param terminal - xterm Terminal 实例
+ * @param callback - 重建完成后的回调，参数为是否成功完成
+ * @returns 取消函数（调用后 callback 不会被调用）
+ */
+export function onTerminalScrollIntentBufferRebuildComplete(
+  terminal: object,
+  callback: (completed: boolean) => void,
+): () => void {
+  const state = rebuildStates.get(terminal)
+  if (!state?.inFlight) {
+    // 不在重建中，立即执行
+    try {
+      callback(true)
+    } catch {
+      /* 忽略 */
+    }
+    return () => {}
+  }
+
+  state.completeCallbacks.push(callback)
+  return () => {
+    const index = state.completeCallbacks.indexOf(callback)
+    if (index >= 0) {
+      state.completeCallbacks.splice(index, 1)
+    }
+  }
 }

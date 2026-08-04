@@ -616,7 +616,9 @@ export function writeTerminalOutput(
 
     // 使用 writeForegroundTerminalChunk 确保写后渲染 settle
     const forceRefresh = options?.forceForegroundRefresh !== false // 默认 true
-    const followupRefresh = options?.followupForegroundRefresh === true
+    // 默认始终调度一次 followup viewport settle，确保视口完全稳定
+    // 特别是在高频输出场景下，单次 refresh 可能被后续写覆盖
+    const followupRefresh = options?.followupForegroundRefresh !== false
     const pacer = makeParseClockPacer()
 
     const accepted = writeForegroundTerminalChunk(

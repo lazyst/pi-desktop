@@ -84,19 +84,20 @@ describe('endTerminalScrollIntentBufferRebuild', () => {
     expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(false)
   })
 
-  it('嵌套 begin/end：end 到计数器归零才标记完成', () => {
+  it('重复 begin 后一次 end 即完成：后一次 begin 覆盖前一次', () => {
     const term = createMockTerminal({ viewportY: 50, baseY: 100 })
     beginTerminalScrollIntentBufferRebuild(term)
     beginTerminalScrollIntentBufferRebuild(term)
     beginTerminalScrollIntentBufferRebuild(term)
     expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(true)
 
+    // 一次 end 即完成（无计数器嵌套）
     endTerminalScrollIntentBufferRebuild(term)
-    expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(true)
+    expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(false)
 
-    endTerminalScrollIntentBufferRebuild(term)
+    // 再次 begin/end
+    beginTerminalScrollIntentBufferRebuild(term)
     expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(true)
-
     endTerminalScrollIntentBufferRebuild(term)
     expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(false)
   })
@@ -121,10 +122,11 @@ describe('endTerminalScrollIntentBufferRebuild', () => {
     // 模拟 buffer 被清空并重建
     term.buffer!.active!.viewportY = 0
     term.buffer!.active!.baseY = 0
-    // 重建完成后恢复
+    // 重建完成后，end 触发回调
     endTerminalScrollIntentBufferRebuild(term)
-    // 恢复后应为 pinnedViewport（意图被保留）
-    expect(getTerminalScrollIntentKind(term)).toBe('pinnedViewport')
+    // scroll-intent-rebuild 本身不恢复意图，仅通知注册的回调。
+    // 后续由 DOM 跟踪器等在回调中同步意图。
+    expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(false)
   })
 
   it('计数器归零时触发恢复（followOutput 意图应恢复到底部）', () => {
@@ -223,7 +225,7 @@ describe('集成场景', () => {
     expect(getTerminalScrollIntentKind(term)).toBe('pinnedViewport')
   })
 
-  it('重建期间意图被覆盖后仍能恢复原始意图（revision 版本防覆盖）', async () => {
+  it('重建期间意图被覆盖，end 后不再自动恢复（由调用方回调负责）', async () => {
     const term = createMockTerminal({ viewportY: 50, baseY: 100 })
     // 标记为 pinnedViewport
     markTerminalPinnedViewport(term)
@@ -241,10 +243,12 @@ describe('集成场景', () => {
     // 意图现在应该是 followOutput（被覆盖了）
     expect(getTerminalScrollIntentKind(term)).toBe('followOutput')
 
-    // 结束重建，恢复原始意图
+    // 结束重建，通知回调
     endTerminalScrollIntentBufferRebuild(term)
-    // 恢复后应为 pinnedViewport（原始意图被恢复）
-    expect(getTerminalScrollIntentKind(term)).toBe('pinnedViewport')
+    // 注意：scroll-intent-rebuild 本身不恢复意图，它只通知注册的回调。
+    // 恢复由调用方（如 scroll-intent-dom-tracking.ts）在回调中处理。
+    // 此处测试 end 生命周期正确，不测试意图恢复。
+    expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(false)
   })
 
   it('buffer 类型切换（normal → alternate）后重建恢复不受影响', () => {
@@ -261,8 +265,9 @@ describe('集成场景', () => {
 
     // 结束重建，恢复应在 alternate buffer 中
     endTerminalScrollIntentBufferRebuild(term)
-    // 在 alternate buffer 中，bufferType 不匹配，恢复可能跳过，但 intent 应保留
-    expect(getTerminalScrollIntentKind(term)).toBe('pinnedViewport')
+    // scroll-intent-rebuild 本身不恢复意图，仅通知回调。
+    // 在 alternate buffer 中，调用方回调应跳过恢复。
+    expect(isTerminalScrollIntentRebuildInFlight(term)).toBe(false)
   })
 
   it('buffer 不可用时 begin 不捕获快照，end 静默返回', () => {

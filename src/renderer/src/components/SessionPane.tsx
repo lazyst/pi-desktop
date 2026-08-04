@@ -11,6 +11,11 @@ import {
   paneHandleContextMenu,
   releasePane,
 } from './paneManager';
+import type { XtermTerminal } from './XtermTerminal';
+import {
+  scheduleFollowOutputIfNeeded,
+  rememberVisibleScrollSnapshot,
+} from '../lib/terminal/scroll-visibility-memory';
 
 interface Props {
   sessionKey: string;
@@ -23,6 +28,7 @@ interface Props {
 // 与原 TerminalPane 完全一致，对 App.tsx / 主进程 / preload 完全透明。
 export function SessionPane({ sessionKey, active }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XtermTerminal | null>(null);
   // 视口是否贴底（驱动「跳到底部」浮钮显隐）。
   const [atBottom, setAtBottom] = useState(true);
 
@@ -40,6 +46,7 @@ export function SessionPane({ sessionKey, active }: Props) {
     const host = hostRef.current;
     if (!host) return;
     const term = acquirePane({ key: sessionKey, kind: 'session', pi });
+    termRef.current = term;
     // 视口贴底状态变化 → 驱动浮钮显隐（仅在状态翻转时回调，见 XtermTerminal.notifyScrollState）。
     setPaneScrollHandler(sessionKey, (bottom) => setAtBottom(bottom));
     // 文件链接点击 → 在 pi-desktop 编辑器中打开（通过 tabStore.openPreview）。
@@ -57,6 +64,7 @@ export function SessionPane({ sessionKey, active }: Props) {
     return () => {
       // 统一经 PaneManager.releasePane 销毁并注销实例（会话 pty 由主进程会话生命周期管理，此处不杀）。
       releasePane(sessionKey);
+      termRef.current = null;
     };
   }, [sessionKey]);
 
@@ -65,12 +73,19 @@ export function SessionPane({ sessionKey, active }: Props) {
   // （if mounted return），不会触发 resize；但 opacity:0 隐藏期间 xterm 尺寸为 0，
   // 切回后必须 flush + doResize 用真实容器尺寸重测，否则沿用隐藏期的 0 尺寸渲染，
   // 表现为"切回的终端变空白新终端、历史输出丢失 / 不能滚动"。
-  // 滚动位置保存/恢复由 CenterPane 在 activeCwd 切换前完成（对齐 Orca captureScrollState）。
+  // 滚动位置保存/恢复：隐藏前保存快照，恢复时调度 followOutput 检查。
   useEffect(() => {
     if (active) {
       mountPane(sessionKey, hostRef.current!); // 幂等：已挂载则直接 return
       setPaneActive(sessionKey, true);         // 切回：flush + 强制 resize 校准尺寸
+      // 调度 followOutput 检查：如果隐藏期间有新输出且意图是 followOutput，scrollToBottom
+      scheduleFollowOutputIfNeeded(sessionKey);
     } else {
+      // 隐藏前保存当前滚动快照，供恢复时判断是否需要 followOutput
+      const term = termRef.current;
+      if (term?.rawTerminal) {
+        rememberVisibleScrollSnapshot(sessionKey, term.rawTerminal);
+      }
       setPaneActive(sessionKey, false);
     }
   }, [active, sessionKey]);

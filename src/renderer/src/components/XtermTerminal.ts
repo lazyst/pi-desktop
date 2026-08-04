@@ -343,6 +343,11 @@ export class XtermTerminal implements LiveTerminal {
   /** 缓冲区变化回调：alt/normal buffer 切换时触发，供壳更新状态栏/上下文键。 */
   onBufferChange: ((bufferType: 'normal' | 'alt') => void) | null = null;
 
+  /** 获取底层 xterm Terminal 实例。供 scroll-visibility-memory 等外部模块只读访问。 */
+  get rawTerminal(): Terminal | null {
+    return this.term;
+  }
+
   // —— 写完成确认（对齐 VS Code _flushXtermData 的「已写入=已解析」闸门）——
   private _latestWriteSeq = 0;
   private _latestParsedSeq = 0;

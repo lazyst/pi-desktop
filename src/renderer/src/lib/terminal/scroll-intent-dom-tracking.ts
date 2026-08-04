@@ -25,7 +25,10 @@ import {
   type TerminalScrollIntentTarget,
   type TerminalScrollIntentKey,
 } from './scroll-intent'
-import { isTerminalScrollIntentRebuildInFlight } from './scroll-intent-rebuild'
+import {
+  isTerminalScrollIntentRebuildInFlight,
+  onTerminalScrollIntentBufferRebuildComplete,
+} from './scroll-intent-rebuild'
 import {
   syncTerminalScrollIntentSoon,
   cancelPendingSettle,
@@ -84,6 +87,8 @@ type DomTrackingState = {
   recentMouseReport: boolean
   /** 所有已注册的事件监听器列表。 */
   disposables: IDisposable[]
+  /** 重建完成后的同步回调取消函数。 */
+  cancelPostRebuildSync: (() => void) | null
 }
 
 // ─── 内部 WeakMap ──────────────────────────────────────────────────────────
@@ -132,6 +137,7 @@ export function attachTerminalScrollIntentTracking(
     isTuiMode: isTuiModeElement(terminal),
     recentMouseReport: false,
     disposables: [],
+    cancelPostRebuildSync: null,
   }
   trackingStateByTerminal.set(terminal, state)
 
@@ -241,8 +247,9 @@ function handleWheelEvent(
   e: WheelEvent,
   state: DomTrackingState,
 ): void {
-  // 重建保护：重建期间的 wheel 事件不写入意图
+  // 重建保护：重建期间的 wheel 事件不写入意图，注册重建完成后同步
   if (isTerminalScrollIntentRebuildInFlight(terminal)) {
+    registerPostRebuildSync(terminal, state)
     return
   }
 
@@ -284,8 +291,9 @@ function handleViewportScroll(
   terminal: TerminalScrollIntentTarget,
   state: DomTrackingState,
 ): void {
-  // 重建保护
+  // 重建保护：重建期间注册完成回调
   if (isTerminalScrollIntentRebuildInFlight(terminal)) {
+    registerPostRebuildSync(terminal, state)
     return
   }
 
@@ -385,8 +393,9 @@ function scheduleWheelSettle(
   state.wheelTimer = setTimeout(() => {
     state.wheelTimer = null
     if (state.disposed) return
-    // 重建保护
+    // 重建保护：注册完成回调，稍后统一采样
     if (isTerminalScrollIntentRebuildInFlight(terminal)) {
+      registerPostRebuildSync(terminal, state)
       return
     }
     // 滚轮停止后，通过 settle 采样确认意图
@@ -397,6 +406,30 @@ function scheduleWheelSettle(
 /**
  * 清理所有事件监听和状态。
  */
+/**
+ * 注册重建完成后的滚动意图同步回调。
+ * 如果已有注册的回调，不再重复注册。
+ */
+function registerPostRebuildSync(
+  terminal: TerminalScrollIntentTarget,
+  state: DomTrackingState,
+): void {
+  if (state.cancelPostRebuildSync) {
+    // 已注册，无需重复
+    return
+  }
+  state.cancelPostRebuildSync = onTerminalScrollIntentBufferRebuildComplete(
+    terminal,
+    (completed) => {
+      state.cancelPostRebuildSync = null
+      if (completed && !state.disposed) {
+        // 重建完成后从视口同步滚动意图
+        syncTerminalScrollIntentSoon(terminal)
+      }
+    },
+  )
+}
+
 function disposeTracking(
   terminal: TerminalScrollIntentTarget,
   state: DomTrackingState,
@@ -427,6 +460,12 @@ function disposeTracking(
   state.offMouseReportDetect = null
   state.offUserInput = null
   state.offScroll = null
+
+  // 清理重建同步回调
+  if (state.cancelPostRebuildSync) {
+    state.cancelPostRebuildSync()
+    state.cancelPostRebuildSync = null
+  }
 
   trackingStateByTerminal.delete(terminal)
 }

@@ -122,7 +122,8 @@ interface InternalPaneScrollState {
   viewportY: number;
   baseY: number;
   wasAtBottom: boolean;
-  marker: unknown; // IMarker|null
+  bufferType: 'normal' | 'alternate';
+  firstVisibleLineMarker?: unknown;
 }
 
 /** 跨目录 keep-alive：按 pane id 存储的滚动位置快照。在 setActiveCwd 前保存、之后恢复。 */
@@ -136,7 +137,7 @@ const scrollStates = new Map<string, InternalPaneScrollState>();
 export function capturePaneScrollState(key: string): void {
   const raw = panes.get(key)?.captureScrollState();
   if (!raw) return;
-  scrollStates.set(key, { viewportY: raw.viewportY, baseY: raw.baseY, wasAtBottom: raw.wasAtBottom, marker: raw.marker });
+  scrollStates.set(key, { viewportY: raw.viewportY, baseY: raw.baseY, wasAtBottom: raw.wasAtBottom, bufferType: raw.bufferType, firstVisibleLineMarker: raw.firstVisibleLineMarker });
 }
 
 /**
@@ -147,7 +148,7 @@ export function restorePaneScrollState(key: string): void {
   const state = scrollStates.get(key);
   if (!state) return;
   scrollStates.delete(key);
-  panes.get(key)?.restoreScrollState({ viewportY: state.viewportY, baseY: state.baseY, wasAtBottom: state.wasAtBottom, marker: state.marker as any });
+  panes.get(key)?.restoreScrollState({ viewportY: state.viewportY, baseY: state.baseY, wasAtBottom: state.wasAtBottom, bufferType: state.bufferType, firstVisibleLineMarker: state.firstVisibleLineMarker as any });
 }
 
 /** 清空全部滚动位置快照（测试 / 应用重置时调用）。 */
