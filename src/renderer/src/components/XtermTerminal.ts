@@ -1172,10 +1172,12 @@ export class XtermTerminal implements LiveTerminal {
       fontWeightBold: getFontWeightBold(),
       letterSpacing: getLetterSpacing(),
       tabStopWidth: 8,
-      // 回归 VS Code 默认 true：pi-tui 每帧 fullRender(true) 发 ED2（Erase in Display）清屏时，
-      // 把整屏旧内容推入 scrollback（VS Code 标准行为）。恢复标准后由 xterm 原生贴底与分轴
-      // resize 处理「清屏→重画」的过渡，不再需要此前 scrollOnEraseInDisplay:false 的反向 hack。
-      scrollOnEraseInDisplay: true,
+      // 设为 false 以抑制 pi-tui fullRender(true) 发 ED2（Erase in Display）清屏时
+      // xterm 把整屏旧内容推入 scrollback 导致的视觉跳动（内容先下移入 scrollback，
+      // 再上移回可视区）。VS Code 默认 true 在集成终端中无此问题，因为 VS Code
+      // 的终端面板与编辑器是独立滚动容器；pi-tui 全屏 TUI 场景下每帧清屏重画，
+      // scrollOnEraseInDisplay:true 会导致 widget/编辑器/footer 整体上下跳动。
+      scrollOnEraseInDisplay: false,
       // 滚轮/快速滚动灵敏度：对齐 VS Code 默认（fastScrollSensitivity 5 / scrollSensitivity 1）。
       fastScrollSensitivity: getFastScrollSensitivity(),
       scrollSensitivity: getScrollSensitivity(),
@@ -1797,7 +1799,13 @@ export class XtermTerminal implements LiveTerminal {
           });
 
           runGuardedWriteCompletionStep('restore-scroll', () => {
-            this.restoreScrollState(savedState);
+            // 视口在底部时跳过滚动恢复：pi-tui 等全屏 TUI 自己管理视口贴底，
+            // 外部 restoreScrollState 会与 pi-tui 的差分渲染器打架，导致
+            // widget/编辑器/footer 整体上下跳动。
+            // 仅当用户曾上滚（视口不在底部）时才恢复滚动位置。
+            if (savedState && !savedState.wasAtBottom) {
+              this.restoreScrollState(savedState);
+            }
           });
 
           runGuardedWriteCompletionStep('sync-scroll-intent', () => {
@@ -1900,7 +1908,11 @@ export class XtermTerminal implements LiveTerminal {
 
         runGuardedWriteCompletionStep('restore-scroll', () => {
           // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-          this.restoreScrollState(savedState);
+          // 视口在底部时跳过：pi-tui 等全屏 TUI 自己管理视口贴底，
+          // 外部 restoreScrollState 会与差分渲染器打架导致跳动。
+          if (savedState && !savedState.wasAtBottom) {
+            this.restoreScrollState(savedState);
+          }
         });
 
         runGuardedWriteCompletionStep('on-data', () => {
@@ -1976,7 +1988,11 @@ export class XtermTerminal implements LiveTerminal {
 
         runGuardedWriteCompletionStep('restore-scroll', () => {
           // 对齐 VS Code：写后恢复滚动位置（仅当用户曾上滚离底时恢复）
-          this.restoreScrollState(savedState);
+          // 视口在底部时跳过：pi-tui 等全屏 TUI 自己管理视口贴底，
+          // 外部 restoreScrollState 会与差分渲染器打架导致跳动。
+          if (savedState && !savedState.wasAtBottom) {
+            this.restoreScrollState(savedState);
+          }
         });
 
         runGuardedWriteCompletionStep('sync-scroll-intent', () => {
