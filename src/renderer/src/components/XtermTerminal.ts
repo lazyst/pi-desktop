@@ -12,19 +12,18 @@
 //     丢失后降级 DOM，下次可见时由 retryWebglIfNeeded 尝试重建 WebGL。
 //   - 数据缓冲：直接订阅 channel.onData，由主进程 emitData 5ms 聚合 + 渲染端二次聚合
 //     （5ms 时间窗 + 64KB 上限），双层减少 IPC 消息量和 term.write() 调用次数。
-//     聚合后统一 _segmentByShellIntegration → _writeProcessData。
+//     聚合后统一 _segmentByShellIntegration → _writeProcessDataViaScheduler。
+//     scroll restore 由 writeForegroundTerminalChunk 的 viewport settle 处理（对齐 Orca），
+//     不再在 _writeProcessDataViaScheduler 中做 scroll capture/restore。
 //   - 命令级分段：对齐 VS Code TerminalInstance._onProcessData，按 OSC 633（C/D）序列把数据切成
 //     语义段，各段按序 term.write，使命令边界成为独立写入单元、且可被装饰层差分解析。
 //   - 写后背压：term.write 回调里调 pi.acknowledgeDataEvent(key, len)（对齐 VS Code
 //     _writeProcessData 的 acknowledgeDataEvent 流控）。
 //   - 写完成闸门：_latestWriteSeq === _latestParsedSeq 轮询（对齐 VS Code _flushXtermData）。
-//   - resize：用 VS Code 同款 TerminalResizeDebouncer（独立文件 terminalResizeDebouncer.ts），
-//     Y（行数）即时、X（列宽）100ms 防抖、不可见推迟到 idle、小 buffer/立即标志走同步
-//     （对齐 VS Code TerminalResizeDebouncer + TerminalInstance.setVisible 的 flush+resize）。
+//   - resize：对齐 Orca 风格，统一由 ResizeObserver 150ms 防抖处理，不分 X/Y 轴。
 //   - 构造选项：逐项对齐 VS Code 默认（cursorBlink/cursorStyle/cursorInactiveStyle/
 //     minimumContrastRatio/drawBoldTextInBrightColors/tabStopWidth/letterSpacing/fontWeight 等）。
-//     其中 scrollOnEraseInDisplay 恢复为 VS Code 默认 true（此前为消除全屏 TUI 抖动的 hack 设为
-//     false；回归标准后由 xterm 原生与分轴 resize 处理，不再需要反向设置）。
+//     其中 scrollOnEraseInDisplay 恢复为 VS Code 默认 true。
 //   - 装饰/导航：加载 DecorationAddon（差分 overlay 基座，对齐 VS Code DecorationAddon）与
 //     MarkNavigationAddon（mark 导航，对齐 VS Code MarkNavigationAddon）。
 //   - 剪贴板：@xterm/addon-clipboard 接管复制/粘贴（对齐 VS Code ClipboardAddon 装配）。
@@ -44,7 +43,8 @@ import { getFontSize } from '../fontSize';
 import { registerTerminal, unregisterTerminal, type LiveTerminal } from '../lib/terminal-registry';
 
 import { AckDataBufferer } from './ackDataBufferer';
-import { TerminalResizeDebouncer } from './terminalResizeDebouncer';
+
+import { TerminalResizeDebouncer } from './terminalResizeDebouncer'
 import { DecorationAddon } from './decorationAddon';
 import { MarkNavigationAddon } from './markNavigationAddon';
 import { SessionChannel } from './terminalChannel';
@@ -70,12 +70,11 @@ import { runGuardedWriteCompletionStep } from '../lib/terminal/write-callback-gu
 import { discardInFlightTerminalOutputAckCredits } from '../lib/terminal/ack-credit';
 import { forceRepaintThroughRenderPause } from '../lib/terminal/render-pause-release';
 import { getTerminalWebglAutoDecision } from '../lib/terminal/webgl-auto-policy';
-import { DesyncDetector } from '../lib/terminal/desync-detector';
 import { CURSOR_RESET_MINIMAL } from '../lib/terminal/replay-cursor-reset';
 import {
   registerUndeliverableWriteHandler,
 } from '../lib/terminal/write-pipeline-health';
-import { configureTerminalOutputBacklogCap, writeTerminalOutput, discardQueuedOutput } from '../lib/terminal/output-scheduler';
+import { configureTerminalOutputBacklogCap, discardQueuedOutput } from '../lib/terminal/output-scheduler';
 import { installGuardedLinkProviderRegistration } from '../lib/terminal/link-provider-guard';
 import { installTerminalLinkifierHoverResetOnWrite } from '../lib/terminal/linkifier-hover-reset-on-write';
 import {
@@ -295,7 +294,7 @@ export class XtermTerminal implements LiveTerminal {
   // 主进程 emitData 的 5ms 聚合 + 渲染端二次聚合，双层减少 IPC 消息量和 term.write() 调用次数。
   private stopBuffering: (() => void) | null = null;
 
-  // —— resize 分轴防抖（对齐 VS Code TerminalResizeDebouncer）——
+  // —— resize（对齐 VS Code TerminalResizeDebouncer 分轴防抖）——
   private resizeDebouncer: TerminalResizeDebouncer | null = null;
 
   // —— 装饰 / 导航（对齐 VS Code DecorationAddon / MarkNavigationAddon）——
@@ -399,9 +398,6 @@ export class XtermTerminal implements LiveTerminal {
   // DOM 事件驱动的滚动意图跟踪的反注册函数（在 _initXterm 末尾挂载，unmount 时释放）。
   private _scrollIntentTrackingDisposable: { dispose: () => void } | null = null;
 
-  // —— WebGL 渲染去同步检测器（可选，issue 06）——
-  private _desyncDetector: DesyncDetector | null = null;
-
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
@@ -436,7 +432,7 @@ export class XtermTerminal implements LiveTerminal {
   /**
    * keep-alive：active 切换时调用，不销毁实例（对齐 VS Code terminalInstance.setVisible）。
    * active=false 时仅标记不可见；active=true 时恢复并立即 refit（对齐 VS Code setVisible 的
-   * _resizeDebouncer.flush + _resize），使切回的终端即时用最新尺寸渲染，消除切 tab 回来的
+   * doResize(true)），使切回的终端即时用最新尺寸渲染，消除切 tab 回来的
    * 首帧尺寸跳变闪烁。
    */
   setActive(active: boolean): void {
@@ -445,9 +441,7 @@ export class XtermTerminal implements LiveTerminal {
     if (active && this.host && this.term && !this.disposed) {
       // 可见时尝试重建 WebGL 渲染器（上下文丢失或此前附加失败后）
       this.retryWebglIfNeeded();
-      // 同步校准尺寸（即使 RenderService 暂停，resize 记录 _needsFullRefresh 标记，
-      // 由后续 flush 后的 refresh/forceRepaint 一次性绘制，无副作用）
-      this.resizeDebouncer?.flush();
+      // 同步校准尺寸
       this.doResize(true);
       // 异步等待所有 pending 的 term.write() 被解析完成，再执行渲染。
       // 这样隐藏期间累积的写入数据在可见时正确渲染，避免"旧帧残留"。
@@ -518,10 +512,10 @@ export class XtermTerminal implements LiveTerminal {
     this.stopBuffering = null;
     this.resizeDebouncer?.dispose();
     this.resizeDebouncer = null;
+
     this.webglContextLost = false;
     this.webglDisabledAfterContextLoss = false;
     this.webglAttachFailed = false;
-    this._stopDesyncDetector();
     this.webgl = null;
     this.decorationAddon?.dispose();
     this.decorationAddon = null;
@@ -973,17 +967,10 @@ export class XtermTerminal implements LiveTerminal {
     term.attachCustomKeyEventHandler(handler);
   }
 
-  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，走分轴防抖 refit。
-   * 对齐 VS Code TerminalResizeDebouncer：Y 即时、X 100ms 防抖；不可见时推迟到 idle。
-   * 实际尺寸计算与 PTY 通知在 doResize 中完成。 */
+  /** 窗口/侧边栏 resize 时由壳的 ResizeObserver 调用，执行直接 refit。
+   * 防抖由壳的 ResizeObserver 150ms 处理，此处直接执行 resize。 */
   scheduleResize(): void {
-    if (this.disposed || !this.fit || !this.term || !this.host) return;
-    const proposed = this.fit.proposeDimensions();
-    if (!proposed) return;
-    // 零尺寸守卫（同 doResize）：Chromium 布局未就绪时跳过
-    if (proposed.cols <= 2 && proposed.rows <= 1) return;
-    const smallBuffer = this._isSmallBuffer();
-    this.resizeDebouncer?.resize(proposed.cols, proposed.rows, false, smallBuffer);
+    this.doResize(false);
   }
 
   /** 立即 fit（同步预绘制路径）：跳过防抖，直接执行 fit + PTY 通知。
@@ -1133,14 +1120,7 @@ export class XtermTerminal implements LiveTerminal {
     this.onScrollState(atBottom);
   }
 
-  /** 判断是否「小 buffer」（对齐 VS Code StartDebouncingThreshold=200）。
-   * VS Code 用 buffer 当前行数 < 200 直接立即 resize；本项目用同样的 buffer 行数阈值近似，
-   * 而非时间窗——静止期（无输出）若 buffer 行数多（如全屏 TUI 整屏常满）仍走 X 防抖，避免
-   * 高速输出期每帧因列宽微变触发整屏重排。 */
-  private _isSmallBuffer(): boolean {
-    const len = (this.term as any)?.buffer?.active?.length;
-    return typeof len === 'number' ? len < 200 : true;
-  }
+
 
   // —— 私有实现 ——
 
@@ -1172,12 +1152,9 @@ export class XtermTerminal implements LiveTerminal {
       fontWeightBold: getFontWeightBold(),
       letterSpacing: getLetterSpacing(),
       tabStopWidth: 8,
-      // 设为 false 以抑制 pi-tui fullRender(true) 发 ED2（Erase in Display）清屏时
-      // xterm 把整屏旧内容推入 scrollback 导致的视觉跳动（内容先下移入 scrollback，
-      // 再上移回可视区）。VS Code 默认 true 在集成终端中无此问题，因为 VS Code
-      // 的终端面板与编辑器是独立滚动容器；pi-tui 全屏 TUI 场景下每帧清屏重画，
-      // scrollOnEraseInDisplay:true 会导致 widget/编辑器/footer 整体上下跳动。
-      scrollOnEraseInDisplay: false,
+      // scrollOnEraseInDisplay：对齐 VS Code 默认 true。ED2（Erase in Display）清屏时
+      // 不把旧内容推入 scrollback，避免全屏 TUI 场景下每帧清屏重画导致的底部跳动。
+      scrollOnEraseInDisplay: true,
       // 滚轮/快速滚动灵敏度：对齐 VS Code 默认（fastScrollSensitivity 5 / scrollSensitivity 1）。
       fastScrollSensitivity: getFastScrollSensitivity(),
       scrollSensitivity: getScrollSensitivity(),
@@ -1356,7 +1333,8 @@ export class XtermTerminal implements LiveTerminal {
 
     // 启动 WebGL 渲染去同步检测器（issue 06）：仅当 WebGL 启用时有效，
     // 检测器内部守卫 this.webgl 和 this.active，非 WebGL 模式静默跳过。
-    this._startDesyncDetector();
+    // 已禁用——在 TUI 流式输出场景下，clearTextureAtlas + refresh 触发全屏闪烁，
+    // 导致底部跳动。
 
     // 查找 addon（对齐 VS Code SearchAddon 装载）：预装载以便 Ctrl+F 即用。
     try {
@@ -1546,12 +1524,12 @@ export class XtermTerminal implements LiveTerminal {
     // 初始主题 / 字号在 _initXterm 构造 term 时已取当前值（theme: getTermTheme(getThemeFamily(), getTheme())、fontSize: getFontSize()），
     // 后续变更经 registry → applyTheme / applyFontSize 刷新本实例。
 
-    // resize 分轴防抖器（对齐 VS Code TerminalResizeDebouncer）。
+    // resize 分轴防抖器（对齐 VS Code TerminalResizeDebouncer）：Y 即时、X 100ms 防抖。
     this.resizeDebouncer = new TerminalResizeDebouncer(
       () => this.active,
-      (cols, rows) => this._resizeBoth(cols, rows),
-      (cols) => this._resizeX(cols),
-      (rows) => this._resizeY(rows),
+      (cols, rows) => { this._resizeBoth(cols, rows); this._notifyPtyIfChanged(); },
+      (cols) => { this._resizeX(cols); this._notifyPtyIfChanged(); },
+      (rows) => { this._resizeY(rows); this._notifyPtyIfChanged(); },
     );
 
     // 键盘快捷键：Ctrl/Cmd+V 粘贴、Ctrl/Cmd+Shift+C 复制、Ctrl/Cmd+A 全选（绑定到 host DOM）。
@@ -1622,7 +1600,6 @@ export class XtermTerminal implements LiveTerminal {
         this.webglContextLost = true;
         this.webglDisabledAfterContextLoss = true;
         this.releaseWebglContext();
-        this._stopDesyncDetector();
         this.webgl = null;
         console.warn('[terminal] WebGL 上下文丢失，降级为 DOM 渲染器（下次可见时尝试重建）。');
         // 上下文丢失后 cell 度量由 WebGL 变 DOM，强制一次整屏重测，避免尺寸错位。
@@ -1698,40 +1675,7 @@ export class XtermTerminal implements LiveTerminal {
 
   /** 启动 WebGL 渲染去同步检测器。仅当 WebGL 启用时有效。
    * 检测器内部守卫 this.webgl 和 this.active，非 WebGL 模式静默跳过。
-   * 在 _initXterm 末尾（enableWebgl 之后）调用。 */
-  private _startDesyncDetector(): void {
-    if (!this.term || !this.webgl || !this.host) return;
-    if (this._desyncDetector) return; // 已启动，幂等
-    this._desyncDetector = new DesyncDetector();
-    this._desyncDetector.start({
-      term: this.term,
-      webgl: this.webgl,
-      host: this.host,
-      isActive: () => this.active,
-    });
-  }
-
-  /** 停止 WebGL 渲染去同步检测器并释放资源。
-   * 在 unmount、WebGL 上下文丢失、或非 WebGL 模式时调用。 */
-  private _stopDesyncDetector(): void {
-    this._desyncDetector?.stop();
-    this._desyncDetector = null;
-  }
-
-
-  /** 处理 PTY 输出数据：按 OSC 633 切分后通过调度器写入 xterm。
-   *
-   * 使用 output-scheduler 的 writeTerminalOutput 替代此前的 5ms 聚合定时器。
-   * 调度器提供 parse-clock pacer（xterm 解析完成后立即触发下一次 drain）、
-   * 前台/后台优先级队列和 drain 时间预算，避免 5ms 定时器导致的脉冲式输出。
-   *
-   * 分段在写入前执行，确保跨 IPC 消息的 OSC 序列能被正确识别。
-   * 前导段（OSC 633 标记）使用 ackCredit 回传背压但不创建 writePromise；
-   * 最后一段使用 ackCredit + 完整 onParsed 回调写入确认。
-   *
-   * 与 VS Code 对齐的 IProcessDataEvent 契约：
-   *   - 前导段: { data, trackCommit: false }
-   *   - 最后一段: { data, trackCommit: true, writePromise } */
+  /** 处理 PTY 输出数据：按 OSC 633 切分后写入 xterm。 } */
   private handleProcessData(id: string, data: string): void {
     if (id !== this.sessionKey || !this.term) return;
 
@@ -1750,12 +1694,9 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /** 通过调度器写入一段数据，处理背压 ack 和渲染 settle。
-   * 替代此前的 _writeProcessData/_writeProcessDataUnsafe 直接写路径。
-   * 调度器内部处理前台立即写入（含渲染 settle）和后台排队写入。
-   *
-   * @param data 要写入的数据
-   * @param trackCommit 是否跟踪写入完成确认（供 flush() await） */
+  /** 通过直接 term.write 写入一段数据，处理背压 ack。
+   * 对齐 VS Code TerminalInstance._writeProcessData，不做任何额外 settle/refresh/scroll restore。
+   * 回调仅推进解析序号 + 背压 ack + 写完成 Promise + onData 通知。 */
   private _writeProcessDataViaScheduler(data: string, trackCommit: boolean): void {
     if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
 
@@ -1765,57 +1706,28 @@ export class XtermTerminal implements LiveTerminal {
     // 对齐 VS Code _onWillData：写前通知外部消费者
     this.onWillData?.(data);
 
-    // 对齐 VS Code：写前保存滚动位置
-    const savedState = this.captureScrollState();
-
     // 当 trackCommit=true 时记录 writePromise 供 flush() 等待
     let resolveWrite: (() => void) | null = null;
     const writePromise = trackCommit ? new Promise<void>((r) => { resolveWrite = r; }) : undefined;
 
-    writeTerminalOutput(
-      term,
-      data,
-      {
-        foreground: true,
-        latencySensitive: true,
-        forceForegroundRefresh: true,
-        onParsed: () => {
-          runGuardedWriteCompletionStep('write-parsed', () => {
-            this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
-          });
+    try {
+      term.write(data, () => {
+        // 对齐 VS Code _latestXtermParseData = messageId：推进解析序号
+        this._latestParsedSeq = Math.max(this._latestParsedSeq, seq);
 
-          runGuardedWriteCompletionStep('ack', () => {
-            // 背压回传：通过 ackBufferer 累积到阈值后发 IPC
-            // 对齐 VS Code AckDataBufferer 的 CharCountAckSize=5000 累积策略
-            this.ackBufferer?.ack(data.length);
-          });
+        // 背压 ack：对齐 VS Code acknowledgeDataEvent
+        this.ackBufferer?.ack(data.length);
 
-          runGuardedWriteCompletionStep('resolve-write', () => {
-            resolveWrite?.();
-          });
+        // 对齐 VS Code cb?.()：写完成回调
+        resolveWrite?.();
 
-          runGuardedWriteCompletionStep('on-data', () => {
-            this.onData?.(data);
-          });
-
-          runGuardedWriteCompletionStep('restore-scroll', () => {
-            // 视口在底部时跳过滚动恢复：pi-tui 等全屏 TUI 自己管理视口贴底，
-            // 外部 restoreScrollState 会与 pi-tui 的差分渲染器打架，导致
-            // widget/编辑器/footer 整体上下跳动。
-            // 仅当用户曾上滚（视口不在底部）时才恢复滚动位置。
-            if (savedState && !savedState.wasAtBottom) {
-              this.restoreScrollState(savedState);
-            }
-          });
-
-          runGuardedWriteCompletionStep('sync-scroll-intent', () => {
-            syncTerminalScrollIntentFromViewport(term);
-          });
-        },
-        // ackCredit 不传——调度器内部的 ACK 信用追踪由 onParsed 回调中的
-        // ackBufferer.ack 处理，不需要额外 ackCredit 回调（避免双重 ack）
-      },
-    )
+        // 对齐 VS Code _onData：写解析完毕后通知外部消费者
+        this.onData?.(data);
+      });
+    } catch {
+      /* 终端已销毁等边界 */
+      (resolveWrite as (() => void) | null)?.();
+    }
 
     // 对齐 VS Code：将 writePromise 挂载到 _pendingWritePromise 私有字段上
     if (trackCommit && writePromise) {
@@ -2014,65 +1926,8 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
-  /** resize 回调：X/Y 同时变化（立即/小 buffer 路径，对齐 VS Code _resizeBothCallback）。
-   * 对齐 VS Code：resize（尤其列宽变化导致的 reflow）会触发 xterm 内部
-   * buffer.ydisp = buffer.ybase 重置视口到底部，故使用 scroll.ts 的
-   * captureScrollState/restoreScrollState 在 fit 前后捕获和恢复滚动位置，
-   * 并在 fit 后同步滚动条。 */
-  private _resizeBoth(cols: number, rows: number): void {
-    if (this.disposed || !this.fit || !this.term || isXtermInstanceDisposed(this.term)) return;
-    const savedState = captureScrollStateModule(this.term);
-    try {
-      this.fit.fit();
-    } catch {
-      /* fit 失败（尺寸为 0 等边界）时跳过 */
-    }
-    if (savedState) {
-      restoreScrollStateModule(this.term, savedState);
-    }
-    syncTerminalScrollIntentFromViewport(this.term);
-    this._notifyPtyIfChanged();
-  }
 
-  /** resize 回调：仅 X（列宽）变化（防抖路径，对齐 VS Code _resizeXCallback）。
-   * 对齐 VS Code：列宽变化引发 reflow，可能改变 ybase/ydisp，故使用 scroll.ts 的
-   * captureScrollState/restoreScrollState 在 fit 前后捕获和恢复滚动位置，
-   * 并在 fit 后同步滚动条。 */
-  private _resizeX(cols: number): void {
-    if (this.disposed || !this.fit || !this.term || isXtermInstanceDisposed(this.term)) return;
-    const savedState = captureScrollStateModule(this.term);
-    try {
-      this.fit.fit();
-    } catch {
-      /* fit 失败边界 */
-    }
-    if (savedState) {
-      restoreScrollStateModule(this.term, savedState);
-    }
-    syncTerminalScrollIntentFromViewport(this.term);
-    this._notifyPtyIfChanged();
-  }
 
-  /** resize 回调：仅 Y（行数）变化（即时路径，对齐 VS Code _resizeYCallback）。
-   * 对齐 VS Code：xterm 的 resize 内部会重置 buffer.ydisp = buffer.ybase，
-   * 导致用户已上滚的视口 snap 到底部，故使用 scroll.ts 的 captureScrollState/
-   * restoreScrollState 在 resize 前后捕获和恢复滚动位置，并在 resize 后同步滚动条。 */
-  private _resizeY(rows: number): void {
-    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
-    const savedState = captureScrollStateModule(this.term);
-    if (rows !== this.term.rows) {
-      try {
-        this.term.resize(this.term.cols, rows);
-      } catch {
-        /* resize 边界 */
-      }
-    }
-    if (savedState) {
-      restoreScrollStateModule(this.term, savedState);
-    }
-    syncTerminalScrollIntentFromViewport(this.term);
-    this._notifyPtyIfChanged();
-  }
 
   /** 仅在 cols/rows 真变时才通知 PTY（对齐 VS Code 整数 dims 比较，避免无谓 resize）。 */
   private _notifyPtyIfChanged(): void {
@@ -2205,23 +2060,49 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
+  /** resize 回调：X/Y 同时变化（对齐 VS Code _resizeBothCallback）。
+   * 对齐 VS Code：直接 xterm.resize(cols, rows)，不做 scroll restore——
+   * xterm 的 resize 会重置 ydisp = ybase（视口跳底），这正是 VS Code 的行为，
+   * 避免 scroll restore 与 pi-agent 的差分渲染器打架。 */
+  private _resizeBoth(cols: number, rows: number): void {
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
+    if (cols === this.term.cols && rows === this.term.rows) return;
+    try {
+      this.term.resize(cols, rows);
+    } catch { /* resize 边界 */ }
+  }
+
+  /** resize 回调：仅 X（列宽）变化（对齐 VS Code _resizeXCallback）。 */
+  private _resizeX(cols: number): void {
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
+    if (cols === this.term.cols) return;
+    try {
+      this.term.resize(cols, this.term.rows);
+    } catch { /* resize 边界 */ }
+  }
+
+  /** resize 回调：仅 Y（行数）变化（对齐 VS Code _resizeYCallback）。 */
+  private _resizeY(rows: number): void {
+    if (this.disposed || !this.term || isXtermInstanceDisposed(this.term)) return;
+    if (rows === this.term.rows) return;
+    try {
+      this.term.resize(this.term.cols, rows);
+    } catch { /* resize 边界 */ }
+  }
+
   /** 立即用宿主最新尺寸校准终端并通知 PTY（首挂载 / 切回可见 / 会话结束收尾调用，force=true）。
-   * 对齐 VS Code TerminalInstance.setVisible 的 _resize（open 后用真实容器尺寸重测）。
-   * 实际的分轴防抖 / 可见性 / idle 调度全部交给 TerminalResizeDebouncer 处理。
-   *
-   * 零尺寸守卫：当元素刚从 display:none 变为可见时，Chromium 可能尚未完成完整布局，
-   * proposeDimensions 会返回最小尺寸（2×1）。此时若 resize 到 2×1，xterm 会截断缓冲区
-   * 导致历史输出丢失（issue 07）。当提议列数 ≤2 且行数 ≤1 时跳过 resize，等候
-   * ResizeObserver 或下一次调度用真实尺寸校准。 */
+   * 对齐 VS Code：直接 resize 并通知 PTY，不分轴防抖（避免分轴 resize 导致 pi-agent 双重重绘跳动）。 */
   private doResize(force = false): void {
     if (this.disposed || !this.fit || !this.term || !this.host) return;
     // resize 时尝试重建 WebGL 渲染器（上下文丢失或此前附加失败后）
     this.retryWebglIfNeeded();
     const proposed = this.fit.proposeDimensions();
     if (!proposed) return;
-    // 零尺寸守卫：Chromium 布局未就绪时返回 2×1 最小值，跳过避免缓冲截断
     if (proposed.cols <= 2 && proposed.rows <= 1) return;
-    const smallBuffer = force || this._isSmallBuffer();
-    this.resizeDebouncer?.resize(proposed.cols, proposed.rows, force, smallBuffer);
+    if (proposed.cols === this.term.cols && proposed.rows === this.term.rows) return;
+    try {
+      this.term.resize(proposed.cols, proposed.rows);
+    } catch { /* resize 边界 */ }
+    this._notifyPtyIfChanged();
   }
 }

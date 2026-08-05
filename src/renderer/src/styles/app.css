@@ -1181,26 +1181,40 @@ html, body, #root {
 }
 .modal-ok:hover { color: var(--accent-hover); background: var(--bg-active); border-color: var(--accent); }
 
-/* xterm 6.0.0 采用 VS Code 风格覆盖滚动条（.xterm-scrollable-element > .scrollbar），
-   其滑块配色由 xterm 据 ITheme 的 scrollbarSlider* 字段注入、已与主题对齐。
-   此处隐藏原生滚动条，避免与覆盖滚动条出现双条。仍保留滚动能力（scrollTop 有效）。 */
+/* xterm 滚动条：隐藏原生滚动条，使用 xterm 自定义滚动条。
+   自定义滚动条的滑块配色由 theme.scrollbarSlider* 注入。 */
 .xterm-viewport {
-  scrollbar-width: none; /* Firefox：隐藏原生滚动条 */
-  /* 使用 scrollbar-gutter: stable 预留滚动条空间，避免滚动条出现/消失时
-     视口宽度变化 → 触发 ResizeObserver → fit.fit() 重排跳动循环。
-     scrollbar-width: none 隐藏滚动条但不占空间，scrollbar-gutter: stable 保留空间。
-     用 overflow-y:auto 而非 hidden：hidden 会彻底禁止滚动，一旦 WebGL 上下文丢失/降级为 DOM
-     渲染器，视口将无法滚动（表现为“不能滚动”）；auto 在 WebGL 模式下因 canvas 高度匹配视口
-     无溢出、不出现滚动条（视觉不变），在 DOM 降级模式下内容溢出时则可正常滚动。 */
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
   overflow-y: auto;
 }
 .xterm-viewport::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
-/* 覆盖 xterm.css 写死的 #000：让终端视口与输入法浮层底色随主题（选择器加权以压过
-   xterm.css 同等/靠后的规则），使终端与窗口浑然一体、过滚动不露黑边。 */
+/* 覆盖 xterm.css 写死的 #000，让终端视口底色随主题。
+   同时设置 .xterm 根元素背景，防止滚动条区域透出白色。 */
 .terminal-host .xterm .xterm-viewport { background-color: var(--bg-app); }
+.terminal-host .xterm { background: var(--bg-app); }
 .terminal-host .xterm .composition-view { background: var(--bg-elevated); color: var(--text); }
+
+/* 修复 xterm 6.1 的 overview ruler canvas 白边问题。
+   该 canvas 覆盖在滚动条区域，设 z-index:0 使其不遮挡终端内容，背景设为主题色。 */
+.terminal-host .xterm .xterm-decoration-overview-ruler { z-index: 0; background: var(--bg-app); }
+
+/* vs Code 风格：滚动条容器背景与终端一致，滑块半透明灰。
+   滑块颜色由 xterm 主题的 scrollbarSlider* 动态注入，此处做兜底。
+   使用 !important 覆盖 xterm 动态注入的 <style> 元素。 */
+.terminal-host .xterm .xterm-scrollable-element { background: var(--bg-app) !important; }
+.terminal-host .xterm .xterm-scrollable-element > .xterm-scrollbar { background: transparent !important; }
+.terminal-host .xterm .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider {
+  background: rgba(128, 128, 128, 0.3) !important;
+  border-radius: 4px;
+  min-width: 6px;
+}
+.terminal-host .xterm .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider:hover {
+  background: rgba(128, 128, 128, 0.5) !important;
+}
+.terminal-host .xterm .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider.xterm-active {
+  background: rgba(128, 128, 128, 0.7) !important;
+}
 
 /* 「跳到底部」浮钮：视口上滚离底时出现，点击回到最新输出。
    定位在终端视口右下角，right 留足 14px 以错开原生纵向滚动条

@@ -21,7 +21,7 @@ import {
   isTerminalWritePipelineCertifiedDead,
   failTerminalWriteStallWatch,
 } from './write-pipeline-health'
-import { writeForegroundTerminalChunk } from './foreground-render-settle'
+
 
 // ─── 类型定义 ─────────────────────────────────────────────────────────────────
 
@@ -607,49 +607,40 @@ export function writeTerminalOutput(
   const latencySensitive = options?.latencySensitive !== false // 默认 true
 
   if (foreground && latencySensitive) {
-    // ─── 前台立即写入（含渲染 settle） ─────────────────────────────────
+    // ─── 前台立即写入（对齐 VS Code：直接 term.write，无额外 settle） ─────────────
     const ackCredits = options?.ackCredit ? [options.ackCredit] : []
     const ackCreditsParsed = registerTerminalOutputAckCredits(terminal, ackCredits)
     armTerminalWriteStallWatch(terminal, {
       onCertifiedDead: () => discardQueuedOutput(terminal),
     })
 
-    // 使用 writeForegroundTerminalChunk 确保写后渲染 settle
-    const forceRefresh = options?.forceForegroundRefresh !== false // 默认 true
-    // 默认始终调度一次 followup viewport settle，确保视口完全稳定
-    // 特别是在高频输出场景下，单次 refresh 可能被后续写覆盖
-    const followupRefresh = options?.followupForegroundRefresh !== false
     const pacer = makeParseClockPacer()
 
-    const accepted = writeForegroundTerminalChunk(
-      terminal,
-      data,
-      {
-        forceViewportRefresh: forceRefresh,
-        followupViewportRefresh: followupRefresh,
-        onParsed: () => {
-          try {
-            options?.onParsed?.()
-            ackCreditsParsed?.()
-            pacer?.()
-            settleTerminalWriteStallWatch(terminal)
-          } catch {
-            // 安全运行在 xterm 回调链中，必须不抛异常
-          }
-        },
-        onWriteFailure: () => {
-          try {
-            ackCreditsParsed?.()
-          } finally {
-            failTerminalWriteStallWatch(terminal)
-          }
-        },
-      },
-    )
+    const runParsed = (): void => {
+      try {
+        options?.onParsed?.()
+        ackCreditsParsed?.()
+        pacer?.()
+        settleTerminalWriteStallWatch(terminal)
+      } catch {
+        // 安全运行在 xterm 回调链中，必须不抛异常
+      }
+    }
 
-    if (!accepted) {
-      // 写入被拒绝：释放信用
-      ackCreditsParsed?.()
+    let writeAccepted = false
+    try {
+      terminal.write(data, runParsed)
+      writeAccepted = true
+    } catch {
+      // 同步写入失败：触发 ack 信用释放和 stall watch 失败标记
+      try {
+        ackCreditsParsed?.()
+      } finally {
+        failTerminalWriteStallWatch(terminal)
+      }
+    }
+
+    if (!writeAccepted) {
       cancelTerminalWriteStallWatch(terminal)
     }
     return

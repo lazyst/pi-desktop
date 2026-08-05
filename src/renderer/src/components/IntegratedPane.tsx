@@ -112,13 +112,24 @@ export function IntegratedPane({ terminalId, active }: Props) {
     }
   }, [active, terminalId]);
 
-  // 尺寸变化：交给 PaneManager → XtermTerminal 走防抖 refit。
+  // 尺寸变化：交给 PaneManager → XtermTerminal 执行 refit。
+  // 对齐 Orca：ResizeObserver 150ms 防抖，避免连续 resize 时频繁触发整屏重排。
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const ro = new ResizeObserver(() => schedulePaneResize(terminalId));
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver(() => {
+      if (timerId !== null) clearTimeout(timerId);
+      timerId = setTimeout(() => {
+        timerId = null;
+        schedulePaneResize(terminalId);
+      }, 150);
+    });
     ro.observe(host);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (timerId !== null) clearTimeout(timerId);
+    };
   }, [terminalId]);
 
   // 同步预绘制 fit：监听 SYNC_FIT_PANES_EVENT，在浏览器绘制前同步 fit 所有终端面板。

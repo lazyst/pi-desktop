@@ -90,13 +90,24 @@ export function SessionPane({ sessionKey, active }: Props) {
     }
   }, [active, sessionKey]);
 
-  // 尺寸变化：交给 PaneManager → XtermTerminal 走防抖 refit（流式窗口内冻结，见 docs/adr/0002 T1）。
+  // 尺寸变化：交给 PaneManager → XtermTerminal 执行 refit。
+  // 对齐 Orca：ResizeObserver 150ms 防抖，避免连续 resize 时频繁触发整屏重排。
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-    const ro = new ResizeObserver(() => schedulePaneResize(sessionKey));
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    const ro = new ResizeObserver(() => {
+      if (timerId !== null) clearTimeout(timerId);
+      timerId = setTimeout(() => {
+        timerId = null;
+        schedulePaneResize(sessionKey);
+      }, 150);
+    });
     ro.observe(host);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (timerId !== null) clearTimeout(timerId);
+    };
   }, [sessionKey]);
 
   return (
