@@ -25,7 +25,6 @@ import { getDefaultShellProfile } from './shellProfiles';
 import {
   createShellReadyScanState,
   scanForShellReady,
-  detectPiExit,
   injectPiCommand,
   getShellReadyLaunchConfig,
   SHELL_READY_TIMEOUT_MS,
@@ -36,6 +35,16 @@ import {
 // 主进程端数据缓冲（5ms 时间窗聚合，等效 VS Code pty host 端 TerminalDataBufferer，
 // 减少 IPC 消息量）。
 const DATA_BUFFER_MS = 5;
+
+/** 检测到 \x1b[?1049l（退出 alt screen）后，若在此窗口内收到 pty exit 事件，
+ * 视为 Windows conpty 误报（shell 进程仍存活），忽略该次 exit 以免终端被误关。
+ *
+ * 背景：node-pty 在 Windows 上通过 conpty 通信。pi-tui 从 fullscreen 切回
+ * regular 时写 \x1b[?1049l 退出 alternate screen；部分 conpty 实现 / 版本在
+ * 处理该序列时会把 conpty 输出管道误关闭，node-pty 据此触发 pty 'exit' 事件——
+ * 但 shell 进程其实还活着。这会让终端被误关。这里以 \x1b[?1049l 为标记，在
+ * 短窗口内抑制该误报。 */
+const PI_ALT_SCREEN_EXIT_IGNORE_MS = 1000;
 
 interface DataBuffer {
   chunks: string[];
@@ -105,8 +114,6 @@ interface Entry {
   diskKey?: string;
   /** 创建时该 cwd 下已有的磁盘 .jsonl key 集合，用于避免关联到旧文件。 */
   existingDiskKeys?: Set<string>;
-  /** （pi 类型）shell-ready 模式下，pi 是否已退出（shell 仍存活）。 */
-  piExited?: boolean;
 }
 
 /**
@@ -254,7 +261,7 @@ export class UnifiedTerminalPool {
     const id = opts.key ?? `live-${randomUUID()}`;
 
     // 环境变量：不设 TERM_PROGRAM=vscode 以免触发用户的 VS Code shell integration（
-    // 它会在每次 prompt 发射 OSC 133 D 序列，导致 detectPiExit 误判 pi 退出）。
+    // 它会在每次 prompt 发射 OSC 133 D 序列，对终端输出造成干扰）。
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PI_DESKTOP: '1',
@@ -314,10 +321,11 @@ export class UnifiedTerminalPool {
 
     // ── shell-ready 状态 ──
     let commandInjected = false;
-    let piExited = false;
     let shellReadyTimer: NodeJS.Timeout | null = null;
     let postReadyTimer: NodeJS.Timeout | null = null;
     const scanState = createShellReadyScanState();
+    // 最近一次检测到 \x1b[?1049l（退出 alt screen）的时间戳（ms），用于抑制 conpty 误报 exit。
+    let altScreenExitAt = 0;
 
     // 清理定时器
     const clearTimers = () => {
@@ -341,12 +349,18 @@ export class UnifiedTerminalPool {
       linked: !!opts.sessionFile,
       diskKey: opts.sessionFile,
       existingDiskKeys: existingKeys.size > 0 ? existingKeys : undefined,
-      piExited: false,
     };
 
     pty.on('data', (d: string) => {
       // 实时背压计数
       this.entries.get(id)?.bp.onData(d.length);
+
+      // 记录 pi-tui 退出 alt screen（fullscreen→regular）的时间戳。Windows conpty
+      // 在处理器退出 alt screen 时可能误关输出管道，从而触发假的 pty exit 事件
+      // （shell 进程其实仍存活）。据此在下方 pty.on('exit') 中抑制误报。
+      if (d.includes('\x1b[?1049l')) {
+        altScreenExitAt = Date.now();
+      }
 
       if (!commandInjected) {
         // ── 扫描 shell-ready 标记 ──
@@ -374,25 +388,31 @@ export class UnifiedTerminalPool {
         } else if (result.output) {
           this.emitData(id, result.output);
         }
-      } else if (!piExited) {
-        // ── 检测 pi 退出（OSC 133 D） ──
-        if (detectPiExit(d)) {
-          piExited = true;
-          const e = this.entries.get(id);
-          if (e) e.piExited = true;
-          // 通知 UI pi 会话已退出，但 shell 在运行
-          this.opts.onStatus(id, 'dead');
-          if (e?.diskKey) this.opts.onStatus(e.diskKey, 'dead');
-          this.opts.onExit(id);
-        }
-        this.emitData(id, d);
       } else {
-        // pi 已退出，shell 继续运行，正常转发数据
+        // 转发数据到渲染端。
+        //
+        // 注意：这里刻意不再检测 pi 退出（移除了原来的 detectPiExit / OSC 133 D
+        // 检测）。原实现依赖 shell prompt 的 OSC 133 D 序列来判断「pi 是否退出」，
+        // 但该序列是 shell 的间接信号，会在多种场景下出现——pi 真正退出时 shell
+        // 恢复 prompt、pi-tui 切换 TUI 模式（fullscreen↔regular）时 conpty 重发
+        // 主缓冲区内容、消息或工具输出中嵌入的 OSC 终码序列等——极易被误判，
+        // 典型表现就是「从 fullscreen 切到 regular 时终端被误关」。
+        //
+        // 改为让终端 tab 的生命周期跟随 shell 进程：pi 退出后 shell 继续运行、
+        // prompt 恢复，tab 保持打开；仅当 shell 进程真正退出（下方 pty.on('exit')）
+        // 或用户主动终止时才关闭 tab。这与普通集成终端的语义一致。
         this.emitData(id, d);
       }
     });
 
-    pty.on('exit', () => {
+    pty.on('exit', (exitCode?: number) => {
+      // Windows conpty 在 pi-tui 退出 alt screen（写 \x1b[?1049l）时可能误关输出
+      // 管道，触发假的 pty exit 事件，但 shell 进程仍存活。若在 \x1b[?1049l 之后的
+      // 短窗口内收到 exit，视为误报并忽略，避免「切换 TUI 模式」导致终端被误关。
+      if (altScreenExitAt && Date.now() - altScreenExitAt < PI_ALT_SCREEN_EXIT_IGNORE_MS) {
+        altScreenExitAt = 0;
+        return;
+      }
       const e = this.entries.get(id);
       clearTimers();
       this.clearDataBuffer(id);

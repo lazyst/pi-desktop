@@ -262,7 +262,7 @@ describe('UnifiedTerminalPool', () => {
       }
     });
 
-    it('detects pi exit via OSC 133 D and fires onStatus/onExit while shell stays alive', () => {
+    it('does not treat OSC 133 D from shell prompt as a pi exit (terminal lifecycle follows shell)', () => {
       vi.useFakeTimers();
       try {
         const { pool, onStatus, onExit } = makePool();
@@ -272,9 +272,64 @@ describe('UnifiedTerminalPool', () => {
         pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
+        // shell prompt 的 OSC 133 D 只是间接信号（pi-tui 切换 TUI 模式 / conpty 重发
+        // 主缓冲区时也会出现这类内容），不应据此关闭 tab 或标记会话死亡
         pty.emit('data', 'some output\n\x1b]133;D;0\x07prompt> ');
 
+        expect(onExit).not.toHaveBeenCalled();
+        expect(onStatus).not.toHaveBeenLastCalledWith(expect.stringMatching(/^live-/), 'dead');
+
+        // 只有当 shell 进程真正退出时才关闭 tab
+        pty.emit('exit', 0);
         expect(onStatus).toHaveBeenLastCalledWith(expect.stringMatching(/^live-/), 'dead');
+        expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('keeps terminal open when pi-tui switches from fullscreen to regular (conpty re-sends main buffer)', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool, onExit } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200); // 触发命令注入
+
+        // fullscreen → regular：退出 alt screen \x1b[?1049l，conpty 重发主缓冲区
+        // （含 shell 旧 prompt 的 OSC 133 D）
+        pty.emit('data', '\x1b[?1049l\x1b]133;D;0\x07prompt> ');
+
+        // 不应把「切换 TUI 模式」误判为「pi 退出」而关闭 tab
+        expect(onExit).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('suppresses false pty exit after \\x1b[?1049l (conpty closes output pipe but shell stays alive)', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool, onExit } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200); // 触发命令注入
+
+        // pi-tui 退出 alt screen（fullscreen→regular），随后 conpty 误关输出管道
+        // 触发假的 pty 'exit' 事件（exitCode 为 undefined）
+        pty.emit('data', '\x1b[?1049l');
+        pty.emit('exit'); // 误报：无 exitCode，且紧跟在 \x1b[?1049l 之后
+
+        // 误报应被忽略，终端保持打开
+        expect(onExit).not.toHaveBeenCalled();
+
+        // 待抑制窗口过后，真正的 shell 退出仍应被正确处理
+        vi.advanceTimersByTime(1100);
+        pty.emit('exit', 0);
         expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
       } finally {
         vi.useRealTimers();
