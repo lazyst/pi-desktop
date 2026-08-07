@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.0.6 (2026-08-08)
+
+### 修复
+
+- **终端：pi-tui fullscreen → regular 切换时 Shell 被误杀** — 根因：pi 进程调用 `process.stdin.pause()` + `setRawMode(false)` 时，Windows 内置 ConPTY 误杀 shell 进程，触发 node-pty exit 事件导致终端关闭。
+  - 使用 node-pty 自带的 `conpty.dll`（`useConptyDll: true`），改变 `_$onProcessExit` 行为，不再调用 `_flushDataAndCleanUp` 销毁 socket，exit 事件不触发，终端保持打开。
+  - 保留 `isProcessAlive(pid)` 存活校验与 `\x1b[?1049l` + `\x1b[?2004h` 序列检测作为多层防线。
+  - 修复 `destroy()` 对集成终端（shell 类型）也设置 `terminating` 标记并直接调用 `onExit`，避免依赖 exit 事件可能被拦截。
+  - 新增 2 个覆盖测试（模式切换误报抑制、真实退出场景）。
+
+---
+
 ## v1.0.5 (2026-08-07)
 
 ### 修复
