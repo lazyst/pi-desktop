@@ -124,6 +124,10 @@ interface Entry {
   existingDiskKeys?: Set<string>;
   /** 用户主动终止（terminate）标记：置位后 pty 'exit' 跳过退出确认窗口直接关闭。 */
   terminating?: boolean;
+  /** 最近检测到 \x1b[?1049l（退出 alt screen）的时间戳，用于识别 pi-tui 模式切换误报。 */
+  altScreenExitTime?: number;
+  /** 最近检测到 \x1b[?2004h（启用 bracketed paste）的时间戳，用于识别 pi-tui 模式切换误报。 */
+  bracketedPasteTime?: number;
 }
 
 /**
@@ -305,6 +309,12 @@ export class UnifiedTerminalPool {
       env,
       // Windows 关键：shell:true 避开 conpty 附着竞态导致的原生崩溃
       shell: process.platform === 'win32',
+      // Windows 关键：使用 node-pty 自带的 conpty.dll 替代内置 ConPTY。
+      // 当 pi-tui 从 fullscreen 切换到 regular 时，pi 进程会调用 process.stdin.pause()
+      // 和 setRawMode(false)，这会导致内置 ConPTY 误杀 shell 进程。
+      // 使用 conpty.dll 后，_$onProcessExit 不调用 _flushDataAndCleanUp，
+      // socket 不会被销毁，exit 事件不会触发，终端保持打开。
+      ...(process.platform === 'win32' ? { useConptyDll: true, conptyInheritCursor: true } : {}),
     });
 
     // 打开已有 .jsonl 时尝试从文件读取会话名作为标题
@@ -379,6 +389,14 @@ export class UnifiedTerminalPool {
       // 实时背压计数
       this.entries.get(id)?.bp.onData(d.length);
 
+      // 检测 pi-tui 模式切换信号（fullscreen→regular）：
+      //  - \x1b[?1049l 退出 alt screen（由 afterTerminalStop 写入）
+      //  - \x1b[?2004h 启用 bracketed paste（由新 TUI 的 terminal.start() 写入）
+      // 两者连续出现唯一标识一次模式切换（pi 正常退出时只写 \x1b[?1049l 不写 \x1b[?2004h）。
+      // Windows ConPTY 会在 pi 调用 process.stdin.pause()/setRawMode(false) 时误杀 shell、
+      // 触发 node-pty 的 exit 事件，但 pi 进程实际仍存活。识别此序列组合后，exit 事件可被忽略。
+      this.trackTuiModeSwitch(id, d);
+
       if (!commandInjected) {
         // ── 扫描 shell-ready 标记 ──
         const result = scanForShellReady(scanState, d);
@@ -425,7 +443,7 @@ export class UnifiedTerminalPool {
     pty.on('exit', () => {
       // 用户主动终止时（terminate()），直接跳过（terminate() 处理清理）。
       const e = this.entries.get(id);
-      if (e?.terminating) return;
+      if (e?.terminating) { console.log(`[terminal] pty exit ignored: ${id} terminating`); return; }
 
       // 关键检查：验证进程是否真的退出了。
       // 在 Windows conpty 下，node-pty 的 exit 事件通过 WaitForSingleObject
@@ -438,6 +456,19 @@ export class UnifiedTerminalPool {
         console.warn(`[terminal] pty exit ignored: process ${pty.pid} is still alive`);
         return;
       }
+
+      // 第二道防线：entry 已存在（未被 destroy 删除）且检测到 pi-tui 模式切换序列
+      // （\x1b[?1049l 后跟 \x1b[?2004h）说明 shell 虽被 ConPTY 误杀但 pi 进程仍存活。
+      // 此时 isProcessAlive(pty.pid) 返回 false（因为 shell 已死），但终端不应关闭。
+      if (e && this.isTuiModeSwitch(e)) {
+        console.warn(`[terminal] pty exit ignored: pi-tui mode switch detected (altScreen + bracketedPaste)`);
+        // 重置标记，避免下次 exit 误判
+        e.altScreenExitTime = undefined;
+        e.bracketedPasteTime = undefined;
+        return;
+      }
+
+      console.log(`[terminal] pty exit: ${id} process ${pty.pid} is dead, closing terminal`);
 
       // 进程真的退出了 → 关闭终端
       closeEntry();
@@ -496,6 +527,9 @@ export class UnifiedTerminalPool {
       // 直接拖垮整个 Electron 主进程（表现为"新建终端一闪即逝 / 应用闪退"）。
       // shell:true 让 node-pty 走 cmd.exe 包裹路径，避开该 conpty 附着竞态。
       shell: true,
+      // Windows 关键：使用 node-pty 自带的 conpty.dll，避免 pi-tui 模式切换时
+      // 内置 ConPTY 误杀 shell 触发 exit 事件导致集成终端被关。
+      ...(process.platform === 'win32' ? { useConptyDll: true, conptyInheritCursor: true } : {}),
     });
 
     const info: TerminalInfo = {
@@ -521,18 +555,83 @@ export class UnifiedTerminalPool {
       // 实时背压计数：PTY 数据一到立即累加，对齐 VS Code TerminalProcess.onProcessData
       // 的源头流控（先算背压再 fire 数据）。消除 5ms 聚合窗口导致的背压响应延迟。
       this.entries.get(id)?.bp.onData(d.length);
+      // 检测 pi-tui 模式切换序列（与 spawnPi 对齐）
+      this.trackTuiModeSwitch(id, d);
       this.emitData(id, d);
     });
 
     pty.on('exit', () => {
+      // 已被 destroy() 主动关闭（entry 已删除）→ 直接跳过，onExit 已由 destroy() 调用。
+      const e = this.entries.get(id);
+      if (!e) return;
+      // 用户主动终止（destroy）→ 跳过存活检查（destroy() 已调用 onExit）。
+      if (e.terminating) return;
+
+      // 关键检查（与 spawnPi 对齐）：Windows conpty 下 node-pty 的 exit 事件可能因
+      // alt screen 切换（pi-tui fullscreen↔regular）/ conpty 内部管道处理而误触发，
+      // 但进程实际仍存活。用 process.kill(pid, 0) 验证进程真实存在性；
+      // 存活则视为误报，不关闭终端（集成终端里跑 pi 时同样需要此防线）。
+      if (isProcessAlive(pty.pid)) {
+        console.warn(`[terminal] pty exit ignored: process ${pty.pid} is still alive`);
+        return;
+      }
+
+      // 第二道防线：与 spawnPi 对齐，识别 pi-tui 模式切换误报。
+      if (this.isTuiModeSwitch(e)) {
+        console.warn(`[terminal] pty exit ignored: pi-tui mode switch detected (altScreen + bracketedPaste)`);
+        e.altScreenExitTime = undefined;
+        e.bracketedPasteTime = undefined;
+        return;
+      }
+
+      // 进程真的退出了 → 关闭终端
       this.clearDataBuffer(id);
-      this.entries.get(id)?.bp.dispose();
       this.entries.delete(id);
       this.opts.onExit(id);
     });
 
     this.entries.set(id, entry);
     return info;
+  }
+
+  /** 检测 PTY 输出中的 pi-tui 模式切换序列（\x1b[?1049l 退出 alt screen、\x1b[?2004h 启用 bracketed paste）。
+   * 两者在 2 秒窗口内连续出现唯一标识一次 fullscreen→regular 模式切换，
+   * 用于在 exit 事件误报时抑制终端关闭。 */
+  private trackTuiModeSwitch(id: string, data: string): void {
+    const e = this.entries.get(id);
+    if (!e) return;
+    const now = Date.now();
+    // 检测 \x1b[?1049l 退出 alt screen
+    if (data.includes('\x1b[?1049l')) {
+      e.altScreenExitTime = now;
+      console.log(`[terminal] trackTuiModeSwitch: detected \\x1b[?1049l for ${id}`);
+    }
+    // 检测 \x1b[?2004h 启用 bracketed paste（新 TUI terminal.start() 写入）
+    if (data.includes('\x1b[?2004h')) {
+      e.bracketedPasteTime = now;
+      console.log(`[terminal] trackTuiModeSwitch: detected \\x1b[?2004h for ${id}`);
+    }
+  }
+
+  /** 判断 entry 是否在最近 2 秒内经历了完整的模式切换序列，
+   * 即 \x1b[?1049l（退出 alt screen）后跟 \x1b[?2004h（启用 bracketed paste）。
+   * 这个序列组合唯一标识 pi-tui 的 fullscreen→regular 切换，
+   * 而 pi 正常退出时只写 \x1b[?1049l 不写 \x1b[?2004h。 */
+  private isTuiModeSwitch(e: Entry): boolean {
+    if (!e.altScreenExitTime || !e.bracketedPasteTime) return false;
+    const now = Date.now();
+    const MODE_SWITCH_WINDOW_MS = 2000;
+    const altScreenAge = now - e.altScreenExitTime;
+    const bracketedPasteAge = now - e.bracketedPasteTime;
+    const result = (
+      altScreenAge < MODE_SWITCH_WINDOW_MS &&
+      bracketedPasteAge < MODE_SWITCH_WINDOW_MS &&
+      e.bracketedPasteTime >= e.altScreenExitTime
+    );
+    if (result) {
+      console.log(`[terminal] isTuiModeSwitch: MATCH altScreenAge=${altScreenAge}ms bracketedPasteAge=${bracketedPasteAge}ms`);
+    }
+    return result;
   }
 
   /** 键盘输入 → pty.write。 */
@@ -551,13 +650,15 @@ export class UnifiedTerminalPool {
   destroy(id: string): void {
     const e = this.entries.get(id);
     if (!e) return;
-    // 标记 pi 类型主动终止，使 on('exit') 跳过数据窗口、立即关闭（避免延迟）。
-    if (e.type === 'pi') e.terminating = true;
+    // 标记主动终止（shell 与 pi 都置位），使 pty 'exit' 跳过存活检查、不重复关闭。
+    e.terminating = true;
     try { e.pty.kill(); } catch { /* 进程可能已退出 */ }
     this.clearDataBuffer(id);
     e.bp.dispose();
     this.entries.delete(id);
-    if (e.type === 'pi') this.opts.onExit(id);
+    // 直接回调 onExit（shell 与 pi 都调用），避免依赖 pty 'exit' 事件（可能被
+    // conpty 误报 / 延迟 / 被存活检查拦截而漏掉，导致 tab 残留）。
+    this.opts.onExit(id);
     this.opts.onList(this.list()); // create/destroy 都推最新列表
   }
 

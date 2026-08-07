@@ -360,6 +360,57 @@ describe('UnifiedTerminalPool', () => {
         vi.useRealTimers();
       }
     });
+
+    it('keeps terminal open when exit fires after pi-tui mode switch sequences (shell killed by conpty but pi alive)', () => {
+      vi.useFakeTimers();
+      try {
+        setProcessAlive(false); // shell 已被 ConPTY 误杀，isProcessAlive 返回 false
+        const { pool, onExit } = makePool();
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200); // 触发命令注入
+
+        // 模拟 pi-tui fullscreen→regular 切换：afterTerminalStop 写 \x1b[?1049l，
+        // 新 TUI terminal.start() 写 \x1b[?2004h
+        pty.emit('data', '\x1b[?1049l');
+        pty.emit('data', '\x1b[?2004hregular-content');
+
+        // ConPTY 误报 exit（shell 已死但 pi 进程存活）
+        pty.emit('exit', 0);
+        // 识别模式切换序列组合 → 不关闭终端
+        expect(onExit).not.toHaveBeenCalled();
+        expect(pool.has(info.id)).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('closes terminal when exit fires with only alt-screen exit but no bracketed paste (real pi exit)', () => {
+      vi.useFakeTimers();
+      try {
+        setProcessAlive(false);
+        const { pool, onExit, onStatus } = makePool();
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200);
+
+        // 模拟 pi 退出：stopInteractiveTui 写 \x1b[?1049l（switchTuiMode preserveScreen），
+        // 但新 TUI 不启动（startRenderer:false），不写 \x1b[?2004h
+        pty.emit('data', '\x1b[?1049l');
+
+        pty.emit('exit', 0);
+        // 只有 altScreenExit 没有 bracketedPaste → 真的退出，关闭终端
+        expect(onStatus).toHaveBeenLastCalledWith(info.id, 'dead');
+        expect(onExit).toHaveBeenCalledWith(info.id);
+        expect(pool.has(info.id)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   // ==========================================================================
