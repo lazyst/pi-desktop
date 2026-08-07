@@ -279,8 +279,9 @@ describe('UnifiedTerminalPool', () => {
         expect(onExit).not.toHaveBeenCalled();
         expect(onStatus).not.toHaveBeenLastCalledWith(expect.stringMatching(/^live-/), 'dead');
 
-        // 只有当 shell 进程真正退出时才关闭 tab
+        // 只有当 shell 进程真正退出时才关闭 tab（退出确认窗口到期后）
         pty.emit('exit', 0);
+        vi.advanceTimersByTime(600); // > PI_EXIT_DATA_WINDOW_MS (500ms)
         expect(onStatus).toHaveBeenLastCalledWith(expect.stringMatching(/^live-/), 'dead');
         expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
       } finally {
@@ -288,7 +289,7 @@ describe('UnifiedTerminalPool', () => {
       }
     });
 
-    it('keeps terminal open when pi-tui switches from fullscreen to regular (conpty re-sends main buffer)', () => {
+    it('keeps terminal open after exit when data arrives within data window (conpty false exit followed by shell output)', () => {
       vi.useFakeTimers();
       try {
         const { pool, onExit } = makePool();
@@ -298,18 +299,47 @@ describe('UnifiedTerminalPool', () => {
         pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
-        // fullscreen → regular：退出 alt screen \x1b[?1049l，conpty 重发主缓冲区
-        // （含 shell 旧 prompt 的 OSC 133 D）
-        pty.emit('data', '\x1b[?1049l\x1b]133;D;0\x07prompt> ');
+        // conpty 误报 exit（例如 fullscreen→regular 切换时关闭输出管道），
+        // 但 shell 进程仍存活，继续输出数据
+        pty.emit('exit'); // 误报
+        expect(onExit).not.toHaveBeenCalled(); // 窗口启动，未关闭
 
-        // 不应把「切换 TUI 模式」误判为「pi 退出」而关闭 tab
-        expect(onExit).not.toHaveBeenCalled();
+        // shell 继续输出数据 → 重置退出确认窗口，推迟关闭
+        pty.emit('data', 'some output after exit\n');
+        vi.advanceTimersByTime(400); // 400 < 500ms，窗口未到期（被 data 重置）
+        expect(onExit).not.toHaveBeenCalled(); // 仍有数据，终端保持打开
+
+        // 数据停止后，窗口到期 → 关闭
+        vi.advanceTimersByTime(200); // 400+200=600 > 500ms
+        expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
       } finally {
         vi.useRealTimers();
       }
     });
 
-    it('suppresses false pty exit after \\x1b[?1049l (conpty closes output pipe but shell stays alive)', () => {
+    it('closes terminal after exit when window expires with no data (normal exit)', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool, onExit, onStatus } = makePool();
+        pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200); // 触发命令注入
+
+        // shell 正常退出（exitCode 明确），窗口内无数据 → 到期后关闭
+        pty.emit('exit', 0);
+        expect(onExit).not.toHaveBeenCalled(); // 窗口启动，未关闭
+
+        vi.advanceTimersByTime(600); // > 500ms 窗口
+        expect(onStatus).toHaveBeenLastCalledWith(expect.stringMatching(/^live-/), 'dead');
+        expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('intermittent data keeps terminal open (multiple data events reset the window repeatedly)', () => {
       vi.useFakeTimers();
       try {
         const { pool, onExit } = makePool();
@@ -319,18 +349,40 @@ describe('UnifiedTerminalPool', () => {
         pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
         vi.advanceTimersByTime(200); // 触发命令注入
 
-        // pi-tui 退出 alt screen（fullscreen→regular），随后 conpty 误关输出管道
-        // 触发假的 pty 'exit' 事件（exitCode 为 undefined）
-        pty.emit('data', '\x1b[?1049l');
-        pty.emit('exit'); // 误报：无 exitCode，且紧跟在 \x1b[?1049l 之后
-
-        // 误报应被忽略，终端保持打开
+        pty.emit('exit');
         expect(onExit).not.toHaveBeenCalled();
 
-        // 待抑制窗口过后，真正的 shell 退出仍应被正确处理
-        vi.advanceTimersByTime(1100);
-        pty.emit('exit', 0);
+        // 多次间断数据：每次重置窗口
+        pty.emit('data', 'a');
+        vi.advanceTimersByTime(300); // 300 < 500
+        pty.emit('data', 'b');
+        vi.advanceTimersByTime(300); // 300 < 500（从 b 起算）
+        pty.emit('data', 'c');
+        vi.advanceTimersByTime(300); // 300 < 500（从 c 起算）
+
+        expect(onExit).not.toHaveBeenCalled(); // 窗口被不断重置，始终未到期
+
+        // 最终数据停止，窗口到期
+        vi.advanceTimersByTime(600); // > 500ms
         expect(onExit).toHaveBeenCalledWith(expect.stringMatching(/^live-/));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('terminate() skips data window and closes immediately', () => {
+      vi.useFakeTimers();
+      try {
+        const { pool, onExit } = makePool();
+        const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
+
+        const pty = mockPtys[0];
+        pty.emit('data', '\x1b]777;pi-desktop-shell-ready\x07');
+        vi.advanceTimersByTime(200);
+
+        // 用户主动终止 → 立即关闭，不经过数据窗口
+        pool.terminate(info.id);
+        expect(onExit).toHaveBeenCalledWith(info.id);
       } finally {
         vi.useRealTimers();
       }
@@ -443,16 +495,19 @@ describe('UnifiedTerminalPool', () => {
       expect(onList).toHaveBeenCalledTimes(1);
     });
 
-    it('calls onExit when pty emits exit after destroy (race from real pty)', () => {
+    it('calls onExit via destroy() and treats late pty exit as safe no-op', () => {
       const { pool, onExit } = makePool();
       const info = pool.create({ command: 'pi', cwd: existingCwd, profile: shellProfile });
       const pty = mockPtys[0];
 
       pool.destroy(info.id);
       expect(pool.has(info.id)).toBe(false);
+      // destroy() 直接调用 onExit（pi 类型），late exit 是安全 no-op（不重复）
+      expect(onExit).toHaveBeenCalledWith(info.id);
+      expect(onExit).toHaveBeenCalledTimes(1);
 
       pty.emit('exit');
-      expect(onExit).toHaveBeenCalledWith(info.id);
+      expect(onExit).toHaveBeenCalledTimes(1); // 不重复
     });
 
     it('safely no-ops for non-existent id', () => {

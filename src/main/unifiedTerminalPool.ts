@@ -36,15 +36,14 @@ import {
 // 减少 IPC 消息量）。
 const DATA_BUFFER_MS = 5;
 
-/** 检测到 \x1b[?1049l（退出 alt screen）后，若在此窗口内收到 pty exit 事件，
- * 视为 Windows conpty 误报（shell 进程仍存活），忽略该次 exit 以免终端被误关。
+/** 退出确认窗口（ms）。收到 pty 'exit' 后不立即关闭终端，而是启动此窗口，
+ * 若窗口内仍有数据输出（shell 进程仍在运行），则重置窗口推迟关闭。
+ * 对齐 VS Code 的 _queueProcessExit + onData 重置机制，用于抑制 Windows conpty
+ * 在退出 alternate screen 时的误报 exit 事件——conpty 处理 \x1b[?1049l 时可能
+ * 误关输出管道触发假的 pty exit，但 shell 进程仍存活且继续输出。
  *
- * 背景：node-pty 在 Windows 上通过 conpty 通信。pi-tui 从 fullscreen 切回
- * regular 时写 \x1b[?1049l 退出 alternate screen；部分 conpty 实现 / 版本在
- * 处理该序列时会把 conpty 输出管道误关闭，node-pty 据此触发 pty 'exit' 事件——
- * 但 shell 进程其实还活着。这会让终端被误关。这里以 \x1b[?1049l 为标记，在
- * 短窗口内抑制该误报。 */
-const PI_ALT_SCREEN_EXIT_IGNORE_MS = 1000;
+ * 窗口值：500ms 平衡了「正常退出延迟感知」与「conpty 误报抑制可靠性」。 */
+const PI_EXIT_DATA_WINDOW_MS = 500;
 
 interface DataBuffer {
   chunks: string[];
@@ -114,6 +113,8 @@ interface Entry {
   diskKey?: string;
   /** 创建时该 cwd 下已有的磁盘 .jsonl key 集合，用于避免关联到旧文件。 */
   existingDiskKeys?: Set<string>;
+  /** 用户主动终止（terminate）标记：置位后 pty 'exit' 跳过退出确认窗口直接关闭。 */
+  terminating?: boolean;
 }
 
 /**
@@ -179,6 +180,8 @@ export class UnifiedTerminalPool {
     const e = this.entries.get(liveKey);
     if (!e || e.type !== 'pi') return;
     for (const [dk, lk] of this.alias) if (lk === liveKey) this.alias.delete(dk);
+    // 标记主动终止：pty.on('exit') 将跳过退出确认窗口，直接关闭（避免延迟）。
+    e.terminating = true;
     try { e.pty.kill(); } catch { /* 进程可能已退出 */ }
     this.clearDataBuffer(liveKey);
     e.bp.dispose();
@@ -324,8 +327,30 @@ export class UnifiedTerminalPool {
     let shellReadyTimer: NodeJS.Timeout | null = null;
     let postReadyTimer: NodeJS.Timeout | null = null;
     const scanState = createShellReadyScanState();
-    // 最近一次检测到 \x1b[?1049l（退出 alt screen）的时间戳（ms），用于抑制 conpty 误报 exit。
-    let altScreenExitAt = 0;
+
+    // ── 退出确认窗口状态 ──
+    // 收到 pty 'exit' 后启动延迟窗口；窗口内若仍有数据输出（shell 仍存活），重置窗口推迟关闭。
+    // 对齐 VS Code 的 _queueProcessExit + onData 重置机制，用于抑制 conpty 误报 exit。
+    let pendingExitTimer: NodeJS.Timeout | null = null;
+
+    const clearPendingExit = () => {
+      if (pendingExitTimer) { clearTimeout(pendingExitTimer); pendingExitTimer = null; }
+    };
+
+    /** 真正关闭终端条目。由 pendingExitTimer 到期或用户主动调用 terminate 触发。 */
+    const closeEntry = () => {
+      pendingExitTimer = null;
+      const e = this.entries.get(id);
+      // 已被 terminate() 等路径关闭过（entry 已删除），跳过，避免重复 onExit。
+      if (!e) return;
+      clearTimers();
+      this.clearDataBuffer(id);
+      e.bp.dispose();
+      this.entries.delete(id);
+      this.opts.onStatus(id, 'dead');
+      if (e.diskKey) this.opts.onStatus(e.diskKey, 'dead');
+      this.opts.onExit(id);
+    };
 
     // 清理定时器
     const clearTimers = () => {
@@ -355,11 +380,12 @@ export class UnifiedTerminalPool {
       // 实时背压计数
       this.entries.get(id)?.bp.onData(d.length);
 
-      // 记录 pi-tui 退出 alt screen（fullscreen→regular）的时间戳。Windows conpty
-      // 在处理器退出 alt screen 时可能误关输出管道，从而触发假的 pty exit 事件
-      // （shell 进程其实仍存活）。据此在下方 pty.on('exit') 中抑制误报。
-      if (d.includes('\x1b[?1049l')) {
-        altScreenExitAt = Date.now();
+      // 退出确认窗口：若存在待处理的退出（conpty 可能误报 exit，shell 仍存活），
+      // 只要还有数据输出就重置窗口，推迟真正关闭。对齐 VS Code TerminalProcess
+      // 的 onData 里 `if (this._closeTimeout) this._queueProcessExit()` 机制。
+      if (pendingExitTimer) {
+        clearPendingExit();
+        pendingExitTimer = setTimeout(closeEntry, PI_EXIT_DATA_WINDOW_MS);
       }
 
       if (!commandInjected) {
@@ -399,28 +425,27 @@ export class UnifiedTerminalPool {
         // 典型表现就是「从 fullscreen 切到 regular 时终端被误关」。
         //
         // 改为让终端 tab 的生命周期跟随 shell 进程：pi 退出后 shell 继续运行、
-        // prompt 恢复，tab 保持打开；仅当 shell 进程真正退出（下方 pty.on('exit')）
-        // 或用户主动终止时才关闭 tab。这与普通集成终端的语义一致。
+        // prompt 恢复，tab 保持打开；仅当 shell 进程真正退出或用户主动终止时
+        // 才关闭 tab。这与普通集成终端的语义一致。
         this.emitData(id, d);
       }
     });
 
-    pty.on('exit', (exitCode?: number) => {
-      // Windows conpty 在 pi-tui 退出 alt screen（写 \x1b[?1049l）时可能误关输出
-      // 管道，触发假的 pty exit 事件，但 shell 进程仍存活。若在 \x1b[?1049l 之后的
-      // 短窗口内收到 exit，视为误报并忽略，避免「切换 TUI 模式」导致终端被误关。
-      if (altScreenExitAt && Date.now() - altScreenExitAt < PI_ALT_SCREEN_EXIT_IGNORE_MS) {
-        altScreenExitAt = 0;
-        return;
-      }
+    pty.on('exit', () => {
+      // 用户主动终止时（terminate()），直接关闭（跳过数据窗口，避免延迟）。
       const e = this.entries.get(id);
-      clearTimers();
-      this.clearDataBuffer(id);
-      e?.bp.dispose();
-      this.entries.delete(id);
-      this.opts.onStatus(id, 'dead');
-      if (e?.diskKey) this.opts.onStatus(e.diskKey, 'dead');
-      this.opts.onExit(id);
+      if (e?.terminating) return;
+
+      // 数据窗口：不立即关闭，启动短窗口让进程最后输出数据。
+      // 若窗口内仍有数据（onData 重置定时器），说明 shell 进程仍存活，继续推迟。
+      // 持续无数据 → 窗口到期 → 真正关闭。
+      //
+      // 背景：Windows conpty 在 pi-tui 退出 alt screen（写 \x1b[?1049l）时可能
+      // 误关输出管道，触发假的 pty exit 事件，但 shell 进程其实仍存活。此窗口机制
+      // 对齐 VS Code TerminalProcess._queueProcessExit + onData 重置，不依赖检测
+      // 特定控制序列（\x1b[?1049l 可能被分块或不被 conpty 转发），更加稳健。
+      if (pendingExitTimer) return;
+      pendingExitTimer = setTimeout(closeEntry, PI_EXIT_DATA_WINDOW_MS);
     });
 
     // ── shell-ready 超时兜底 ──
@@ -531,10 +556,13 @@ export class UnifiedTerminalPool {
   destroy(id: string): void {
     const e = this.entries.get(id);
     if (!e) return;
+    // 标记 pi 类型主动终止，使 on('exit') 跳过数据窗口、立即关闭（避免延迟）。
+    if (e.type === 'pi') e.terminating = true;
     try { e.pty.kill(); } catch { /* 进程可能已退出 */ }
     this.clearDataBuffer(id);
     e.bp.dispose();
     this.entries.delete(id);
+    if (e.type === 'pi') this.opts.onExit(id);
     this.opts.onList(this.list()); // create/destroy 都推最新列表
   }
 
