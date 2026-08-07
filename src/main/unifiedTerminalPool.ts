@@ -36,14 +36,23 @@ import {
 // 减少 IPC 消息量）。
 const DATA_BUFFER_MS = 5;
 
-/** 退出确认窗口（ms）。收到 pty 'exit' 后不立即关闭终端，而是启动此窗口，
- * 若窗口内仍有数据输出（shell 进程仍在运行），则重置窗口推迟关闭。
- * 对齐 VS Code 的 _queueProcessExit + onData 重置机制，用于抑制 Windows conpty
- * 在退出 alternate screen 时的误报 exit 事件——conpty 处理 \x1b[?1049l 时可能
- * 误关输出管道触发假的 pty exit，但 shell 进程仍存活且继续输出。
- *
- * 窗口值：500ms 平衡了「正常退出延迟感知」与「conpty 误报抑制可靠性」。 */
-const PI_EXIT_DATA_WINDOW_MS = 500;
+/**
+ * 检查操作系统进程是否仍在运行。
+ * 在 Windows conpty 下，node-pty 的 `exit` 事件通过 `WaitForSingleObject`
+ * 监视进程句柄触发。理想情况下这反映进程真实退出，但某些场景下（如 conpty
+ * 内部处理 alt screen 切换）进程句柄可能误触发而进程实际仍存活。
+ * 此检查通过 `process.kill(pid, 0)` 验证进程真实存在性。
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    // signal 0 不发送实际信号，仅检查进程是否存在。
+    // Windows 上，进程存在时返回 true；不存在时抛出 ESRCH。
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface DataBuffer {
   chunks: string[];
@@ -328,18 +337,8 @@ export class UnifiedTerminalPool {
     let postReadyTimer: NodeJS.Timeout | null = null;
     const scanState = createShellReadyScanState();
 
-    // ── 退出确认窗口状态 ──
-    // 收到 pty 'exit' 后启动延迟窗口；窗口内若仍有数据输出（shell 仍存活），重置窗口推迟关闭。
-    // 对齐 VS Code 的 _queueProcessExit + onData 重置机制，用于抑制 conpty 误报 exit。
-    let pendingExitTimer: NodeJS.Timeout | null = null;
-
-    const clearPendingExit = () => {
-      if (pendingExitTimer) { clearTimeout(pendingExitTimer); pendingExitTimer = null; }
-    };
-
-    /** 真正关闭终端条目。由 pendingExitTimer 到期或用户主动调用 terminate 触发。 */
+    /** 真正关闭终端条目。由 pty exit（进程真退出）或用户主动调用 terminate 触发。 */
     const closeEntry = () => {
-      pendingExitTimer = null;
       const e = this.entries.get(id);
       // 已被 terminate() 等路径关闭过（entry 已删除），跳过，避免重复 onExit。
       if (!e) return;
@@ -379,14 +378,6 @@ export class UnifiedTerminalPool {
     pty.on('data', (d: string) => {
       // 实时背压计数
       this.entries.get(id)?.bp.onData(d.length);
-
-      // 退出确认窗口：若存在待处理的退出（conpty 可能误报 exit，shell 仍存活），
-      // 只要还有数据输出就重置窗口，推迟真正关闭。对齐 VS Code TerminalProcess
-      // 的 onData 里 `if (this._closeTimeout) this._queueProcessExit()` 机制。
-      if (pendingExitTimer) {
-        clearPendingExit();
-        pendingExitTimer = setTimeout(closeEntry, PI_EXIT_DATA_WINDOW_MS);
-      }
 
       if (!commandInjected) {
         // ── 扫描 shell-ready 标记 ──
@@ -432,20 +423,24 @@ export class UnifiedTerminalPool {
     });
 
     pty.on('exit', () => {
-      // 用户主动终止时（terminate()），直接关闭（跳过数据窗口，避免延迟）。
+      // 用户主动终止时（terminate()），直接跳过（terminate() 处理清理）。
       const e = this.entries.get(id);
       if (e?.terminating) return;
 
-      // 数据窗口：不立即关闭，启动短窗口让进程最后输出数据。
-      // 若窗口内仍有数据（onData 重置定时器），说明 shell 进程仍存活，继续推迟。
-      // 持续无数据 → 窗口到期 → 真正关闭。
-      //
-      // 背景：Windows conpty 在 pi-tui 退出 alt screen（写 \x1b[?1049l）时可能
-      // 误关输出管道，触发假的 pty exit 事件，但 shell 进程其实仍存活。此窗口机制
-      // 对齐 VS Code TerminalProcess._queueProcessExit + onData 重置，不依赖检测
-      // 特定控制序列（\x1b[?1049l 可能被分块或不被 conpty 转发），更加稳健。
-      if (pendingExitTimer) return;
-      pendingExitTimer = setTimeout(closeEntry, PI_EXIT_DATA_WINDOW_MS);
+      // 关键检查：验证进程是否真的退出了。
+      // 在 Windows conpty 下，node-pty 的 exit 事件通过 WaitForSingleObject
+      // 监视进程句柄触发。但某些场景（如 ci-tui 切换 alt screen 模式、
+      // conpty 内部处理管道）可能导致进程句柄误触发而进程实际仍存活。
+      // 用 process.kill(pid, 0) 验证进程真实存在性。
+      if (isProcessAlive(pty.pid)) {
+        // 进程仍存活 → 这是误报 exit，不关闭终端。
+        // 注意：不应调用 onExit/onStatus/closeEntry，保持 tab 打开。
+        console.warn(`[terminal] pty exit ignored: process ${pty.pid} is still alive`);
+        return;
+      }
+
+      // 进程真的退出了 → 关闭终端
+      closeEntry();
     });
 
     // ── shell-ready 超时兜底 ──
