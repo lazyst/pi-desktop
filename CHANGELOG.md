@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.0.4 (2026-08-07)
+
+### 修复
+
+- **终端：pi-tui fullscreen 滚动条在 emoji 行占 2 列** — 根因：xterm 的 Unicode 宽度表未激活为 11，Unicode11Addon 仅注册版本提供者，xterm 默认使用 Unicode 6.3 导致 emoji 被视为宽度 1 的普通字符，`_fixTuiScrollbarWideChars` 检测 `getWidth() === 0` 永远不匹配。修复：激活 Unicode 11 宽度表（`term.unicode.activeVersion = '11'`），用 `term.write` 包装替代事件触发确保每次写后执行修复，改进检测逻辑覆盖 `getWidth() === 0/2` 两种场景。
+- **终端：xterm overview ruler z-index 覆盖问题** — 修复 overview ruler 被其他元素遮挡的问题，改用裸选择器 + `!important` 确保 z-index 优先级。
+
+### 特性
+
+- **终端设置：Custom Glyphs 与 GPU Acceleration** — 设置面板新增「渲染」区域，支持运行时切换自定义字形开关（`customGlyphs`）与 GPU 加速模式（`gpuAcceleration`：auto/on/off），对齐 VS Code 终端设置。
+
+### 技术
+
+- 添加 `XtermTerminal` 与 `SettingsPanel` 覆盖测试。
+
+---
+
 ## v1.0.3 (2026-03-27)
 
 ### 修复
