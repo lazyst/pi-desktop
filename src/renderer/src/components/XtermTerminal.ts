@@ -229,6 +229,25 @@ function getScrollbarWidth(): number {
   return defaultConfig().scrollbarWidth;
 }
 
+/** 从初始配置读取 customGlyphs（是否为 Box Drawing / Powerline 等绘制自定义字形）。 */
+function getCustomGlyphs(): boolean {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    if (cfg && typeof cfg.customGlyphs === 'boolean') return cfg.customGlyphs;
+  } catch { /* */ }
+  return defaultConfig().customGlyphs;
+}
+
+/** 从初始配置读取 gpuAcceleration（'auto' | 'on' | 'off'）。 */
+function getGpuAcceleration(): 'auto' | 'on' | 'off' {
+  try {
+    const cfg = (window as any).pi?.getInitialConfig?.();
+    const v = cfg?.gpuAcceleration;
+    if (v === 'auto' || v === 'on' || v === 'off') return v;
+  } catch { /* */ }
+  return defaultConfig().gpuAcceleration;
+}
+
 /** 对齐 VS Code IProcessDataEvent：携带 trackCommit 标记的数据事件。
  * 最后一段数据（实际输出）标记 trackCommit=true，携带 writePromise 供调用方等待写完成。
  * 前导段（OSC 633 标记）标记 trackCommit=false，不跟踪写完成确认。 */
@@ -388,6 +407,13 @@ export class XtermTerminal implements LiveTerminal {
   // 用户平滑滚动偏好（来自设置面板），wheel handler 必须尊重此偏好，
   // 不可在物理滚轮检测时自动覆盖。默认 false（不启用平滑滚动）。
   private _smoothScrolling = false;
+
+  // 用户 GPU 加速模式（来自设置面板）。'auto' 自动探测，'on' 强制 WebGL，'off' 强制 DOM。
+  // 默认 'auto'。enableWebgl() 决策时优先尊重此偏好。
+  private _gpuAcceleration: 'auto' | 'on' | 'off' = getGpuAcceleration();
+
+  // 用户自定义字形偏好（来自设置面板）。默认 true（对齐 VS Code 默认）。
+  private _customGlyphs = getCustomGlyphs();
 
   // 结构重放协调器：清屏/重放时保护滚动意图，确保视口位置精确恢复到用户阅读位置。
   private replayCoordinator: TerminalStructuralReplayCoordinator | null = null;
@@ -1190,8 +1216,8 @@ export class XtermTerminal implements LiveTerminal {
       scrollOnUserInput: true,
       // 光标行重排：对齐 VS Code 默认 true（resize 时光标所在行内容重排，避免错位）。
       reflowCursorLine: true,
-      // 自定义字形（连字/组合字渲染）：对齐 VS Code 默认 true。
-      customGlyphs: true,
+      // 自定义字形（连字/组合字渲染）：默认 true（对齐 VS Code 默认），可从设置面板关闭。
+      customGlyphs: this._customGlyphs,
       // 滚动条宽度：对齐 VS Code 默认（14px）。xterm 6 支持 scrollbar 选项配置宽度与
       // overview ruler。本应用全屏 TUI 场景下 CSS 已 overflow:hidden 禁用滚动条，但
       // 配置此值确保 xterm 内部布局计算与 VSCode 一致，避免因缺省值导致的 cell 度量差异。
@@ -1599,14 +1625,21 @@ export class XtermTerminal implements LiveTerminal {
     // （避免每次 title 变化/重新 attach 时都尝试 new WebglAddon() 失败并打印警告）。
     // 由 retryWebglIfNeeded 在可见时清除后重试。
     if (this.webglAttachFailed) return;
+    // 用户设置 gpuAcceleration=off → 强制 DOM，不启用 WebGL（对齐 VS Code gpuAcceleration:'off'）。
+    if (this._gpuAcceleration === 'off') {
+      console.info('[terminal] 渲染器已按 gpuAcceleration=off 使用 DOM 渲染器。');
+      return;
+    }
     const forced = (import.meta.env?.VITE_PI_DESKTOP_RENDERER ?? '').toLowerCase();
     if (forced === 'dom') {
       console.info('[terminal] 渲染器已按 PI_DESKTOP_RENDERER=dom 强制使用 DOM 渲染器。');
       return;
     }
-    // auto 决策：委托给 webgl-auto-policy.ts 模块
-    // 在非 Linux 系统上直接允许 WebGL；Linux 上检测渲染器类型（硬件/软件）
-    if (forced !== 'webgl') {
+    // 用户设置 gpuAcceleration=on → 强制 WebGL：跳过 auto 策略探测（对齐 VS Code gpuAcceleration:'on'）。
+    // env 变量 forced==='webgl' 同样强制跳过 auto 探测。
+    if (this._gpuAcceleration !== 'on' && forced !== 'webgl') {
+      // auto 决策：委托给 webgl-auto-policy.ts 模块
+      // 在非 Linux 系统上直接允许 WebGL；Linux 上检测渲染器类型（硬件/软件）
       const decision = getTerminalWebglAutoDecision();
       if (!decision.allowWebgl) {
         console.info(
@@ -2098,6 +2131,44 @@ export class XtermTerminal implements LiveTerminal {
     if (fontWeightBold !== undefined) (this.term.options as any).fontWeightBold = fontWeightBold;
   }
 
+  /** 运行时更新自定义字形开关（对齐 VS Code raw.options.customGlyphs）。
+   * 覆盖 Box Drawing / Block Elements / Powerline 等 Unicode 范围的字形渲染。
+   * 切换后需要强制重绘以刷新已缓存的字形位图。 */
+  setCustomGlyphs(enabled: boolean): void {
+    if (!this.term || this.disposed) return;
+    this._customGlyphs = enabled;
+    const opts = this.term.options as any;
+    if (opts.customGlyphs !== enabled) {
+      opts.customGlyphs = enabled;
+      this.forceRedraw();
+    }
+  }
+
+  /** 运行时更新 GPU 加速模式（对齐 VS Code gpuAcceleration: auto/on/off）。
+   *  - 'off'：卸载已装载的 WebGL，降级 DOM。
+   *  - 'on'：若未装载 WebGL，立即尝试装载（跳过 auto 探测）。
+   *  - 'auto'：若未装载，按系统策略探测；已装载则保持。
+   * 注意：此方法仅在 active 且已挂载时立即生效；否则标记，下次可见时由
+   * retryWebglIfNeeded 根据最新 _gpuAcceleration 决策。 */
+  setGpuAcceleration(mode: 'auto' | 'on' | 'off'): void {
+    if (this.disposed) return;
+    this._gpuAcceleration = mode;
+    if (!this.term || !this.active || !this.host) return;
+    if (mode === 'off') {
+      // 卸载 WebGL，降级 DOM
+      if (this.webgl) {
+        this.webgl.dispose();
+        this.webgl = null;
+        this.webglAttachFailed = false;
+        this.webglDisabledAfterContextLoss = false;
+        try { this.term.refresh(0, this.term.rows - 1); } catch { /* 忽略 */ }
+      }
+    } else {
+      // 'on' / 'auto'：若未装载 WebGL，尝试装载
+      this.retryWebglIfNeeded();
+    }
+  }
+
   /** 运行时批量更新配置（对齐 VS Code XtermTerminal.updateConfig）。
    * 一次性应用多个配置项，避免逐个调用导致多次 xterm 内部重排。
    * @param config 部分配置项，未提供的项保持不变。 */
@@ -2130,6 +2201,8 @@ export class XtermTerminal implements LiveTerminal {
         config.letterSpacing ?? this.term.options.letterSpacing,
       );
     }
+    if (config.customGlyphs !== undefined) this.setCustomGlyphs(config.customGlyphs);
+    if (config.gpuAcceleration !== undefined) this.setGpuAcceleration(config.gpuAcceleration);
   }
 
   /** resize 回调：X/Y 同时变化（对齐 VS Code _resizeBothCallback）。

@@ -23,6 +23,9 @@ function setup(overrides: Partial<AppConfig> = {}, listProfiles = PROFILES) {
     setConfig: vi.fn().mockResolvedValue(undefined),
     listTerminalProfiles: vi.fn().mockResolvedValue(listProfiles),
     pickDirectory: vi.fn().mockResolvedValue(null),
+    getCurrentVersion: vi.fn().mockResolvedValue('1.0.0'),
+    getUpdateStatus: vi.fn().mockResolvedValue(null),
+    onDownloadProgress: vi.fn(() => () => {}),
   };
   (window as any).pi = api;
   render(<SettingsPanel onClose={() => {}} />);
@@ -34,7 +37,7 @@ describe('SettingsPanel 终端设置', () => {
     setup();
     expect(screen.getByText('终端')).toBeInTheDocument();
     fireEvent.click(screen.getByText('终端'));
-    expect(await screen.findByText('默认终端')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '默认终端' })).toBeInTheDocument();
     // 下拉里包含探测到的 profile 标签
     expect(screen.getByText('PowerShell')).toBeInTheDocument();
     expect(screen.getByText('CMD')).toBeInTheDocument();
@@ -113,4 +116,63 @@ describe('SettingsPanel 终端设置', () => {
     const input = (await screen.findByLabelText('应用工作目录')) as HTMLInputElement;
     await waitFor(() => expect(input.value).toBe('E:\\picked'));
   });
-});
+
+  describe('customGlyphs / gpuAcceleration 设置', () => {
+    it('自定义字形开关存在，默认 true', async () => {
+      setup();
+      fireEvent.click(screen.getByText('终端'));
+      const checkbox = (await screen.findByLabelText('自定义字形')) as HTMLInputElement;
+      expect(checkbox).toBeInTheDocument();
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it('切换自定义字形 → checkbox 状态变化', async () => {
+      setup();
+      fireEvent.click(screen.getByText('终端'));
+      const checkbox = (await screen.findByLabelText('自定义字形')) as HTMLInputElement;
+      expect(checkbox.checked).toBe(true);
+      fireEvent.click(checkbox);
+      expect(checkbox.checked).toBe(false);
+      fireEvent.click(checkbox);
+      expect(checkbox.checked).toBe(true);
+    });
+
+    it('GPU 加速下拉存在，默认 auto', async () => {
+      setup();
+      fireEvent.click(screen.getByText('终端'));
+      const select = (await screen.findByLabelText('GPU 加速')) as HTMLSelectElement;
+      expect(select).toBeInTheDocument();
+      expect(select.value).toBe('auto');
+    });
+
+    it('GPU 加速下拉包含 auto/on/off 三个选项', async () => {
+      setup();
+      fireEvent.click(screen.getByText('终端'));
+      const select = (await screen.findByLabelText('GPU 加速')) as HTMLSelectElement;
+      expect(select.children.length).toBe(3);
+      expect((select.children[0] as HTMLOptionElement).value).toBe('auto');
+      expect((select.children[1] as HTMLOptionElement).value).toBe('on');
+      expect((select.children[2] as HTMLOptionElement).value).toBe('off');
+    });
+
+    it('GPU 加速切换为 off → select 值变化', async () => {
+      setup();
+      fireEvent.click(screen.getByText('终端'));
+      const select = (await screen.findByLabelText('GPU 加速')) as HTMLSelectElement;
+      expect(select.value).toBe('auto');
+      fireEvent.change(select, { target: { value: 'off' } });
+      expect(select.value).toBe('off');
+      fireEvent.change(select, { target: { value: 'on' } });
+      expect(select.value).toBe('on');
+    });
+
+    it('加载配置时从 config 读取 customGlyphs 和 gpuAcceleration', async () => {
+      const api = setup({ customGlyphs: false, gpuAcceleration: 'on' });
+      fireEvent.click(screen.getByText('终端'));
+      const checkbox = (await screen.findByLabelText('自定义字形')) as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+      const select = (await screen.findByLabelText('GPU 加速')) as HTMLSelectElement;
+      expect(select.value).toBe('on');
+    });
+  });
+})

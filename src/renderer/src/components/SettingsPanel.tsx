@@ -759,11 +759,16 @@ function TerminalSettings() {
   // 滚动条
   const [scrollbarWidth, setScrollbarWidth] = useState(14);
 
+  // 渲染
+  const [customGlyphs, setCustomGlyphs] = useState(true);
+  const [gpuAcceleration, setGpuAcceleration] = useState<'auto' | 'on' | 'off'>('auto');
+
   // 防抖自动保存：将所有终端配置项合并为一个对象，800ms 防抖后持久化
   const terminalConfig = {
     scrollback, cursorBlink, cursorStyle, cursorInactiveStyle, cursorWidth,
     fontFamily, lineHeight, letterSpacing, fontWeight, fontWeightBold,
     smoothScrolling, scrollSensitivity, fastScrollSensitivity, scrollbarWidth,
+    customGlyphs, gpuAcceleration,
   };
   useDebouncedSave(terminalConfig, async (cfg) => {
     pi.setConfig(cfg as any).catch(() => {});
@@ -793,6 +798,8 @@ function TerminalSettings() {
         setScrollSensitivity(cfg.scrollSensitivity ?? 1);
         setFastScrollSensitivity(cfg.fastScrollSensitivity ?? 5);
         setScrollbarWidth(cfg.scrollbarWidth ?? 14);
+        setCustomGlyphs(cfg.customGlyphs ?? true);
+        setGpuAcceleration(cfg.gpuAcceleration ?? 'auto');
       })
       .catch(() => {});
     pi.listTerminalProfiles()
@@ -1225,6 +1232,51 @@ function TerminalSettings() {
           </div>
         </div>
         <p className="settings-hint">范围 6–40，全屏 TUI 下 CSS 已隐藏滚动条，此值影响 xterm 内部布局计算。</p>
+      </div>
+
+      {/* ── 渲染 ── */}
+      <div className="settings-section">
+        <h3 className="settings-section-title">渲染</h3>
+
+        <div className="settings-row">
+          <span className="settings-label">自定义字形</span>
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              className="toggle-input"
+              aria-label="自定义字形"
+              checked={customGlyphs}
+              onChange={(e) => {
+                const v = e.target.checked;
+                setCustomGlyphs(v);
+                broadcastTerminalConfig({ customGlyphs: v });
+              }}
+            />
+            <span className="toggle-track">
+              <span className="toggle-thumb" />
+            </span>
+          </label>
+        </div>
+        <p className="settings-hint">为 Box Drawing、Block Elements、Powerline 等 Unicode 范围绘制自定义字形，而非使用字体（对齐 VS Code Custom Glyphs）。</p>
+
+        <div className="settings-row">
+          <span className="settings-label">GPU 加速</span>
+          <select
+            className="profile-select"
+            aria-label="GPU 加速"
+            value={gpuAcceleration}
+            onChange={(e) => {
+              const v = e.target.value as 'auto' | 'on' | 'off';
+              setGpuAcceleration(v);
+              broadcastTerminalConfig({ gpuAcceleration: v });
+            }}
+          >
+            <option value="auto">自动（auto）</option>
+            <option value="on">开启（on）</option>
+            <option value="off">关闭（off）</option>
+          </select>
+        </div>
+        <p className="settings-hint">auto 自动探测 WebGL；on 强制开启 GPU 渲染；off 强制使用 DOM 渲染器（对齐 VS Code Gpu Acceleration）。</p>
       </div>
 
       {/* ── 应用工作目录 ── */}

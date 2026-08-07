@@ -1052,3 +1052,38 @@ describe('XtermTerminal（VS Code 集成终端同款装配，见 docs/adr/0002 /
       expect(overSpy).toHaveBeenCalledWith('drop', expect.any(Function));
     });
   });
+
+  describe('customGlyphs / gpuAcceleration 设置', () => {
+    beforeEach(() => {
+      hoist.webglActivateCalls = 0;
+      hoist.webglClearAtlasCalls = 0;
+    });
+
+    it('customGlyphs 默认 true（字段初始化）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      expect((t as any)._customGlyphs).toBe(true);
+      t.unmount();
+    });
+
+    it('gpuAcceleration 默认 auto（字段初始化）', () => {
+      const api = makeApi();
+      const t = new XtermTerminal({ sessionKey: 'k', pi: api });
+      expect((t as any)._gpuAcceleration).toBe('auto');
+      t.unmount();
+    });
+
+    it('config 默认值包含 customGlyphs=true 与 gpuAcceleration=auto', async () => {
+      const { defaultConfig } = await import('../../../main/config');
+      const cfg = defaultConfig();
+      expect(cfg.customGlyphs).toBe(true);
+      expect(cfg.gpuAcceleration).toBe('auto');
+    });
+
+    it('config.parseConfig 保留自定义 customGlyphs / gpuAcceleration', async () => {
+      const { parseConfig } = await import('../../../main/config');
+      const cfg = parseConfig(JSON.stringify({ customGlyphs: false, gpuAcceleration: 'off' }));
+      expect(cfg.customGlyphs).toBe(false);
+      expect(cfg.gpuAcceleration).toBe('off');
+    });
+  });

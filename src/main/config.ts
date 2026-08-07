@@ -64,6 +64,10 @@ export function defaultConfig(): AppConfig {
 
     // 终端滚动条
     scrollbarWidth: 14,
+
+    // 终端字形与渲染
+    customGlyphs: true,
+    gpuAcceleration: 'auto',
   };
 }
 

@@ -28,6 +28,8 @@ export interface TerminalConfigUpdate {
   scrollbarWidth?: number;
   scrollSensitivity?: number;
   fastScrollSensitivity?: number;
+  customGlyphs?: boolean;
+  gpuAcceleration?: 'auto' | 'on' | 'off';
 }
 
 /** 存活终端必须实现的刷新接口（由 XtermTerminal 实现，避免循环依赖本模块直接 import 具体类）。 */

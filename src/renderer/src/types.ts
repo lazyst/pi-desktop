@@ -105,6 +105,13 @@ export interface AppConfig {
   // ── 终端滚动条配置 ──
   // 滚动条宽度（px），默认 14。
   scrollbarWidth: number;
+
+  // ── 终端字形与渲染 ──
+  // 是否为 Box Drawing / Block Elements / Powerline 等 Unicode 范围绘制自定义字形，
+  // 而不是使用字体。默认 true（对齐 VS Code 默认）。
+  customGlyphs: boolean;
+  // 终端 GPU 加速模式：'auto' 自动探测，'on' 强制开启，'off' 强制关闭。
+  gpuAcceleration: 'auto' | 'on' | 'off';
 }
 
 export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
