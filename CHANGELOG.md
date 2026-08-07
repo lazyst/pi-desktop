@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.5 (2026-08-07)
+
+### 修复
+
+- **终端：pi-tui fullscreen → regular 切换时终端被误关** — 根因：Windows conpty 在处理 `\x1b[?1049l`（退出 alternate screen）时可能误关输出管道，导致 node-pty 触发假的 pty `exit` 事件（shell 进程仍存活），终端 tab 被错误关闭。
+  - 移除了脆弱的 `detectPiExit` 机制——原实现依赖 shell prompt 的 OSC 133 D 间接信号判断 pi 退出，该序列易在多种场景下误判（切换 TUI 模式时 conpty 重发主缓冲区、消息内容嵌入等）。终端 tab 生命周期改为跟随 shell 进程：pi 退出后 tab 保持打开，仅当 shell 真正退出或用户主动终止时才关闭。
+  - 抑制 conpty 误报的 pty `exit` 事件——在 data handler 中检测 `\x1b[?1049l` 序列并记录时间戳，若 pty `exit` 紧跟其后（1 秒窗口内）视为 conpty 误报并忽略。
+  - 新增 3 个 `UnifiedTerminalPool` 覆盖测试。
+
+### 技术
+
+- 新增 `UnifiedTerminalPool` conpty 误报抑制相关测试。
+
+---
+
 ## v1.0.4 (2026-08-07)
 
 ### 修复
