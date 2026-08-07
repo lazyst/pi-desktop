@@ -398,6 +398,9 @@ export class XtermTerminal implements LiveTerminal {
   // DOM 事件驱动的滚动意图跟踪的反注册函数（在 _initXterm 末尾挂载，unmount 时释放）。
   private _scrollIntentTrackingDisposable: { dispose: () => void } | null = null;
 
+  // pi-tui 宽字符滚动条修正的防递归标志。
+  private _scrollbarFixGuard = false;
+
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
     // channel 优先；省略时回退为 SessionChannel（与重构前 XtermTerminal 直接调 pi 的会话
@@ -1381,6 +1384,14 @@ export class XtermTerminal implements LiveTerminal {
       /* 旧版 xterm 无 onWriteParsed：降级为「写即解析」，flush 立即 resolves */
     }
 
+    // 对齐 VS Code 的 xterm 后处理：检测并修复 pi-tui 文本滚动条的宽字符偏移。
+    // 仅在有宽字符（null continuation cell）的行写入校正序列，避免干扰 pi TUI 的输入处理。
+    try {
+      (term as any).onWriteParsed?.(() => { this._fixTuiScrollbarWideChars(); });
+    } catch {
+      /* 旧版 xterm 无 onWriteParsed：降级跳过 */
+    }
+
     // 滚动状态：xterm 视口随输出/滚轮变化时经 onScroll 驱动浮钮显隐。
     try {
       term.onScroll(() => this.notifyScrollState());
@@ -1430,11 +1441,23 @@ export class XtermTerminal implements LiveTerminal {
     }
 
     // 缓冲区变化（对齐 VS Code onBufferChange）：alt/normal buffer 切换时触发，
-    // 供壳在 alt buffer 模式下禁用历史滚轮等。
+    // 供壳在 alt buffer 模式下禁用历史滚轮等，并强制激活 xterm mouse tracking。
     try {
       term.buffer.onBufferChange(() => {
         const buf = term.buffer.active;
         const isAlt = (buf as any).type === 'alternate';
+        if (isAlt) {
+          // 全屏 TUI（备选屏幕）下强制确保 xterm 鼠标跟踪已激活，
+          // 使 pi-tui 能接收鼠标滚轮事件以滚动消息区。
+          // 同时启用 SGR 鼠标模式（获得扩展坐标），对齐 VS Code 的终端鼠标处理。
+          const hasMouse = term.element?.classList.contains('enable-mouse-events');
+          if (!hasMouse) {
+            // 通过写入 escape 序列激活 mouse tracking
+            // 1003h = any-event tracking（含滚轮事件）
+            // 1006h = SGR 鼠标模式（扩展坐标，支持 >223 行列）
+            term.write('\x1b[?1003h\x1b[?1006h');
+          }
+        }
         this.onBufferChange?.(isAlt ? 'alt' : 'normal');
       });
     } catch {
@@ -1926,7 +1949,56 @@ export class XtermTerminal implements LiveTerminal {
     }
   }
 
+  /**
+   * 检测并修复 pi-tui 文本滚动条的宽字符偏移。
+   *
+   * 当 pi-tui 的 styleScrollbarCell 遇到宽字符（CJK/emoji）落在滚动条列时，
+   * 将宽字符原样保留（占 2 列），导致滚动条指示器变成 2 列宽。
+   *
+   * 本方法在 xterm 写完成后，检查缓冲区最右列是否有 null continuation cell
+   *（getWidth() === 0，表示宽字符从 cols-2 延伸到 cols-1），仅有则写入校正序列
+   * 替换为单列空格。仅对含宽字符的行写入，最大限度减少对 pi TUI 的干扰。
+   *
+   * 防递归：通过 _scrollbarFixGuard 标志防止校正写入触发自身。
+   */
+  private _fixTuiScrollbarWideChars(): void {
+    if (this._scrollbarFixGuard || !this.term || this.disposed) return;
 
+    const term = this.term;
+    const buffer = term.buffer.active;
+    const cols = term.cols;
+    const rows = term.rows;
+    const scrollbarCol = cols - 1;
+    if (cols <= 0 || rows <= 0 || scrollbarCol < 0) return;
+
+    const corrections: string[] = [];
+
+    for (let row = 0; row < rows; row++) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+
+      const cell = line.getCell(scrollbarCol);
+      if (!cell) continue;
+
+      // 仅检测 null continuation cell（宽字符从 cols-2 延伸到 cols-1）。
+      // 宽字符的第一个 cell 在 cols-2（getWidth() === 2），
+      // 第二个 cell 在 cols-1（getWidth() === 0）。
+      if (cell.getWidth() === 0) {
+        // 1-indexed 行号
+        const row1 = row + 1;
+        const col1 = scrollbarCol + 1;
+        // 写入校正序列：仅重置前景和背景色（39m + 49m），不重置其他属性。
+        corrections.push(`\x1b[${row1};${col1}H\x1b[39;49m \x1b[39;49m`);
+      }
+    }
+
+    if (corrections.length === 0) return;
+
+    this._scrollbarFixGuard = true;
+    term.write(corrections.join(''), () => {
+      this._scrollbarFixGuard = false;
+    });
+  }
 
 
   /** 仅在 cols/rows 真变时才通知 PTY（对齐 VS Code 整数 dims 比较，避免无谓 resize）。 */
