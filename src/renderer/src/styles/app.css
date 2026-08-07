@@ -1196,8 +1196,16 @@ html, body, #root {
 .terminal-host .xterm .composition-view { background: var(--bg-elevated); color: var(--text); }
 
 /* 修复 xterm 6.1 的 overview ruler canvas 白边问题。
-   该 canvas 覆盖在滚动条区域，设 z-index:0 使其不遮挡终端内容，背景设为主题色。 */
-.terminal-host .xterm .xterm-decoration-overview-ruler { z-index: 0; background: var(--bg-app); }
+   该 canvas 覆盖在滚动条区域，设 z-index:0 使其不遮挡终端内容。
+   用裸选择器同时覆盖会话区(.terminal-host)与集成终端(.integrated-terminal-host)，
+   并加 !important 压过 xterm 原生 z-index:8。 */
+.xterm-decoration-overview-ruler {
+    z-index: 0 !important;
+    position: absolute;
+    top: 0;
+    right: 0;
+    pointer-events: none;
+}
 
 /* vs Code 风格：滚动条容器背景与终端一致，滑块半透明灰。
    滑块颜色由 xterm 主题的 scrollbarSlider* 动态注入，此处做兜底。
