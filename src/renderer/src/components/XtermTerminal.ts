@@ -1308,8 +1308,12 @@ export class XtermTerminal implements LiveTerminal {
 
     // Unicode11Addon：宽字符 / CJK 度量由 xterm 原生处理（对齐 VS Code _updateUnicodeVersion），
     // 从源头消除中英混排度量漂移，替代此前含 CJK 的字体栈 hack。
+    // 必须显式激活 Unicode 11 宽度表（Unicode11Addon 仅注册版本提供者，不自动切换），
+    // 否则 xterm 默认使用 Unicode 6.3 宽度表，emoji 被当作宽度 1 的普通字符，
+    // 导致 _fixTuiScrollbarWideChars 无法检测到 continuation cell（getWidth() 返回 1 而非 0）。
     try {
       term.loadAddon(new Unicode11Addon());
+      term.unicode.activeVersion = '11';
     } catch {
       /* addon 加载失败不影响核心终端 */
     }
@@ -1412,11 +1416,16 @@ export class XtermTerminal implements LiveTerminal {
 
     // 对齐 VS Code 的 xterm 后处理：检测并修复 pi-tui 文本滚动条的宽字符偏移。
     // 仅在有宽字符（null continuation cell）的行写入校正序列，避免干扰 pi TUI 的输入处理。
-    try {
-      (term as any).onWriteParsed?.(() => { this._fixTuiScrollbarWideChars(); });
-    } catch {
-      /* 旧版 xterm 无 onWriteParsed：降级跳过 */
-    }
+    // 包装 term.write 方法，每次写操作完成后经 setTimeout(0) 延迟调用修复，
+    // 确保在 xterm 内部 buffer 更新完成后、pi-tui 下一帧渲染前执行，且不依赖
+    // onWriteParsed/onRender 等事件是否正确触发。
+    const originalWrite = term.write.bind(term);
+    term.write = ((data: string, callback?: () => void) => {
+      originalWrite(data, () => {
+        callback?.();
+        setTimeout(() => this._fixTuiScrollbarWideChars(), 0);
+      });
+    }) as typeof term.write;
 
     // 滚动状态：xterm 视口随输出/滚轮变化时经 onScroll 驱动浮钮显隐。
     try {
@@ -2013,24 +2022,31 @@ export class XtermTerminal implements LiveTerminal {
       const cell = line.getCell(scrollbarCol);
       if (!cell) continue;
 
-      // 仅检测 null continuation cell（宽字符从 cols-2 延伸到 cols-1）。
-      // 宽字符的第一个 cell 在 cols-2（getWidth() === 2），
-      // 第二个 cell 在 cols-1（getWidth() === 0）。
-      if (cell.getWidth() === 0) {
+      // 检测宽字符占据滚动条列的情况：
+      // 1. continuation cell 在 scrollbarCol（getWidth()===0，宽字符从 cols-2 延伸到 cols-1）
+      // 2. 宽字符的第一个 cell 在 scrollbarCol（getWidth()===2，极少数越界/布局偏移场景）
+      const isContinuation = cell.getWidth() === 0;
+      const isFirstWide = cell.getWidth() === 2;
+      if (isContinuation || isFirstWide) {
         // 1-indexed 行号
         const row1 = row + 1;
         const col1 = scrollbarCol + 1;
-        // 写入校正序列：仅重置前景和背景色（39m + 49m），不重置其他属性。
+        // 如果是 continuation cell，只替换该列（保留前一列 emoji 首字）。
+        // 如果是宽字符首字在 scrollbarCol（越界场景），写单个空格覆盖该列即可，
+        // xterm 会把越界的 continuation cell 一并清除。
         corrections.push(`\x1b[${row1};${col1}H\x1b[39;49m \x1b[39;49m`);
       }
     }
 
     if (corrections.length === 0) return;
 
+    // 校正序列把 continuation cell 替换为单列空格，产生的新 buffer 不含
+    // getWidth()===0 的 cell，因此即使 onRender 再次触发本方法也会立即返回（无递归）。
+    // 立即清除 guard（而非在 write 回调中），避免 pi-tui 下一帧渲染早于回调完成时
+    // guard 仍为 true 导致修复无法再次应用。
     this._scrollbarFixGuard = true;
-    term.write(corrections.join(''), () => {
-      this._scrollbarFixGuard = false;
-    });
+    term.write(corrections.join(''));
+    this._scrollbarFixGuard = false;
   }
 
 
