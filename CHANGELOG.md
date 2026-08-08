@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.0.7 (2026-08-08)
+
+### 修复
+
+- **文件树：提交后 git 状态高亮不实时取消** — 根因：FileTree 依赖 `fs:watch`（`recursive: false`）触发 git 状态刷新，但 `git commit` 只会修改 `.git/` 内部文件（HEAD/index/refs/objects），这些不是根目录的直接子项，`recursive: false` 的 watcher 探测不到。修复：订阅 `git:change` 事件（`pi.gitWatch`），git 元数据变化时即时刷新文件树 git 状态。
+
+- **终端：分屏时终端重载导致滚动位置丢失** — 根因：分屏前直接渲染 `SplitPaneLeaf`，分屏后切换为 `SplitPaneNode`，React 树根节点类型变化导致原 leaf 全部子节点被卸载，终端实例销毁重建后 scrollback 为空。修复：始终渲染 `SplitPaneNode`，单 leaf 时包裹为 `ratios=[1]` 的单 child split node，`key={leaf.id}` 恒定使 React 复用组件，不卸载终端。
+
+- **终端：跨工作目录切换黑屏** — 根因：`SplitPaneDragProviderInner` 在 `isActive` 切换时根节点类型在 Fragment ↔ `DragContext.Provider` 之间变化，React 卸载/重挂所有终端实例导致 canvas 黑屏。修复：保持 `DragContext.Provider > DndContext > children` 结构恒定，仅 `DragOverlay` 条件渲染。
+
+- **终端：重构 tab 切换机制，对齐 VS Code 始终挂载策略** — 核心改动：终端始终 `display:block`，隐藏仅靠 `opacity:0`；`SessionPane/IntegratedPane` 不再调用 `setPaneActive(false)`，`RenderService` 不暂停、WebGL context 不丢失；`doResize` 增加 `clientWidth/clientHeight` 兜底重测。
+
+- **终端：移除 `_fixTuiScrollbarWideChars` hack 修复光标错位与内容重叠** — 该 hack 注入 CUP 光标定位序列，在 pi-tui 差分渲染两帧之间触发时导致光标不同步，表现为光标不在编辑器区域、Shift+Enter 换行后内容重叠。移除 74 行 hack 代码。
+
+---
+
 ## v1.0.6 (2026-08-08)
 
 ### 修复
