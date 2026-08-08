@@ -96,6 +96,11 @@ export function IntegratedPane({ terminalId, active }: Props) {
 
   // active 切换：通知 XtermTerminal 可见性（不销毁），首次 active 时 mount，切回时校准尺寸。
   // 滚动位置保存/恢复：隐藏前保存快照，恢复时调度 followOutput 检查。
+  //
+  // 注意：不再调用 setPaneActive(false) 来取消激活终端。隐藏期由父容器 .tab-content
+  // 的 opacity:0 控制（非 .integrated-terminal-host 的 display:none），IntersectionObserver
+  // 不会暂停 RenderService，WebGL 上下文不丢失，切换 tab 时终端内容立即可见——对齐 VS Code
+  // 的「terminal 始终在 DOM 中 display:block，切换仅改变 CSS 可见性」策略。
   useEffect(() => {
     if (active) {
       mountPane(terminalId, hostRef.current!); // 幂等：已挂载则直接 return
@@ -104,11 +109,12 @@ export function IntegratedPane({ terminalId, active }: Props) {
       scheduleFollowOutputIfNeeded(terminalId);
     } else {
       // 隐藏前保存当前滚动快照，供恢复时判断是否需要 followOutput
+      // 不调用 setPaneActive(false)：终端始终 active（RenderService 不暂停），
+      // 仅 CSS 隐藏（opacity:0），保证 WebGL canvas 上下文不被销毁。
       const term = termRef.current;
       if (term?.rawTerminal) {
         rememberVisibleScrollSnapshot(terminalId, term.rawTerminal);
       }
-      setPaneActive(terminalId, false);
     }
   }, [active, terminalId]);
 

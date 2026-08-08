@@ -74,6 +74,11 @@ export function SessionPane({ sessionKey, active }: Props) {
   // 切回后必须 flush + doResize 用真实容器尺寸重测，否则沿用隐藏期的 0 尺寸渲染，
   // 表现为"切回的终端变空白新终端、历史输出丢失 / 不能滚动"。
   // 滚动位置保存/恢复：隐藏前保存快照，恢复时调度 followOutput 检查。
+  //
+  // 注意：不再调用 setPaneActive(false) 来取消激活终端。隐藏期由父容器 .tab-content
+  // 的 opacity:0 控制（非 .terminal-host 的 display:none），IntersectionObserver 不会
+  // 暂停 RenderService，WebGL 上下文不丢失，切换 tab 时终端内容立即可见——对齐 VS Code
+  // 的「terminal 始终在 DOM 中 display:block，切换仅改变 CSS 可见性」策略。
   useEffect(() => {
     if (active) {
       mountPane(sessionKey, hostRef.current!); // 幂等：已挂载则直接 return
@@ -82,11 +87,12 @@ export function SessionPane({ sessionKey, active }: Props) {
       scheduleFollowOutputIfNeeded(sessionKey);
     } else {
       // 隐藏前保存当前滚动快照，供恢复时判断是否需要 followOutput
+      // 不调用 setPaneActive(false)：终端始终 active（RenderService 不暂停），
+      // 仅 CSS 隐藏（opacity:0），保证 WebGL canvas 上下文不被销毁。
       const term = termRef.current;
       if (term?.rawTerminal) {
         rememberVisibleScrollSnapshot(sessionKey, term.rawTerminal);
       }
-      setPaneActive(sessionKey, false);
     }
   }, [active, sessionKey]);
 

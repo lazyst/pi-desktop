@@ -42,7 +42,7 @@ import { IntegratedPane } from './IntegratedPane';
 import { PreviewTab } from './PreviewTab';
 import { DiffTab } from './DiffTab';
 import { SessionContentView } from './SessionContentView';
-import { restorePaneScrollState } from './paneManager';
+import { restorePaneScrollState, schedulePaneResize, setPaneActive } from './paneManager';
 
 interface Props {
   tree: SplitTree;
@@ -106,19 +106,21 @@ function SplitPaneDragProvider({
   cwd: string;
   isActive: boolean;
 }) {
-  // 非活跃 cwd 不响应拖拽：先于所有 hooks 返回，避免 hooks 数量变化导致 React 报错
-  if (!isActive) {
-    return <>{children}</>;
-  }
-  return <SplitPaneDragProviderInner cwd={cwd}>{children}</SplitPaneDragProviderInner>;
+  // 总是渲染 SplitPaneDragProviderInner（相同组件类型），
+  // 避免 isActive 切换时 Fragment ↔ SplitPaneDragProviderInner 的组件类型变化
+  // 导致 React 卸载全部子节点（含所有 SessionPane → XtermTerminal 终端实例）。
+  // 非活跃时 DnD 逻辑在 SplitPaneDragProviderInner 内部跳过。
+  return <SplitPaneDragProviderInner cwd={cwd} isActive={isActive}>{children}</SplitPaneDragProviderInner>;
 }
 
 function SplitPaneDragProviderInner({
   children,
   cwd,
+  isActive,
 }: {
   children: React.ReactNode;
   cwd: string;
+  isActive: boolean;
 }) {
   const moveTabAcrossLeafs = useSplitStore((s) => s.moveTabAcrossLeafs);
   const reorderTabsInLeaf = useSplitStore((s) => s.reorderTabsInLeaf);
@@ -421,6 +423,12 @@ function SplitPaneDragProviderInner({
   // 被拖拽的 tab 信息（用于 DragOverlay），直接使用 activeDragTab state
   const activeTab = activeDragTab;
 
+  if (!isActive) {
+    // 非活跃 cwd：不包装 DnD 上下文，但保持 children 挂载
+    // （组件类型不变，React 不会卸载子节点，终端实例得以保留）
+    return <>{children}</>;
+  }
+
   return (
     <DragContext.Provider value={contextValue}>
       <DndContext
@@ -495,6 +503,18 @@ function SplitPaneLeaf({
     for (const t of leaf.tabs) {
       if (t.kind !== 'session' && t.kind !== 'integrated-terminal' && t.kind !== 'session-content') continue;
       restorePaneScrollState(t.id);
+    }
+    // 关键（修复「不同工作目录切换黑屏」）：切换 cwd 时，目标 leaf 的终端 tab 的
+    // `active` prop 不变（tab 仍是该 leaf 的 activeTabId），SessionPane 的
+    // useEffect([active]) 不会触发，setActive(true) 永远不会被调用 → 终端不 resize、
+    // WebGL 上下文丢失后也不恢复，表现为黑屏直到手动拖分割线触发 resize。
+    // 这里在 isActive 变为 true 时显式对当前 active 终端 tab 触发 resize 和 WebGL 恢复。
+    // 注意：只处理 active 的 tab，不对隐藏 tab 调 setPaneActive（否则会提前设置
+    // this.active=true，吞掉后续用户切到该 tab 时 setActive 的 resize 逻辑）。
+    const activeTab = leaf.tabs.find(t => t.id === leaf.activeTabId);
+    if (activeTab && (activeTab.kind === 'session' || activeTab.kind === 'integrated-terminal')) {
+      setPaneActive(activeTab.id, true);
+      schedulePaneResize(activeTab.id);
     }
   }, [isActive, leaf.tabs]);
 

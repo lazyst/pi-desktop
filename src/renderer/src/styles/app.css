@@ -1063,7 +1063,6 @@ html, body, #root {
   inset: 0;
   bottom: 0; /* 终端锚定底部：配合写后 scrollToBottom 锁底，杜绝布局层向下溢出抖动 */
   background: var(--bg-app);
-  display: none;
   contain: strict;
   /* 显式裁剪溢出：防止 xterm 内部滚动条占位/过滚动条在流式输出时反复出现-消失，
      微动 host 宽度 → 触发 ResizeObserver → fit.fit() 改列宽 → TUI 整屏重排跳动。

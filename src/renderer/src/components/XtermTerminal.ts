@@ -471,7 +471,13 @@ export class XtermTerminal implements LiveTerminal {
     if (active && this.host && this.term && !this.disposed) {
       // 可见时尝试重建 WebGL 渲染器（上下文丢失或此前附加失败后）
       this.retryWebglIfNeeded();
-      // 同步校准尺寸
+      // 关键：先清除 xterm RenderService 的暂停标记（隐藏期由 IntersectionObserver 置位）。
+      // 若跳过此步，doResize 的 term.resize() 在暂停状态下不会重绘 canvas，用户会看到
+      // 旧帧/单列/黑屏，直到 _flushAndRender 的异步延迟刷新才恢复（对齐 VS Code setVisible
+      // 中 setVisible → _resize 的同步重绘语义）。forceRepaintThroughRenderPause 幂等，
+      // 后续 _flushAndRender 再调一次也无副作用。
+      forceRepaintThroughRenderPause(this.term);
+      // 同步校准尺寸（此时 RenderService 已恢复，resize 立即触发 canvas 重绘）
       this.doResize(true);
       // 异步等待所有 pending 的 term.write() 被解析完成，再执行渲染。
       // 这样隐藏期间累积的写入数据在可见时正确渲染，避免"旧帧残留"。
@@ -2189,11 +2195,30 @@ export class XtermTerminal implements LiveTerminal {
    * 对齐 VS Code：直接 resize 并通知 PTY，不分轴防抖（避免分轴 resize 导致 pi-agent 双重重绘跳动）。 */
   private doResize(force = false): void {
     if (this.disposed || !this.fit || !this.term || !this.host) return;
+    // 先清除 RenderService 暂停标记（隐藏期由 IntersectionObserver 置位），
+    // 确保 resize 时 term.resize() 触发 canvas 重绘而非存到 _pausedResizeTask。
+    // 此调用幂等，已 unpause 时无副作用。
+    forceRepaintThroughRenderPause(this.term);
     // resize 时尝试重建 WebGL 渲染器（上下文丢失或此前附加失败后）
     this.retryWebglIfNeeded();
     const proposed = this.fit.proposeDimensions();
     if (!proposed) return;
-    if (proposed.cols <= 2 && proposed.rows <= 1) return;
+    if (proposed.cols <= 1 || proposed.rows <= 1) return;
+    // 当 FitAddon 因 getComputedStyle 返回 0 尺寸而给出极小值（2列/1行）时
+    // （父容器隐藏 / contain:strict / display:none 过渡等场景），用宿主的
+    // clientWidth/clientHeight 直接重测，避免终端缩到最小宽高造成「一列宽/黑屏」。
+    if (proposed.cols <= 2 && proposed.rows <= 1) {
+      const width = this.host.clientWidth;
+      const height = this.host.clientHeight;
+      const cellWidth = this.term.dimensions?.css.cell.width ?? 0;
+      const cellHeight = this.term.dimensions?.css.cell.height ?? 0;
+      if (width <= 0 || height <= 0 || cellWidth <= 0 || cellHeight <= 0) {
+        // 宿主确实无尺寸或 cell 度量未就绪，跳过 resize
+        return;
+      }
+      proposed.cols = Math.max(2, Math.floor(width / cellWidth));
+      proposed.rows = Math.max(1, Math.floor(height / cellHeight));
+    }
     if (proposed.cols === this.term.cols && proposed.rows === this.term.rows) return;
     try {
       this.term.resize(proposed.cols, proposed.rows);
