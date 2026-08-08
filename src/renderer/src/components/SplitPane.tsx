@@ -423,12 +423,14 @@ function SplitPaneDragProviderInner({
   // 被拖拽的 tab 信息（用于 DragOverlay），直接使用 activeDragTab state
   const activeTab = activeDragTab;
 
-  if (!isActive) {
-    // 非活跃 cwd：不包装 DnD 上下文，但保持 children 挂载
-    // （组件类型不变，React 不会卸载子节点，终端实例得以保留）
-    return <>{children}</>;
-  }
-
+  // 关键（修复「跨工作目录切换黑屏」）：无论 isActive 如何，都返回**相同结构**的
+  // DragContext.Provider > DndContext > children 树。若在 isActive 切换时改变根节点类型
+  // （Fragment ↔ DragContext.Provider），React 会对整个子树卸载/重挂，导致所有
+  // SessionPane → XtermTerminal 终端实例被销毁（releasePane → unmount → WebGL 释放），
+  // 重挂后的新终端为空 canvas，表现为黑屏直到手动拖拽分隔线触发 resize。
+  // 与同目录内切换 tab 的「始终挂载、仅改可见性」策略对齐：这里 wrapper 结构恒定，
+  // 仅凭外层 SplitPane 的 opacity 切换可见性，终端实例与 canvas 内容全程保留。
+  // 非活跃时 DnD 无法被触发（TabBar 不可交互），DndContext 只是闲置，无副作用。
   return (
     <DragContext.Provider value={contextValue}>
       <DndContext
@@ -440,21 +442,25 @@ function SplitPaneDragProviderInner({
         onDragEnd={handleDragEnd}
       >
         {children}
-        <DragOverlay dropAnimation={null}>
-          {activeTab && (
-            <div className={`drag-overlay${!canDrop ? ' drag-overlay--invalid' : ''}`}>
-              <span className="drag-overlay-icon">
-                {activeTab.kind === 'session' && '💬'}
-                {activeTab.kind === 'integrated-terminal' && '⬛'}
-                {activeTab.kind === 'preview' && '📄'}
-                {activeTab.kind === 'diff' && '📝'}
-                {activeTab.kind === 'session-content' && '💬'}
-              </span>
-              <span className="drag-overlay-title">{activeTab.title}</span>
-              {!canDrop && <span className="drag-overlay-invalid-icon">🚫</span>}
-            </div>
-          )}
-        </DragOverlay>
+        {/* DragOverlay 仅 active 时渲染：非活跃时拖拽不存在，overlay 无意义。
+            条件渲染 overlay 不影响 children 的挂载状态（它在 children 之后，独立子树）。 */}
+        {isActive && (
+          <DragOverlay dropAnimation={null}>
+            {activeTab && (
+              <div className={`drag-overlay${!canDrop ? ' drag-overlay--invalid' : ''}`}>
+                <span className="drag-overlay-icon">
+                  {activeTab.kind === 'session' && '💬'}
+                  {activeTab.kind === 'integrated-terminal' && '⬛'}
+                  {activeTab.kind === 'preview' && '📄'}
+                  {activeTab.kind === 'diff' && '📝'}
+                  {activeTab.kind === 'session-content' && '💬'}
+                </span>
+                <span className="drag-overlay-title">{activeTab.title}</span>
+                {!canDrop && <span className="drag-overlay-invalid-icon">🚫</span>}
+              </div>
+            )}
+          </DragOverlay>
+        )}
       </DndContext>
     </DragContext.Provider>
   );
