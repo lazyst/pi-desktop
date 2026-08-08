@@ -820,13 +820,23 @@ function SplitPaneChild({
 // ── 对外暴露的 SplitPane 组件 ──
 
 export function SplitPane(props: Props) {
-  const { tree, isActive, cwd } = props;
+  const { tree, isActive, cwd, ...rest } = props;
 
-  const content = tree.type === 'leaf' ? (
-    <SplitPaneLeaf leaf={tree} {...props} />
-  ) : (
-    <SplitPaneNode node={tree} {...props} />
-  );
+  // 关键（修复「分屏时终端重载，滚动位置丢失」）：始终渲染 SplitPaneNode，
+  // 使 React 树结构在分屏操作前后保持稳定。
+  //
+  // 分屏前（单 leaf）：SplitPaneNode > div > div[key=L1] > SplitPaneChild > SplitPaneLeaf(L1)
+  // 分屏后（split node）：SplitPaneNode > div > div[key=L1] > SplitPaneChild > SplitPaneLeaf(L1)
+  //                                        + div[key=L2] > SplitPaneChild > SplitPaneLeaf(L2)
+  //
+  // 原 leaf L1 始终以 key={L1} 挂载在相同位置，React 复用组件，不卸载/重挂终端。
+  // 若分屏前直接渲染 SplitPaneLeaf、分屏后切换为 SplitPaneNode，React 树根节点类型变化
+  // 导致原 leaf 全部子节点（SessionPane → XtermTerminal）被卸载，终端实例销毁后重建，
+  // 新终端 scrollback 为空，滚动位置丢失。
+  // 单 leaf 时包裹为 ratios=[1] 的单 child split node，布局等价于直接渲染 leaf。
+  const node: SplitNode = tree.type === 'leaf'
+    ? { type: 'split', id: 'root', direction: 'horizontal', ratios: [1], children: [tree] }
+    : tree;
 
   return (
     <div
@@ -840,7 +850,7 @@ export function SplitPane(props: Props) {
       }}
     >
       <SplitPaneDragProvider cwd={cwd} isActive={isActive}>
-        {content}
+        <SplitPaneNode node={node} tree={tree} cwd={cwd} isActive={isActive} {...rest} />
       </SplitPaneDragProvider>
     </div>
   );
