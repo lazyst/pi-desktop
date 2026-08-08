@@ -36,6 +36,7 @@ function makePi() {
     gitDiff: vi.fn(async () => ''),
     gitFileStatusMap: vi.fn(async () => ({})),
     gitIgnoredPaths: vi.fn(async () => []),
+    gitWatch: vi.fn(() => vi.fn()),
     fsWatch: vi.fn(() => vi.fn()),
   } as any;
   return api;

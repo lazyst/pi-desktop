@@ -130,10 +130,25 @@ export function FileTree({ root, onOpenFile, refreshKey }: Props) {
     if (!root) return;
     void refreshGitStatus();
     void refreshIgnoredPaths();
-    // 注意：不订阅 git:watch（它用 fs.watch recursive:true 监视整个目录，
-    // 在 Windows 上 node_modules 等大目录会导致极高 CPU 占用）。
-    // git 状态刷新依赖根目录 fsWatch（下方 refreshDir 中调用）。
   }, [root, refreshGitStatus, refreshIgnoredPaths]);
+
+  // 订阅 git:change：git 操作（commit/stage/reset/checkout/stash 等）会改写 .git/
+  // 内部文件，而根目录 fsWatch（recursive:false）只监听直接子项，探测不到 .git/
+  // 内的变更，导致提交后文件树高亮不刷新。这里复用主进程 git:watch（recursive:true
+  // 整仓监听）推送的 git:change 事件，git 元数据变化即刷新状态。250ms 防抖合并突发。
+  useEffect(() => {
+    if (!root) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; void refreshGitStatus(); }, 250);
+    };
+    const unsubscribe = pi.gitWatch(root, scheduleRefresh);
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+    };
+  }, [root, refreshGitStatus]);
 
   const handleToggleExpanded = useCallback((fullPath: string, open: boolean) => {
     setExpandedPaths((prev) => {
