@@ -424,8 +424,9 @@ export class XtermTerminal implements LiveTerminal {
   // DOM 事件驱动的滚动意图跟踪的反注册函数（在 _initXterm 末尾挂载，unmount 时释放）。
   private _scrollIntentTrackingDisposable: { dispose: () => void } | null = null;
 
-  // pi-tui 宽字符滚动条修正的防递归标志。
-  private _scrollbarFixGuard = false;
+  // —— 已移除：_fixTuiScrollbarWideChars 异步注入 CUP 序列会干扰 pi-tui 的差分渲染光标状态，
+  // 导致光标位置错位和内容重叠。由 pi-tui 自身处理其滚动条宽字符。
+
 
   constructor(opts: XtermTerminalOptions) {
     this.sessionKey = opts.sessionKey;
@@ -1310,7 +1311,8 @@ export class XtermTerminal implements LiveTerminal {
     // 从源头消除中英混排度量漂移，替代此前含 CJK 的字体栈 hack。
     // 必须显式激活 Unicode 11 宽度表（Unicode11Addon 仅注册版本提供者，不自动切换），
     // 否则 xterm 默认使用 Unicode 6.3 宽度表，emoji 被当作宽度 1 的普通字符，
-    // 导致 _fixTuiScrollbarWideChars 无法检测到 continuation cell（getWidth() 返回 1 而非 0）。
+    // 导致宽字符（CJK/emoji）的 continuation cell 无法被正确识别（getWidth() 返回 1 而非 0），
+    // 进而引起光标位置漂移和内容重叠。
     try {
       term.loadAddon(new Unicode11Addon());
       term.unicode.activeVersion = '11';
@@ -1414,18 +1416,9 @@ export class XtermTerminal implements LiveTerminal {
       /* 旧版 xterm 无 onWriteParsed：降级为「写即解析」，flush 立即 resolves */
     }
 
-    // 对齐 VS Code 的 xterm 后处理：检测并修复 pi-tui 文本滚动条的宽字符偏移。
-    // 仅在有宽字符（null continuation cell）的行写入校正序列，避免干扰 pi TUI 的输入处理。
-    // 包装 term.write 方法，每次写操作完成后经 setTimeout(0) 延迟调用修复，
-    // 确保在 xterm 内部 buffer 更新完成后、pi-tui 下一帧渲染前执行，且不依赖
-    // onWriteParsed/onRender 等事件是否正确触发。
-    const originalWrite = term.write.bind(term);
-    term.write = ((data: string, callback?: () => void) => {
-      originalWrite(data, () => {
-        callback?.();
-        setTimeout(() => this._fixTuiScrollbarWideChars(), 0);
-      });
-    }) as typeof term.write;
+    // 注意：不再包装 term.write 注入 _fixTuiScrollbarWideChars 校正——
+    // 异步注入 CUP 序列会干扰 pi-tui 差分渲染的光标状态跟踪，
+    // 导致光标位置错位和内容重叠。pi-tui 自身处理其滚动条宽字符。
 
     // 滚动状态：xterm 视口随输出/滚轮变化时经 onScroll 驱动浮钮显隐。
     try {
@@ -1990,65 +1983,6 @@ export class XtermTerminal implements LiveTerminal {
       this._pendingWritePromise = writePromise;
     }
   }
-
-  /**
-   * 检测并修复 pi-tui 文本滚动条的宽字符偏移。
-   *
-   * 当 pi-tui 的 styleScrollbarCell 遇到宽字符（CJK/emoji）落在滚动条列时，
-   * 将宽字符原样保留（占 2 列），导致滚动条指示器变成 2 列宽。
-   *
-   * 本方法在 xterm 写完成后，检查缓冲区最右列是否有 null continuation cell
-   *（getWidth() === 0，表示宽字符从 cols-2 延伸到 cols-1），仅有则写入校正序列
-   * 替换为单列空格。仅对含宽字符的行写入，最大限度减少对 pi TUI 的干扰。
-   *
-   * 防递归：通过 _scrollbarFixGuard 标志防止校正写入触发自身。
-   */
-  private _fixTuiScrollbarWideChars(): void {
-    if (this._scrollbarFixGuard || !this.term || this.disposed) return;
-
-    const term = this.term;
-    const buffer = term.buffer.active;
-    const cols = term.cols;
-    const rows = term.rows;
-    const scrollbarCol = cols - 1;
-    if (cols <= 0 || rows <= 0 || scrollbarCol < 0) return;
-
-    const corrections: string[] = [];
-
-    for (let row = 0; row < rows; row++) {
-      const line = buffer.getLine(row);
-      if (!line) continue;
-
-      const cell = line.getCell(scrollbarCol);
-      if (!cell) continue;
-
-      // 检测宽字符占据滚动条列的情况：
-      // 1. continuation cell 在 scrollbarCol（getWidth()===0，宽字符从 cols-2 延伸到 cols-1）
-      // 2. 宽字符的第一个 cell 在 scrollbarCol（getWidth()===2，极少数越界/布局偏移场景）
-      const isContinuation = cell.getWidth() === 0;
-      const isFirstWide = cell.getWidth() === 2;
-      if (isContinuation || isFirstWide) {
-        // 1-indexed 行号
-        const row1 = row + 1;
-        const col1 = scrollbarCol + 1;
-        // 如果是 continuation cell，只替换该列（保留前一列 emoji 首字）。
-        // 如果是宽字符首字在 scrollbarCol（越界场景），写单个空格覆盖该列即可，
-        // xterm 会把越界的 continuation cell 一并清除。
-        corrections.push(`\x1b[${row1};${col1}H\x1b[39;49m \x1b[39;49m`);
-      }
-    }
-
-    if (corrections.length === 0) return;
-
-    // 校正序列把 continuation cell 替换为单列空格，产生的新 buffer 不含
-    // getWidth()===0 的 cell，因此即使 onRender 再次触发本方法也会立即返回（无递归）。
-    // 立即清除 guard（而非在 write 回调中），避免 pi-tui 下一帧渲染早于回调完成时
-    // guard 仍为 true 导致修复无法再次应用。
-    this._scrollbarFixGuard = true;
-    term.write(corrections.join(''));
-    this._scrollbarFixGuard = false;
-  }
-
 
   /** 仅在 cols/rows 真变时才通知 PTY（对齐 VS Code 整数 dims 比较，避免无谓 resize）。 */
   private _notifyPtyIfChanged(): void {
